@@ -210,7 +210,7 @@ type Renderer(gl: GL) =
         // System.Numerics stores row-vector matrices in row-major memory. OpenGL
         // reads that same memory as column-major, which supplies the required
         // transpose automatically for GLSL's matrix * column-vector convention.
-        eye, view * projection
+        eye, view * projection, fieldOfView
 
     let lightMatrix =
         let view = Matrix4x4.CreateLookAt(Vector3(-38.0f, 58.0f, 34.0f), Vector3.Zero, Vector3.UnitY)
@@ -238,7 +238,7 @@ type Renderer(gl: GL) =
         if loadedLevel <> world.Level.Name then uploadLevel world.Level
         gl.ClearColor(0.54f, 0.61f, 0.64f, 1.0f)
         if indexCount > 0u then
-            let eye, viewProjection = cameraMatrices world.Player
+            let eye, viewProjection, fieldOfView = cameraMatrices world.Player
             let matrix = matrixArray viewProjection
             let light = matrixArray lightMatrix
             uploadActors world
@@ -264,6 +264,8 @@ type Renderer(gl: GL) =
             gl.UseProgram skyProgram
             gl.Uniform1(gl.GetUniformLocation(skyProgram, "uYaw"), world.Player.Yaw)
             gl.Uniform1(gl.GetUniformLocation(skyProgram, "uPitch"), world.Player.Pitch + recoil * 0.18f)
+            gl.Uniform1(gl.GetUniformLocation(skyProgram, "uAspect"), float32 width / float32 (max 1 height))
+            gl.Uniform1(gl.GetUniformLocation(skyProgram, "uTanHalfFov"), MathF.Tan(fieldOfView * 0.5f))
             gl.BindVertexArray vao
             gl.DrawArrays(PrimitiveType.Triangles, 0, 3u)
             gl.Enable EnableCap.CullFace

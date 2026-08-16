@@ -17,6 +17,8 @@ void main() {
 in vec2 vUv;
 uniform float uYaw;
 uniform float uPitch;
+uniform float uAspect;
+uniform float uTanHalfFov;
 out vec4 outColor;
 
 float hash(vec2 p) { return fract(sin(dot(p, vec2(41.31, 289.17))) * 43758.5453); }
@@ -36,25 +38,55 @@ float fbm(vec2 p) {
     return value;
 }
 
+float ridgeProfile(float azimuth, float frequency, float phase) {
+    float broad = sin(azimuth * frequency + phase) * 0.5 + 0.5;
+    float detail = sin(azimuth * frequency * 2.0 - phase * 1.7) * 0.5 + 0.5;
+    float peaks = pow(max(0.0, sin(azimuth * (frequency + 1.0) + phase * 2.1)), 5.0);
+    return broad * 0.045 + detail * 0.022 + peaks * 0.105;
+}
+
 void main() {
-    float horizon = smoothstep(0.02, 0.92, vUv.y);
+    vec2 screen = vUv * 2.0 - 1.0;
+    vec3 forward = normalize(vec3(sin(uYaw) * cos(uPitch),
+                                  sin(uPitch),
+                                  -cos(uYaw) * cos(uPitch)));
+    vec3 right = normalize(cross(forward, vec3(0.0, 1.0, 0.0)));
+    vec3 cameraUp = normalize(cross(right, forward));
+    vec3 ray = normalize(forward
+                       + right * screen.x * uAspect * uTanHalfFov
+                       + cameraUp * screen.y * uTanHalfFov);
+
+    float horizon = smoothstep(-0.08, 0.72, ray.y);
     vec3 low = vec3(0.43, 0.45, 0.42);
     vec3 high = vec3(0.12, 0.22, 0.31);
     vec3 color = mix(low, high, horizon);
 
     // A broad overcast layer keeps the generated sky from reading as a flat
-    // clear colour while retaining the muted WWII palette.
-    float cloud = smoothstep(0.50, 0.78, fbm(vUv * vec2(5.5, 2.8) + vec2(uYaw * 0.16, 0.0)));
+    // clear colour. Sampling from the world ray keeps it fixed while turning.
+    vec2 cloudPosition = ray.xz * 3.8 + vec2(ray.y * 1.7, -ray.y * 2.1);
+    float cloud = smoothstep(0.50, 0.78, fbm(cloudPosition));
     cloud *= 0.20 + 0.28 * (1.0 - horizon);
     color = mix(color, vec3(0.52, 0.53, 0.49), cloud);
 
-    float sunX = 0.68 - sin(uYaw + 0.65) * 0.42;
-    float sunY = 0.68 + uPitch * 0.30;
-    vec2 sunDelta = (vUv - vec2(sunX, sunY)) * vec2(1.78, 1.0);
-    float sun = 1.0 - smoothstep(0.012, 0.045, length(sunDelta));
-    float glow = 1.0 - smoothstep(0.02, 0.22, length(sunDelta));
+    // This is the same fixed world-space direction used by level lighting.
+    vec3 sunDirection = normalize(vec3(-0.45, 0.82, 0.34));
+    float towardSun = dot(ray, sunDirection);
+    float sun = smoothstep(0.99955, 0.99992, towardSun);
+    float glow = smoothstep(0.965, 0.9996, towardSun);
     color += vec3(0.32, 0.25, 0.14) * glow * 0.32;
     color = mix(color, vec3(1.0, 0.86, 0.58), sun * 0.88);
+
+    // Two fixed azimuthal silhouettes add depth without geometry, draw calls,
+    // or camera-position parallax that would expose the finite level bounds.
+    float azimuth = atan(ray.x, -ray.z);
+    float farRidge = 0.015 + ridgeProfile(azimuth, 3.0, 0.8);
+    float nearRidge = 0.005 + ridgeProfile(azimuth, 5.0, 2.4) * 1.22;
+    float farMask = 1.0 - smoothstep(farRidge, farRidge + 0.010, ray.y);
+    float nearMask = 1.0 - smoothstep(nearRidge, nearRidge + 0.008, ray.y);
+    color = mix(color, vec3(0.20, 0.24, 0.22), farMask * 0.82);
+    color = mix(color, vec3(0.105, 0.135, 0.115), nearMask * 0.88);
+    float horizonMist = (1.0 - smoothstep(-0.01, 0.18, ray.y)) * (1.0 - nearMask * 0.65);
+    color = mix(color, vec3(0.43, 0.45, 0.42), horizonMist * 0.22);
 
     color = pow(max(color, vec3(0.0)), vec3(1.0 / 2.2));
     outColor = vec4(color, 1.0);
