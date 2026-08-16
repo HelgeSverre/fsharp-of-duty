@@ -207,19 +207,19 @@
     }
 
     function loadPayload(payload, isOffline = false) {
-        weapons = Array.isArray(payload.weapons) ? payload.weapons : [];
-        text(byId("arsenal-status"), isOffline ? "OFFLINE DOSSIER" : "BALLISTICS VERIFIED");
-        text(byId("arsenal-source"), payload.generatedFrom);
-        weapons.forEach((weapon, index) => {
-          const button = document.createElement("button");
-          button.className = "weapon-tab";
-          button.setAttribute("role", "tab");
-          button.setAttribute("aria-selected", String(index === 0));
-          text(button, weapon.name);
-          button.addEventListener("click", () => { selected = index; render(); });
-          tabs.append(button);
-        });
-        render();
+      weapons = Array.isArray(payload.weapons) ? payload.weapons : [];
+      text(byId("arsenal-status"), isOffline ? "OFFLINE DOSSIER" : "BALLISTICS VERIFIED");
+      text(byId("arsenal-source"), payload.generatedFrom);
+      weapons.forEach((weapon, index) => {
+        const button = document.createElement("button");
+        button.className = "weapon-tab";
+        button.setAttribute("role", "tab");
+        button.setAttribute("aria-selected", String(index === 0));
+        text(button, weapon.name);
+        button.addEventListener("click", () => { selected = index; render(); });
+        tabs.append(button);
+      });
+      render();
     }
 
     fetch(`${apiRoot}/api/arsenal`)
