@@ -189,6 +189,18 @@ module LevelCompile =
         let covers = ResizeArray<CoverPoint>()
         let spawns = ResizeArray<struct (Team option * Vector3)>()
         let mountedGuns = ResizeArray<MountedGun>()
+        let coverSideForTeam team midpoint lineNormal =
+            let nearestOwnedSpawn =
+                spec.Items
+                |> List.choose (function SpawnSquad(owner, _, center) when owner = team -> Some center | _ -> None)
+                |> List.sortBy (fun center -> Vector3.DistanceSquared(center, midpoint))
+                |> List.tryHead
+            match nearestOwnedSpawn with
+            | Some spawn when Vector3.Dot(lineNormal, spawn - midpoint) < 0.0f -> -lineNormal
+            | Some _ -> lineNormal
+            // Preserve the established north/south convention for a reusable
+            // level fragment that does not declare its own spawn markers.
+            | None -> if team = Allies then lineNormal else -lineNormal
         for item in spec.Items do
             match item with
             | Street _ | Objective _ | MissionRule _ -> ()
@@ -197,11 +209,21 @@ module LevelCompile =
             | SandbagLine(startPoint, endPoint, owner) ->
                 brushes.Add(lineBrush startPoint endPoint 1.15f 0.55f Sandbag)
                 let direction = MathEx.normalizedOrZero (endPoint - startPoint)
-                let peekDirection = Vector3(-direction.Z, 0.0f, direction.X)
+                let lineNormal = Vector3(-direction.Z, 0.0f, direction.X)
+                let midpoint = (startPoint + endPoint) * 0.5f
+                let defensiveSides =
+                    match owner with
+                    | Some team -> [| coverSideForTeam team midpoint lineNormal |]
+                    | None -> [| lineNormal; -lineNormal |]
                 let length = Vector3.Distance(startPoint, endPoint)
                 for index in 0..int (length / 1.5f) do
                     let onLine = Vector3.Lerp(startPoint, endPoint, float32 index / max 1.0f (length / 1.5f))
-                    covers.Add { Pos = onLine + peekDirection * 0.72f; PeekDir = peekDirection; Crouch = true }
+                    for side in defensiveSides do
+                        covers.Add
+                            { Pos = onLine + side * 0.72f
+                              PeekDir = -side
+                              Crouch = true
+                              Owner = owner }
             | FenceLine(startPoint, endPoint) ->
                 let length = Vector3.Distance(startPoint, endPoint)
                 let postCount = max 1 (int (MathF.Ceiling(length / 2.2f)))
@@ -226,7 +248,7 @@ module LevelCompile =
                 brushes.Add(lineBrush (pivot - forward * 0.08f - side * 0.58f) (pivot - forward * 0.08f + side * 0.58f) 0.52f 0.10f Metal)
                 for foot in [ position - forward * 0.52f - side * 0.48f; position - forward * 0.52f + side * 0.48f; position + forward * 0.42f ] do
                     brushes.Add(lineBrush (pivot - Vector3.UnitY * 0.12f) foot 0.08f 0.09f Metal)
-                covers.Add { Pos = position - forward * 0.45f; PeekDir = forward; Crouch = true }
+                covers.Add { Pos = position - forward * 0.45f; PeekDir = forward; Crouch = true; Owner = Some owner }
                 mountedGuns.Add { Position = position - forward * 0.45f; Facing = facing; Team = owner }
             | SpawnSquad(team, count, center) ->
                 for index in 0..count - 1 do

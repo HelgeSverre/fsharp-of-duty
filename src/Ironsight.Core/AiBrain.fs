@@ -46,7 +46,9 @@ module AiBrain =
 
     let private closestCover target (level: Level) (soldier: Soldier) =
         level.Cover
-        |> Array.filter (fun cover -> Vector3.DistanceSquared(cover.Pos, soldier.Position) < 900.0f)
+        |> Array.filter (fun cover ->
+            (cover.Owner.IsNone || cover.Owner = Some soldier.Team)
+            && Vector3.DistanceSquared(cover.Pos, soldier.Position) < 900.0f)
         |> Array.sortBy (fun cover -> Vector3.DistanceSquared(cover.Pos, soldier.Position) + Vector3.DistanceSquared(cover.Pos, target) * 0.2f)
         |> Array.tryHead
 
@@ -137,7 +139,11 @@ module AiBrain =
                         let tactical =
                             if perceived.Weapon.Class.Name = "MG42" then
                                 let facing = MathF.Atan2(lastKnown.X - perceived.Position.X, -(lastKnown.Z - perceived.Position.Z))
-                                let cover = { Pos = perceived.Position; PeekDir = MathEx.yawForward facing; Crouch = true }
+                                let cover =
+                                    { Pos = perceived.Position
+                                      PeekDir = MathEx.yawForward facing
+                                      Crouch = true
+                                      Owner = Some perceived.Team }
                                 { perceived with Facing = facing; Behavior = InCover(cover, Units.seconds 1.1f) }
                             else
                                 match perceived.Behavior with

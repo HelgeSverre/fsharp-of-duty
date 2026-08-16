@@ -8,6 +8,58 @@ open Xunit
 
 module AiTests =
     [<Fact>]
+    let ``owned sandbag cover stays on each team's defensive side`` () =
+        let level = Levels.paintballArena
+        let allied = level.Cover |> Array.filter (fun cover -> cover.Owner = Some Allies)
+        let axis = level.Cover |> Array.filter (fun cover -> cover.Owner = Some Axis)
+        let neutral = level.Cover |> Array.filter (fun cover -> cover.Owner.IsNone)
+
+        Assert.NotEmpty allied
+        Assert.NotEmpty axis
+        Assert.True(allied |> Array.forall (fun cover -> cover.Pos.Z > 8.0f))
+        Assert.True(axis |> Array.forall (fun cover -> cover.Pos.Z < -8.0f))
+        Assert.Contains(neutral, fun cover -> cover.Pos.Z > 2.0f)
+        Assert.Contains(neutral, fun cover -> cover.Pos.Z < 2.0f)
+
+        let reversed =
+            LevelDsl.level "Reversed owned line"
+                [ LevelDsl.street 16.0f 8.0f Mud
+                  LevelDsl.sandbags (Vector3(4.0f, 0.0f, 0.0f)) (Vector3(-4.0f, 0.0f, 0.0f)) (Some Axis)
+                  LevelDsl.spawnSquad Axis 1 (Vector3(0.0f, 0.0f, -6.0f)) ]
+            |> LevelCompile.compile
+        let reversedAxis = reversed.Cover |> Array.filter (fun cover -> cover.Owner = Some Axis)
+        Assert.True(reversedAxis |> Array.forall (fun cover -> cover.Pos.Z < 0.0f))
+
+    [<Fact>]
+    let ``axis soldier occupies axis side of owned barricade`` () =
+        let level =
+            LevelDsl.level "Owned cover lane"
+                [ LevelDsl.street 20.0f 8.0f Mud
+                  LevelDsl.sandbags (Vector3(-4.0f, 0.0f, 0.0f)) (Vector3(4.0f, 0.0f, 0.0f)) (Some Axis) ]
+            |> LevelCompile.compile
+        let baseline = Sim.createTrainingWorld 1201UL
+        let player = { baseline.Player with Position = Vector3(0.0f, 0.0f, 5.0f) }
+        let template = baseline.Soldiers |> Array.find (fun soldier -> soldier.Team = Axis)
+        let enemy =
+            { template with
+                Position = Vector3(0.0f, 0.0f, -5.0f)
+                Facing = MathF.PI
+                Behavior = Idle
+                Contacts = Map.ofList [ player.Id, struct (player.Position, Units.seconds 0.0f) ] }
+        let mutable rng = Rng.create 1202UL
+        let mutable soldiers = [| enemy |]
+        let mutable occupied = None
+        for _ in 1..300 do
+            let _, next, _ = AiBrain.step Tuning.TickDuration &rng level Map.empty player soldiers
+            soldiers <- next
+            match soldiers[0].Behavior with
+            | InCover(cover, _) -> occupied <- Some cover
+            | _ -> ()
+
+        Assert.True(occupied.IsSome, "AI never occupied the owned barricade")
+        Assert.True(occupied.Value.Pos.Z < -0.55f, $"AI crossed to the exposed side at z={occupied.Value.Pos.Z}")
+
+    [<Fact>]
     let ``ai capsule movement cannot walk through a level wall`` () =
         let level =
             LevelDsl.level "Blocked lane"

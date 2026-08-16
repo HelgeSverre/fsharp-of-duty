@@ -285,7 +285,13 @@ module Sim =
                   Position = emplacement.Position
                   Facing = emplacement.Facing
                   Health = Units.health 100.0f
-                  Behavior = InCover({ Pos = emplacement.Position; PeekDir = MathEx.yawForward emplacement.Facing; Crouch = true }, Units.seconds 1.1f)
+                  Behavior =
+                    InCover(
+                        { Pos = emplacement.Position
+                          PeekDir = MathEx.yawForward emplacement.Facing
+                          Crouch = true
+                          Owner = Some emplacement.Team },
+                        Units.seconds 1.1f)
                   Weapon = { Tuning.weaponSlot Tuning.mg42 5 with State = Cooling(Units.seconds (0.8f + float32 index * 0.15f)) }
                   Squad = if emplacement.Team = Allies then 3 else 4
                   Contacts = Map.empty

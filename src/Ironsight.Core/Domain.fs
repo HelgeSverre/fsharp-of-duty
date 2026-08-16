@@ -62,7 +62,8 @@ type Player =
 type CoverPoint =
     { Pos: Vector3
       PeekDir: Vector3
-      Crouch: bool }
+      Crouch: bool
+      Owner: Team option }
 
 type AiBehavior =
     | Idle
