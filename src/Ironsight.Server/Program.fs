@@ -18,6 +18,9 @@ module Program =
         member val TeamDeathmatch = MatchHost(TeamDeathmatch, level)
         member val FreeForAll = MatchHost(FreeForAll, level)
 
+        member this.Leaderboard() =
+            Protocol.leaderboard [| this.TeamDeathmatch.Snapshot(); this.FreeForAll.Snapshot() |]
+
     let private receiveMessage (socket: WebSocket) (cancellationToken: CancellationToken) = task {
         let buffer = Array.zeroCreate<byte> Protocol.MaxMessageBytes
         let! result = socket.ReceiveAsync(Memory buffer, cancellationToken)
@@ -110,7 +113,12 @@ module Program =
 
     [<EntryPoint>]
     let main args =
-        let builder = WebApplication.CreateBuilder args
+        let sourceWebRoot = IO.Path.GetFullPath("../../website", __SOURCE_DIRECTORY__)
+        let options =
+            WebApplicationOptions(
+                Args = args,
+                WebRootPath = if IO.Directory.Exists sourceWebRoot then sourceWebRoot else null)
+        let builder = WebApplication.CreateBuilder options
         builder.WebHost.UseUrls("http://0.0.0.0:8080") |> ignore
         let matchLevel =
             match Environment.GetEnvironmentVariable "IRONSIGHT_LEVEL" with
@@ -129,9 +137,23 @@ module Program =
                         matches.FreeForAll.AdvanceTick()
                 } }) |> ignore
         let app = builder.Build()
+        app.UseDefaultFiles() |> ignore
+        app.UseStaticFiles() |> ignore
         app.UseWebSockets() |> ignore
         app.MapGet("/health/live", Func<string>(fun () -> "ok")) |> ignore
         app.MapGet("/health/ready", Func<string>(fun () -> "ready")) |> ignore
+        app.MapGet(
+            "/api/leaderboard",
+            Func<HttpContext, IResult>(fun context ->
+                context.Response.Headers.CacheControl <- "no-store"
+                Results.Json(matches.Leaderboard())))
+        |> ignore
+        app.MapGet(
+            "/api/arsenal",
+            Func<HttpContext, IResult>(fun context ->
+                context.Response.Headers.CacheControl <- "public, max-age=300"
+                Results.Json(Protocol.arsenal ())))
+        |> ignore
         app.Map("/play", Action<IApplicationBuilder>(fun branch ->
             branch.Run(fun context -> handleSocket matches context) |> ignore)) |> ignore
         app.Run()

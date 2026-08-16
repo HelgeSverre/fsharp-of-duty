@@ -73,6 +73,53 @@ type SnapshotMessage =
       grenades: GrenadeSnapshot array
       events: EventSnapshot array }
 
+[<CLIMutable>]
+type LeaderboardPlayer =
+    { id: int
+      name: string
+      team: string
+      kills: int
+      deaths: int
+      alive: bool
+      weapon: string }
+
+[<CLIMutable>]
+type LeaderboardRoom =
+    { mode: string
+      phase: string
+      alliesScore: int
+      axisScore: int
+      connectedPlayers: int
+      players: LeaderboardPlayer array }
+
+[<CLIMutable>]
+type LeaderboardResponse =
+    { generatedAt: DateTimeOffset
+      persistence: string
+      capacityPerRoom: int
+      rooms: LeaderboardRoom array }
+
+[<CLIMutable>]
+type ArsenalWeapon =
+    { name: string
+      fireMode: string
+      damagePerProjectile: float32
+      projectilesPerShot: int
+      maximumDamagePerShot: float32
+      roundsPerMinute: float32
+      magazineSize: int
+      reloadSeconds: float32
+      aimDownSightSeconds: float32
+      hipSpread: float32
+      aimDownSightSpread: float32
+      penetration: float32
+      availability: string }
+
+[<CLIMutable>]
+type ArsenalResponse =
+    { generatedFrom: string
+      weapons: ArsenalWeapon array }
+
 [<RequireQualifiedAccess>]
 module Protocol =
     [<Literal>]
@@ -176,3 +223,54 @@ module Protocol =
           players = players
           grenades = grenades
           events = events }
+
+    let leaderboard states =
+        let rooms =
+            states
+            |> Array.map (fun state ->
+                let players =
+                    state.Players
+                    |> Map.toArray
+                    |> Array.map snd
+                    |> Array.filter (fun player -> player.Connected)
+                    |> Array.sortBy (fun player -> -player.Kills, player.Deaths, player.Name)
+                    |> Array.map (fun player ->
+                        let (EntityId id) = player.Id
+                        { id = id
+                          name = player.Name
+                          team = string player.Team
+                          kills = player.Kills
+                          deaths = player.Deaths
+                          alive = player.Alive
+                          weapon = player.Weapon.Class.Name })
+                { mode = string state.Mode
+                  phase = string state.Phase
+                  alliesScore = state.AlliesScore
+                  axisScore = state.AxisScore
+                  connectedPlayers = players.Length
+                  players = players })
+        { generatedAt = DateTimeOffset.UtcNow
+          persistence = "Memory, bravely surviving until the next deploy."
+          capacityPerRoom = 16
+          rooms = rooms }
+
+    let arsenal () =
+        let onlineNames = Tuning.onlineWeapons |> Array.map _.Name |> Set.ofArray
+        let weapons = Array.append Tuning.onlineWeapons [| Tuning.mg42 |]
+        { generatedFrom = "Live Ironsight.Core.Tuning weapon definitions"
+          weapons =
+            weapons
+            |> Array.map (fun weapon ->
+                { name = weapon.Name
+                  fireMode = string weapon.Mode
+                  damagePerProjectile = Units.raw weapon.Damage
+                  projectilesPerShot = weapon.Pellets
+                  maximumDamagePerShot = Units.raw weapon.Damage * float32 weapon.Pellets
+                  roundsPerMinute = weapon.RoundsPerMin
+                  magazineSize = weapon.MagSize
+                  reloadSeconds = Units.raw weapon.ReloadTime
+                  aimDownSightSeconds = Units.raw weapon.AdsTime
+                  hipSpread = weapon.HipSpread
+                  aimDownSightSpread = weapon.AdsSpread
+                  penetration = weapon.Penetration
+                  availability = if Set.contains weapon.Name onlineNames then "Player loadout" else "Mounted weapon" }) }

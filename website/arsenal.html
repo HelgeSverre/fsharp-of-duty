@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="The real damage model and weapon statistics powering IRONSIGHT.">
+  <meta name="theme-color" content="#090b08">
+  <title>IRONSIGHT Arsenal — Unreasonably Classified Weapon Statistics</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/styles.css">
+  <script src="/app.js" defer></script>
+</head>
+<body class="arsenal-page">
+  <canvas id="battlefield" aria-hidden="true"></canvas>
+  <div class="noise" aria-hidden="true"></div>
+  <header class="site-header">
+    <a class="brand" href="/" aria-label="IRONSIGHT home"><span class="brand-mark">I/S</span><span>IRONSIGHT</span><small>F# OF DUTY</small></a>
+    <nav aria-label="Main navigation"><a href="/#intel">Intel</a><a href="/#leaderboard">War room</a><a class="active" href="/arsenal.html">Arsenal</a><a href="/#features">Technology</a></nav>
+    <a class="button button-small" href="https://github.com/HelgeSverre/fsharp-of-duty">Acquire source</a>
+  </header>
+
+  <main>
+    <section class="arsenal-hero shell">
+      <div class="eyebrow">QUARTERMASTER TERMINAL // CLEARANCE: UNNECESSARILY HIGH</div>
+      <h1>Weapon systems<br><em>damage dossier.</em></h1>
+      <p>Live specifications generated from the same F# records that decide whether
+        the next shot is heroic, embarrassing, or eight pellets into a nearby fence.</p>
+      <div class="data-source"><span class="live-dot"></span><b id="arsenal-status">REQUESTING BALLISTICS</b><small id="arsenal-source">No marketing estimates permitted</small></div>
+    </section>
+
+    <section class="arsenal-controls shell" aria-label="Arsenal controls">
+      <div class="weapon-tabs" id="weapon-tabs" role="tablist" aria-label="Weapon selection"></div>
+    </section>
+
+    <section class="weapon-dossier shell" id="weapon-dossier" aria-live="polite">
+      <div class="dossier-loading">BREAKING OPEN THE AMMUNITION CRATE…</div>
+    </section>
+
+    <section class="damage-doctrine shell">
+      <div class="section-number">DAMAGE MODEL // LEGALLY DISTINCT TERMINAL VELOCITY</div>
+      <div class="doctrine-grid">
+        <article><b>01</b><h2>Server authoritative</h2><p>The server traces every projectile. Your client may suggest violence; command approves it.</p></article>
+        <article><b>02</b><h2>Per-projectile damage</h2><p>Shotgun pellets travel and hit independently. “Maximum” assumes all pellets cooperate, which they rarely do.</p></article>
+        <article><b>03</b><h2>Material penetration</h2><p>Each shot carries a penetration budget consumed by world geometry. The wall is part of the equation.</p></article>
+        <article><b>04</b><h2>Headshot consequences</h2><p>Damage regions and head-gib effects exist. Tasteful restraint has been assigned to another project.</p></article>
+      </div>
+      <p class="fine-print">Figures are implementation values, not promises of realism. Spread values are angular offsets used by the simulation. Damage does not include target-region multipliers or material loss.</p>
+    </section>
+  </main>
+
+  <footer class="site-footer shell"><span>IRONSIGHT // BALLISTICS DIVISION</span><span>All statistics subject to balancing and developer mood.</span><a href="/">RETURN TO FRONT</a></footer>
+</body>
+</html>

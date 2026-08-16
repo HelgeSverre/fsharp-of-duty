@@ -128,3 +128,32 @@ module ServerTests =
         Assert.Equal("Kar98k Sniper", player.Weapon.Class.Name)
         let wire = Protocol.snapshot (host.Snapshot())
         Assert.Equal("Kar98k Sniper", wire.players[0].weapon)
+
+    [<Fact>]
+    let ``leaderboard publishes only connected players and their live loadouts`` () =
+        let tdm = MatchHost TeamDeathmatch
+        let onlineId, _ = tdm.TryAddPlayer("Public Hero", weaponName = "M1897 Trench Gun").Value
+        let offlineId, _ = tdm.TryAddPlayer("Gone Already").Value
+        tdm.RemovePlayer offlineId
+        let board = Protocol.leaderboard [| tdm.Snapshot(); (MatchHost FreeForAll).Snapshot() |]
+        Assert.Equal(16, board.capacityPerRoom)
+        Assert.Equal(2, board.rooms.Length)
+        Assert.Single(board.rooms[0].players) |> ignore
+        let (EntityId expectedId) = onlineId
+        Assert.Equal(expectedId, board.rooms[0].players[0].id)
+        Assert.Equal("Public Hero", board.rooms[0].players[0].name)
+        Assert.Equal("M1897 Trench Gun", board.rooms[0].players[0].weapon)
+
+    [<Fact>]
+    let ``arsenal statistics are generated from gameplay tuning`` () =
+        let arsenal = Protocol.arsenal ()
+        let sniper = arsenal.weapons |> Array.find (fun weapon -> weapon.name = Tuning.kar98kSniper.Name)
+        let shotgun = arsenal.weapons |> Array.find (fun weapon -> weapon.name = Tuning.m1897.Name)
+        let mg42 = arsenal.weapons |> Array.find (fun weapon -> weapon.name = Tuning.mg42.Name)
+
+        Assert.Equal(Tuning.onlineWeapons.Length + 1, arsenal.weapons.Length)
+        Assert.Equal(120.0f, sniper.damagePerProjectile)
+        Assert.Equal(0.18f, sniper.aimDownSightSeconds)
+        Assert.Equal(8, shotgun.projectilesPerShot)
+        Assert.Equal(128.0f, shotgun.maximumDamagePerShot)
+        Assert.Equal("Mounted weapon", mg42.availability)

@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="IRONSIGHT is the world's most ambitious 16-player, one-server, asset-free F# MMOFPS prototype.">
+  <meta name="theme-color" content="#090b08">
+  <title>IRONSIGHT — The Massively Modest Online FPS</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/styles.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <canvas id="battlefield" aria-hidden="true"></canvas>
+  <div class="noise" aria-hidden="true"></div>
+
+  <header class="site-header">
+    <a class="brand" href="#top" aria-label="IRONSIGHT home">
+      <span class="brand-mark">I/S</span>
+      <span>IRONSIGHT</span>
+      <small>F# OF DUTY</small>
+    </a>
+    <nav aria-label="Main navigation">
+      <a href="#intel">Intel</a>
+      <a href="#leaderboard">War room</a>
+      <a href="/arsenal.html">Arsenal</a>
+      <a href="#features">Technology</a>
+    </nav>
+    <a class="button button-small" href="https://github.com/HelgeSverre/fsharp-of-duty">Acquire source</a>
+  </header>
+
+  <main id="top">
+    <section class="hero shell">
+      <div class="eyebrow"><span class="live-dot"></span> One machine. One region. Several ambitions.</div>
+      <h1>The massively<br><em>modest</em><br>online FPS.</h1>
+      <p class="hero-copy">A code-generated WWII-ish shooter with MMO-scale typography,
+        authoritative netcode, and enough server memory to hold a particularly
+        confident spreadsheet.</p>
+      <div class="hero-actions">
+        <a class="button" href="https://github.com/HelgeSverre/fsharp-of-duty#quick-start">Enlist via Git clone</a>
+        <a class="text-link" href="#leaderboard">Inspect the entire population →</a>
+      </div>
+      <p class="fine-print">* “Massively multiplayer” currently means up to 16 players per room.
+        “Persistent world” means the process has not restarted. No loot boxes because there is no loot.</p>
+
+      <div class="hero-object" aria-hidden="true">
+        <div class="scope-ring"><div class="crosshair"></div></div>
+        <div class="rifle">
+          <i class="barrel"></i><i class="receiver"></i><i class="stock"></i><i class="mag"></i>
+        </div>
+        <span class="object-label">PROCEDURAL ARMAMENT // POLYGONS MAY VARY</span>
+      </div>
+    </section>
+
+    <section class="ticker" aria-label="Project statistics">
+      <div><strong>0</strong><span>game assets shipped</span></div>
+      <div><strong>56</strong><span>tests standing between you and chaos</span></div>
+      <div><strong>60</strong><span>authoritative ticks per second</span></div>
+      <div><strong>256 MB</strong><span>of strategic cloud supremacy</span></div>
+    </section>
+
+    <section id="intel" class="manifesto shell">
+      <div class="section-number">01 // FIELD INTELLIGENCE</div>
+      <div>
+        <h2>Built like a 2005 blockbuster.<br>Budgeted like a weekend mistake.</h2>
+        <p>IRONSIGHT has no engine and no art pipeline. F# generates the maps,
+          soldiers, guns, sound effects, font atlas, particles, navigation graph,
+          and the occasional sense of accomplishment.</p>
+      </div>
+      <aside class="classified">
+        <span>DECLASSIFIED</span>
+        <dl>
+          <div><dt>Theater</dt><dd>Stockholm, technically</dd></div>
+          <div><dt>Genre</dt><dd>MMOFPS-adjacent</dd></div>
+          <div><dt>Business model</dt><dd>Free as in source code</dd></div>
+          <div><dt>Progression</dt><dd>Emotional</dd></div>
+        </dl>
+      </aside>
+    </section>
+
+    <section id="leaderboard" class="war-room shell">
+      <div class="section-heading">
+        <div>
+          <div class="section-number">02 // GLOBAL WAR ROOM</div>
+          <h2>Live strategic leaderboard</h2>
+          <p>Every currently connected hero, ranked by actual server state. History
+            is written by the victors and erased by the next deployment.</p>
+        </div>
+        <div class="server-badge"><span class="live-dot"></span><b id="server-status">CONTACTING COMMAND</b><small>ARN // FLY.IO</small></div>
+      </div>
+
+      <div class="room-tabs" role="tablist" aria-label="Game mode">
+        <button class="room-tab active" role="tab" aria-selected="true" data-room="TeamDeathmatch">Team Deathmatch</button>
+        <button class="room-tab" role="tab" aria-selected="false" data-room="FreeForAll">Free For All</button>
+      </div>
+
+      <div class="leaderboard-frame">
+        <div class="match-strip">
+          <span>Phase <b id="match-phase">UNKNOWN</b></span>
+          <span class="tdm-score"><i>ALLIES</i> <b id="allies-score">0</b> — <b id="axis-score">0</b> <i>AXIS</i></span>
+          <span>Population <b id="population">0 / 16</b></span>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>#</th><th>Combatant</th><th>Faction</th><th>Loadout</th><th>K</th><th>D</th><th>Status</th></tr></thead>
+            <tbody id="leaderboard-body"></tbody>
+          </table>
+          <div id="empty-state" class="empty-state">
+            <strong>THE FRONT IS SUSPICIOUSLY QUIET</strong>
+            <span>Nobody is connected. Become statistically significant.</span>
+          </div>
+        </div>
+        <footer><span id="persistence-note">Statistics stored in extremely fast volatile memory.</span><span id="last-updated">Awaiting telemetry</span></footer>
+      </div>
+    </section>
+
+    <section class="arsenal-callout shell">
+      <div>
+        <div class="section-number">03 // ORDNANCE PROCUREMENT</div>
+        <h2>Numbers worth arguing about.</h2>
+        <p>Inspect damage models, cyclic rates, reload timing, spread, penetration,
+          and theoretical shotgun optimism—directly from the game’s real tuning data.</p>
+      </div>
+      <a class="button" href="/arsenal.html">Open classified arsenal →</a>
+    </section>
+
+    <section id="features" class="features shell">
+      <div class="section-number">04 // MILITARY-INDUSTRIAL FEATURES</div>
+      <h2>Technology so advanced<br>we had to explain the caveats.</h2>
+      <div class="feature-grid">
+        <article><b>01</b><h3>Infinite content*</h3><p>Four maps, generated deterministically. Infinity begins after somebody adds a fifth.</p><small>* Mathematically unverified.</small></article>
+        <article><b>02</b><h3>Persistent identity*</h3><p>Your reconnect token survives an inspiring 30 seconds in server memory.</p><small>* Persistence may contain traces of impermanence.</small></article>
+        <article><b>03</b><h3>Elite matchmaking</h3><p>Choose between the one public server and the same server in Free For All mode.</p><small>No algorithm can misunderstand you.</small></article>
+        <article><b>04</b><h3>Next-gen graphics</h3><p>OpenGL 4.1: next-generation technology, provided your generation is 2010.</p><small>macOS-compatible by strategic necessity.</small></article>
+        <article><b>05</b><h3>Procedural everything</h3><p>Meshes, materials, audio, fonts, maps, and soldiers emerge directly from code.</p><small>The website cheats with CSS.</small></article>
+        <article><b>06</b><h3>Authoritative warfare</h3><p>The server distrusts your position, your bullets, and your deeply suspicious mouse input.</p><small>As any healthy relationship should.</small></article>
+      </div>
+    </section>
+
+    <section class="cta shell">
+      <p class="eyebrow">THE WAR WILL NOT DOWNLOAD ITSELF</p>
+      <h2>Clone. Compile.<br>Question your choices.</h2>
+      <a class="button" href="https://github.com/HelgeSverre/fsharp-of-duty">View the F# arsenal</a>
+      <code>git clone https://github.com/HelgeSverre/fsharp-of-duty.git</code>
+    </section>
+  </main>
+
+  <footer class="site-footer shell">
+    <span>IRONSIGHT // F# OF DUTY</span>
+    <span>A serious networking experiment wearing a very unserious uniform.</span>
+    <a href="https://github.com/HelgeSverre/fsharp-of-duty">SOURCE</a>
+  </footer>
+</body>
+</html>

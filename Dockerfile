@@ -6,6 +6,7 @@ COPY src/Ironsight.Server/Ironsight.Server.fsproj src/Ironsight.Server/
 RUN dotnet restore src/Ironsight.Server/Ironsight.Server.fsproj
 COPY src/Ironsight.Core/ src/Ironsight.Core/
 COPY src/Ironsight.Server/ src/Ironsight.Server/
+COPY website/ website/
 RUN dotnet publish src/Ironsight.Server/Ironsight.Server.fsproj -c Release -o /app --no-restore
 
 FROM mcr.microsoft.com/dotnet/aspnet:9.0-alpine
