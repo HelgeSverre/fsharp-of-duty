@@ -127,9 +127,18 @@ IRONSIGHT_SERVER=ws://127.0.0.1:8080/play \
 
 The server listens on `0.0.0.0:8080` and exposes:
 
+- `GET /` → static project website and live war room
+- `GET /arsenal.html` → weapon and damage-model statistics
+- `GET /api/leaderboard` → current connected-player rankings for both rooms
+- `GET /api/arsenal` → weapon values generated from core tuning records
 - `GET /health/live` → `ok`
 - `GET /health/ready` → `ready`
 - WebSocket `/play`
+
+The leaderboard is a process-local view of current match state, not a durable
+account leaderboard. It exposes public callsigns, teams, scores, life state, and
+weapon names but never session tokens. The arsenal endpoint is cacheable for five
+minutes; leaderboard responses explicitly disable caching.
 
 ## Fly.io
 

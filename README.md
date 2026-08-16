@@ -25,7 +25,8 @@ unions model gameplay.
 - Navgraph/A* bot navigation, cover behavior, suppression, and automatic reloads.
 - Authoritative 8v8-capable multiplayer with TDM and FFA rooms, prediction,
   interpolation, reconciliation, lag-compensated hits, and reconnect tokens.
-- A live Fly.io server at `wss://fsharp-of-duty.fly.dev/play`.
+- A live Fly.io server and deliberately overqualified project website at
+  [fsharp-of-duty.fly.dev](https://fsharp-of-duty.fly.dev/).
 
 ## Requirements
 
@@ -116,6 +117,7 @@ src/Ironsight/         Silk.NET desktop client, renderer, audio, HUD, networking
 src/Ironsight.Server/  ASP.NET Core WebSocket server and authoritative matches
 tests/Ironsight.Tests/ headless xUnit simulation, client, and server tests
 docs/                  current guides plus preserved design specifications
+website/               static project site, live leaderboard, and arsenal UI
 ```
 
 F# compile order enforces the dependency direction. `Ironsight.Core` has no
@@ -153,3 +155,17 @@ curl https://fsharp-of-duty.fly.dev/health/ready
 
 The public deployment is for development playtests and carries no uptime or data
 retention guarantee.
+
+## Website and public telemetry
+
+The headless server also serves the dependency-free files in `website/`. The
+landing page shows the connected players in both live rooms; the arsenal page
+loads damage and handling statistics generated from the actual
+`Ironsight.Core.Tuning` weapon definitions.
+
+- `GET /api/leaderboard` — live connected players, scores, and selected loadouts
+- `GET /api/arsenal` — player and mounted-weapon tuning values
+
+Leaderboard state is intentionally volatile. It records the active server
+process, not accounts or historical rankings, and resets whenever Fly deploys or
+restarts the Machine.
