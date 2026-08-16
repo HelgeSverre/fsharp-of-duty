@@ -73,6 +73,7 @@ type OnlineClient(serverUri: Uri, playerName: string, requestedMode: GameMode, w
     let mutable sendTask: Task = Task.CompletedTask
     let mutable closing = 0
     let mutable disposed = 0
+    let receiveBuffer = Array.zeroCreate<byte> (256 * 1024)
 
     let jsonOptions = JsonSerializerOptions(JsonSerializerDefaults.Web)
 
@@ -86,19 +87,18 @@ type OnlineClient(serverUri: Uri, playerName: string, requestedMode: GameMode, w
     }
 
     let receiveDocument () = task {
-        let buffer = Array.zeroCreate<byte> (64 * 1024)
         let mutable total = 0
         let mutable finished = false
         let mutable closed = false
         while not finished && not closed do
-            let! result = socket.ReceiveAsync(Memory(buffer, total, buffer.Length - total), cancellation.Token)
+            let! result = socket.ReceiveAsync(Memory(receiveBuffer, total, receiveBuffer.Length - total), cancellation.Token)
             if result.MessageType = WebSocketMessageType.Close then closed <- true
             else
                 total <- total + result.Count
                 finished <- result.EndOfMessage
-                if total = buffer.Length && not finished then invalidOp "Server message exceeds 64 KiB."
+                if total = receiveBuffer.Length && not finished then invalidOp "Server message exceeds 256 KiB."
         if closed then return None
-        else return Some(JsonDocument.Parse(ReadOnlyMemory(buffer, 0, total)))
+        else return Some(JsonDocument.Parse(ReadOnlyMemory(receiveBuffer, 0, total)))
     }
 
     let getString (name: string) (element: JsonElement) = element.GetProperty(name).GetString() |> Option.ofObj |> Option.defaultValue ""
@@ -185,6 +185,7 @@ type OnlineClient(serverUri: Uri, playerName: string, requestedMode: GameMode, w
         with
         | :? OperationCanceledException -> ()
         | :? WebSocketException -> cancellation.Cancel()
+        | _ -> cancellation.Cancel()
     }
 
     let senderLoop () = task {

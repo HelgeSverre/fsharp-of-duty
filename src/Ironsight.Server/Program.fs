@@ -25,7 +25,7 @@ module Program =
         let buffer = Array.zeroCreate<byte> Protocol.MaxMessageBytes
         let! result = socket.ReceiveAsync(Memory buffer, cancellationToken)
         if result.MessageType = WebSocketMessageType.Close then return None
-        elif not result.EndOfMessage || result.Count = buffer.Length then
+        elif not result.EndOfMessage then
             do! socket.CloseAsync(WebSocketCloseStatus.MessageTooBig, "Message exceeds 16 KiB.", cancellationToken)
             return None
         elif result.MessageType <> WebSocketMessageType.Text then

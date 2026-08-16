@@ -145,18 +145,24 @@ type MatchHost(mode: GameMode, ?matchLevel: Level) =
     member _.ApplyInput(id, message: JsonElement) =
         lock gate (fun () ->
             match Map.tryFind id state.Players, Protocol.tryInt64 "sequence" message with
-            | Some player, Some sequence when player.Alive && sequence > player.LastInputSequence && sequence <= player.LastInputSequence + 120L ->
-                let moveX = Protocol.tryFloat32 "moveX" message |> Option.defaultValue 0.0f |> clamp -1.0f 1.0f
-                let moveY = Protocol.tryFloat32 "moveY" message |> Option.defaultValue 0.0f |> clamp -1.0f 1.0f
-                let lookX = Protocol.tryFloat32 "lookX" message |> Option.defaultValue 0.0f |> clamp -0.25f 0.25f
-                let lookY = Protocol.tryFloat32 "lookY" message |> Option.defaultValue 0.0f |> clamp -0.25f 0.25f
-                let rawButtons = Protocol.tryInt64 "buttons" message |> Option.defaultValue 0L
-                let allowedButtons = int64 (InputButtons.Fire ||| InputButtons.Ads ||| InputButtons.Sprint ||| InputButtons.Reload ||| InputButtons.Crouch ||| InputButtons.Prone ||| InputButtons.Jump ||| InputButtons.Grenade)
-                let buttons = enum<InputButtons> (int (rawButtons &&& allowedButtons))
-                let input = { Sequence = sequence; Move = Vector2(moveX, moveY); Look = Vector2(lookX, lookY); Buttons = buttons }
-                let requestedTick = Protocol.tryInt64 "estimatedServerTick" message |> Option.defaultValue state.Tick
-                let estimatedTick = Math.Clamp(requestedTick, state.Tick - 12L, state.Tick)
-                pendingInputs <- Map.add id (struct (input, estimatedTick)) pendingInputs
+            | Some player, Some sequence when sequence > player.LastInputSequence && sequence <= player.LastInputSequence + 120L ->
+                if player.Alive then
+                    let moveX = Protocol.tryFloat32 "moveX" message |> Option.defaultValue 0.0f |> clamp -1.0f 1.0f
+                    let moveY = Protocol.tryFloat32 "moveY" message |> Option.defaultValue 0.0f |> clamp -1.0f 1.0f
+                    let lookX = Protocol.tryFloat32 "lookX" message |> Option.defaultValue 0.0f |> clamp -0.25f 0.25f
+                    let lookY = Protocol.tryFloat32 "lookY" message |> Option.defaultValue 0.0f |> clamp -0.25f 0.25f
+                    let rawButtons = Protocol.tryInt64 "buttons" message |> Option.defaultValue 0L
+                    let allowedButtons = int64 (InputButtons.Fire ||| InputButtons.Ads ||| InputButtons.Sprint ||| InputButtons.Reload ||| InputButtons.Crouch ||| InputButtons.Prone ||| InputButtons.Jump ||| InputButtons.Grenade)
+                    let buttons = enum<InputButtons> (int (rawButtons &&& allowedButtons))
+                    let input = { Sequence = sequence; Move = Vector2(moveX, moveY); Look = Vector2(lookX, lookY); Buttons = buttons }
+                    let requestedTick = Protocol.tryInt64 "estimatedServerTick" message |> Option.defaultValue state.Tick
+                    let estimatedTick = Math.Clamp(requestedTick, state.Tick - 12L, state.Tick)
+                    pendingInputs <- Map.add id (struct (input, estimatedTick)) pendingInputs
+                else
+                    // The client keeps numbering input while dead. Acknowledge
+                    // those no-op frames so respawn does not see a false jump.
+                    let acknowledged = { player with LastInputSequence = sequence }
+                    state <- { state with Players = Map.add id acknowledged state.Players }
             | _ -> ())
 
     member _.AdvanceTick() =
@@ -243,10 +249,11 @@ type MatchHost(mode: GameMode, ?matchLevel: Level) =
                     match Map.tryFind id players with
                     | Some player when player.Alive && input.Sequence > player.LastInputSequence ->
                         let moved = Movement.step Tuning.TickDuration input level (toPlayer player)
-                        let fire = hasButton InputButtons.Fire input.Buttons && not moved.Sprinting
+                        let canEngage = lifecycleState.Phase = Playing
+                        let fire = canEngage && hasButton InputButtons.Fire input.Buttons && not moved.Sprinting
                         let reload = hasButton InputButtons.Reload input.Buttons
                         let struct (weapon, requests) = Weapons.step Tuning.TickDuration fire reload moved.Ads &rng moved.Slots[0]
-                        let grenadeHeld = hasButton InputButtons.Grenade input.Buttons && not moved.Sprinting
+                        let grenadeHeld = canEngage && hasButton InputButtons.Grenade input.Buttons && not moved.Sprinting
                         let handPlayer, thrown = Grenades.stepHand Tuning.TickDuration grenadeHeld moved
                         thrown |> Option.iter thrownGrenades.Add
                         let horizontalSpeed = MathEx.horizontal handPlayer.Velocity |> fun velocity -> velocity.Length()

@@ -31,6 +31,17 @@ module ServerTests =
         Assert.Equal(3L, player.LastInputSequence)
 
     [<Fact>]
+    let ``stale input sequence is rejected after a newer sequence`` () =
+        let host = MatchHost FreeForAll
+        let playerId, _ = host.TryAddPlayer("Replayer").Value
+        applyInput 5 host playerId
+        host.AdvanceTick()
+        Assert.Equal(5L, host.Snapshot().Players[playerId].LastInputSequence)
+        applyInput 3 host playerId
+        host.AdvanceTick()
+        Assert.Equal(5L, host.Snapshot().Players[playerId].LastInputSequence)
+
+    [<Fact>]
     let ``far future input sequence is rejected`` () =
         let host = MatchHost FreeForAll
         let playerId, _ = host.TryAddPlayer("Time traveler").Value
@@ -87,6 +98,76 @@ module ServerTests =
         Assert.Equal(Units.seconds 5.0f, result.Players[allyId].RespawnIn)
         Assert.Contains(result.Events, fun event -> match event.Event with ShotFired _ -> true | _ -> false)
         Assert.NotEmpty((Protocol.snapshot result).events)
+
+    [<Fact>]
+    let ``player can move again after dying and respawning`` () =
+        let arena =
+            LevelDsl.level "Respawn range"
+                [ LevelDsl.street 50.0f 20.0f Mud
+                  LevelDsl.spawnSquad Allies 1 (Vector3(0.0f, 0.0f, 12.0f))
+                  LevelDsl.spawnSquad Axis 1 (Vector3(0.0f, 0.0f, -12.0f)) ]
+            |> LevelCompile.compile
+        let host = MatchHost(TeamDeathmatch, arena)
+        let allyId, _ = host.TryAddPlayer("Ally").Value
+        let axisId, _ = host.TryAddPlayer("Axis").Value
+        host.SetReady allyId
+        host.SetReady axisId
+        for _ in 1..721 do host.AdvanceTick()
+        Assert.Equal(Playing, host.Snapshot().Phase)
+        // The axis rifleman already faces the ally (spawn yaw = PI). ADS, then
+        // fire a few Kar98k shots until the ally is dead.
+        let mutable sequence = 1L
+        for _ in 1..30 do
+            applyCustom sequence 0.0f 0.0f 2 host axisId
+            host.AdvanceTick()
+            sequence <- sequence + 1L
+        for _ in 1..3 do
+            applyCustom sequence 0.0f 0.0f 3 host axisId
+            host.AdvanceTick()
+            sequence <- sequence + 1L
+            for _ in 1..80 do
+                applyCustom sequence 0.0f 0.0f 2 host axisId
+                host.AdvanceTick()
+                sequence <- sequence + 1L
+        Assert.False(host.Snapshot().Players[allyId].Alive)
+        // Respawn takes 5 s = 300 ticks. The real client continues sending
+        // numbered no-op inputs while dead; the server must acknowledge them.
+        let mutable allySequence = 1L
+        for _ in 1..310 do
+            applyCustom allySequence 0.0f 0.0f 0 host allyId
+            host.AdvanceTick()
+            allySequence <- allySequence + 1L
+        let respawned = host.Snapshot()
+        Assert.True(respawned.Players[allyId].Alive)
+        let before = respawned.Players[allyId].Position
+        applyCustom allySequence 1.0f 0.0f 4 host allyId
+        host.AdvanceTick()
+        allySequence <- allySequence + 1L
+        applyCustom allySequence 1.0f 0.0f 4 host allyId
+        host.AdvanceTick()
+        allySequence <- allySequence + 1L
+        applyCustom allySequence 1.0f 0.0f 4 host allyId
+        host.AdvanceTick()
+        let moved = host.Snapshot().Players[allyId]
+        Assert.True(Vector3.Distance(before, moved.Position) > 0.2f)
+        Assert.Equal(allySequence, moved.LastInputSequence)
+
+    [<Fact>]
+    let ``shots are not spent during warmup`` () =
+        let host = MatchHost TeamDeathmatch
+        let playerId, _ = host.TryAddPlayer("Trigger-happy").Value
+        let witnessId, _ = host.TryAddPlayer("Witness").Value
+        host.SetReady playerId
+        host.SetReady witnessId
+        let mutable sequence = 1L
+        for _ in 1..500 do
+            applyCustom sequence 0.0f 0.0f (int InputButtons.Fire) host playerId
+            host.AdvanceTick()
+            sequence <- sequence + 1L
+        let player = host.Snapshot().Players[playerId]
+        Assert.Equal(Warmup, host.Snapshot().Phase)
+        Assert.Equal(WeaponState.Ready, player.Weapon.State)
+        Assert.Equal(player.Weapon.Class.MagSize, player.Weapon.InMag)
 
     [<Fact>]
     let ``authoritative grenade is cooked thrown and included in snapshots`` () =
