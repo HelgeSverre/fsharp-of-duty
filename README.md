@@ -158,7 +158,9 @@ retention guarantee.
 
 ## Website and public telemetry
 
-The headless server also serves the dependency-free files in `website/`. The
+The dependency-free files in `website/` can be opened directly or hosted by any
+static file server; Fly serves the same directory through the headless server.
+The
 landing page shows the connected players in both live rooms; the arsenal page
 loads damage and handling statistics generated from the actual
 `Ironsight.Core.Tuning` weapon definitions.

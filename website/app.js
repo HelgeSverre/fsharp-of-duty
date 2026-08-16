@@ -4,6 +4,7 @@
   const byId = (id) => document.getElementById(id);
   const text = (element, value) => { if (element) element.textContent = String(value); };
   const format = (value, digits = 0) => Number(value).toFixed(digits);
+  const apiRoot = document.querySelector('meta[name="ironsight-api"]')?.content?.replace(/\/$/, "") ?? "";
 
   function initializeBackdrop() {
     const canvas = byId("battlefield");
@@ -97,7 +98,7 @@
 
     async function refresh() {
       try {
-        const response = await fetch("/api/leaderboard", { cache: "no-store" });
+        const response = await fetch(`${apiRoot}/api/leaderboard`, { cache: "no-store" });
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         latest = await response.json();
         text(byId("server-status"), "TELEMETRY LIVE");
@@ -205,11 +206,9 @@
       dossier.append(grid);
     }
 
-    fetch("/api/arsenal")
-      .then((response) => { if (!response.ok) throw new Error(); return response.json(); })
-      .then((payload) => {
+    function loadPayload(payload, isOffline = false) {
         weapons = Array.isArray(payload.weapons) ? payload.weapons : [];
-        text(byId("arsenal-status"), "BALLISTICS VERIFIED");
+        text(byId("arsenal-status"), isOffline ? "OFFLINE DOSSIER" : "BALLISTICS VERIFIED");
         text(byId("arsenal-source"), payload.generatedFrom);
         weapons.forEach((weapon, index) => {
           const button = document.createElement("button");
@@ -221,13 +220,19 @@
           tabs.append(button);
         });
         render();
-      })
+    }
+
+    fetch(`${apiRoot}/api/arsenal`)
+      .then((response) => { if (!response.ok) throw new Error(); return response.json(); })
+      .then((payload) => loadPayload(payload))
       .catch(() => {
-        text(byId("arsenal-status"), "QUARTERMASTER UNAVAILABLE");
-        text(byId("arsenal-source"), "The statistics refused to deploy");
-        dossier.replaceChildren();
-        const failure = document.createElement("div"); failure.className = "dossier-loading";
-        text(failure, "ARSENAL TELEMETRY LOST // PLEASE BLAME SUPPLY CHAIN"); dossier.append(failure);
+        const fallback = byId("arsenal-fallback");
+        try {
+          loadPayload(JSON.parse(fallback?.textContent ?? "{}"), true);
+        } catch {
+          text(byId("arsenal-status"), "QUARTERMASTER UNAVAILABLE");
+          text(byId("arsenal-source"), "The statistics refused to deploy");
+        }
       });
   }
 

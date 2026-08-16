@@ -146,12 +146,14 @@ module Program =
             "/api/leaderboard",
             Func<HttpContext, IResult>(fun context ->
                 context.Response.Headers.CacheControl <- "no-store"
+                context.Response.Headers.AccessControlAllowOrigin <- "*"
                 Results.Json(matches.Leaderboard())))
         |> ignore
         app.MapGet(
             "/api/arsenal",
             Func<HttpContext, IResult>(fun context ->
                 context.Response.Headers.CacheControl <- "public, max-age=300"
+                context.Response.Headers.AccessControlAllowOrigin <- "*"
                 Results.Json(Protocol.arsenal ())))
         |> ignore
         app.Map("/play", Action<IApplicationBuilder>(fun branch ->

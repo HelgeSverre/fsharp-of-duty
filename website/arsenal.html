@@ -5,17 +5,28 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="description" content="The real damage model and weapon statistics powering IRONSIGHT.">
   <meta name="theme-color" content="#090b08">
+  <meta name="ironsight-api" content="https://fsharp-of-duty.fly.dev">
   <title>IRONSIGHT Arsenal — Unreasonably Classified Weapon Statistics</title>
-  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="/styles.css">
-  <script src="/app.js" defer></script>
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="styles.css">
+  <script src="app.js" defer></script>
+  <script id="arsenal-fallback" type="application/json">
+    {"generatedFrom":"Bundled snapshot of Ironsight.Core.Tuning (offline mode)","weapons":[
+      {"name":"Kar98k","fireMode":"BoltAction","damagePerProjectile":85,"projectilesPerShot":1,"maximumDamagePerShot":85,"roundsPerMinute":45,"magazineSize":5,"reloadSeconds":2.35,"aimDownSightSeconds":0.16,"hipSpread":0.045,"aimDownSightSpread":0.003,"penetration":18,"availability":"Player loadout"},
+      {"name":"Thompson","fireMode":"FullAuto","damagePerProjectile":28,"projectilesPerShot":1,"maximumDamagePerShot":28,"roundsPerMinute":700,"magazineSize":30,"reloadSeconds":2.15,"aimDownSightSeconds":0.12,"hipSpread":0.055,"aimDownSightSpread":0.012,"penetration":8,"availability":"Player loadout"},
+      {"name":"M1911","fireMode":"SemiAuto","damagePerProjectile":42,"projectilesPerShot":1,"maximumDamagePerShot":42,"roundsPerMinute":360,"magazineSize":7,"reloadSeconds":1.6,"aimDownSightSeconds":0.1,"hipSpread":0.048,"aimDownSightSpread":0.01,"penetration":5,"availability":"Player loadout"},
+      {"name":"Kar98k Sniper","fireMode":"BoltAction","damagePerProjectile":120,"projectilesPerShot":1,"maximumDamagePerShot":120,"roundsPerMinute":38,"magazineSize":5,"reloadSeconds":2.7,"aimDownSightSeconds":0.18,"hipSpread":0.085,"aimDownSightSpread":0.00045,"penetration":24,"availability":"Player loadout"},
+      {"name":"M1897 Trench Gun","fireMode":"BoltAction","damagePerProjectile":16,"projectilesPerShot":8,"maximumDamagePerShot":128,"roundsPerMinute":72,"magazineSize":5,"reloadSeconds":1.45,"aimDownSightSeconds":0.14,"hipSpread":0.105,"aimDownSightSpread":0.045,"penetration":2,"availability":"Player loadout"},
+      {"name":"MG42","fireMode":"FullAuto","damagePerProjectile":30,"projectilesPerShot":1,"maximumDamagePerShot":30,"roundsPerMinute":900,"magazineSize":50,"reloadSeconds":4.15,"aimDownSightSeconds":0.18,"hipSpread":0.065,"aimDownSightSpread":0.025,"penetration":12,"availability":"Mounted weapon"}
+    ]}
+  </script>
 </head>
 <body class="arsenal-page">
   <canvas id="battlefield" aria-hidden="true"></canvas>
   <div class="noise" aria-hidden="true"></div>
   <header class="site-header">
-    <a class="brand" href="/" aria-label="IRONSIGHT home"><span class="brand-mark">I/S</span><span>IRONSIGHT</span><small>F# OF DUTY</small></a>
-    <nav aria-label="Main navigation"><a href="/#intel">Intel</a><a href="/#leaderboard">War room</a><a class="active" href="/arsenal.html">Arsenal</a><a href="/#features">Technology</a></nav>
+    <a class="brand" href="index.html" aria-label="IRONSIGHT home"><span class="brand-mark">I/S</span><span>IRONSIGHT</span><small>F# OF DUTY</small></a>
+    <nav aria-label="Main navigation"><a href="index.html#intel">Intel</a><a href="index.html#leaderboard">War room</a><a class="active" href="arsenal.html">Arsenal</a><a href="index.html#features">Technology</a></nav>
     <a class="button button-small" href="https://github.com/HelgeSverre/fsharp-of-duty">Acquire source</a>
   </header>
 
@@ -48,6 +59,6 @@
     </section>
   </main>
 
-  <footer class="site-footer shell"><span>IRONSIGHT // BALLISTICS DIVISION</span><span>All statistics subject to balancing and developer mood.</span><a href="/">RETURN TO FRONT</a></footer>
+  <footer class="site-footer shell"><span>IRONSIGHT // BALLISTICS DIVISION</span><span>All statistics subject to balancing and developer mood.</span><a href="index.html">RETURN TO FRONT</a></footer>
 </body>
 </html>
