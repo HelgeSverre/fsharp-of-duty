@@ -1,0 +1,12 @@
+**/bin
+**/obj
+.dotnet
+.git
+.github
+.idea
+.vscode
+TestResults
+docs
+tests
+*.md
+*.sln

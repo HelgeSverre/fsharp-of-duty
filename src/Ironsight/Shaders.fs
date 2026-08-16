@@ -1,0 +1,220 @@
+namespace Ironsight.Shell
+
+[<RequireQualifiedAccess>]
+module Shaders =
+    let skyVertex = """
+#version 410 core
+out vec2 vUv;
+void main() {
+    vec2 position = vec2((gl_VertexID << 1) & 2, gl_VertexID & 2);
+    vUv = position;
+    gl_Position = vec4(position * 2.0 - 1.0, 0.9999, 1.0);
+}
+"""
+
+    let skyFragment = """
+#version 410 core
+in vec2 vUv;
+uniform float uYaw;
+uniform float uPitch;
+out vec4 outColor;
+
+float hash(vec2 p) { return fract(sin(dot(p, vec2(41.31, 289.17))) * 43758.5453); }
+float noise(vec2 p) {
+    vec2 i = floor(p), f = fract(p);
+    f = f*f*(3.0-2.0*f);
+    return mix(mix(hash(i), hash(i+vec2(1,0)), f.x),
+               mix(hash(i+vec2(0,1)), hash(i+vec2(1,1)), f.x), f.y);
+}
+float fbm(vec2 p) {
+    float value = 0.0, amplitude = 0.55;
+    for (int i = 0; i < 4; ++i) {
+        value += noise(p) * amplitude;
+        p = p * 2.03 + vec2(7.1, 3.7);
+        amplitude *= 0.48;
+    }
+    return value;
+}
+
+void main() {
+    float horizon = smoothstep(0.02, 0.92, vUv.y);
+    vec3 low = vec3(0.43, 0.45, 0.42);
+    vec3 high = vec3(0.12, 0.22, 0.31);
+    vec3 color = mix(low, high, horizon);
+
+    // A broad overcast layer keeps the generated sky from reading as a flat
+    // clear colour while retaining the muted WWII palette.
+    float cloud = smoothstep(0.50, 0.78, fbm(vUv * vec2(5.5, 2.8) + vec2(uYaw * 0.16, 0.0)));
+    cloud *= 0.20 + 0.28 * (1.0 - horizon);
+    color = mix(color, vec3(0.52, 0.53, 0.49), cloud);
+
+    float sunX = 0.68 - sin(uYaw + 0.65) * 0.42;
+    float sunY = 0.68 + uPitch * 0.30;
+    vec2 sunDelta = (vUv - vec2(sunX, sunY)) * vec2(1.78, 1.0);
+    float sun = 1.0 - smoothstep(0.012, 0.045, length(sunDelta));
+    float glow = 1.0 - smoothstep(0.02, 0.22, length(sunDelta));
+    color += vec3(0.32, 0.25, 0.14) * glow * 0.32;
+    color = mix(color, vec3(1.0, 0.86, 0.58), sun * 0.88);
+
+    color = pow(max(color, vec3(0.0)), vec3(1.0 / 2.2));
+    outColor = vec4(color, 1.0);
+}
+"""
+
+    let shadowVertex = """
+#version 410 core
+layout(location = 0) in vec3 aPosition;
+uniform mat4 uLightViewProjection;
+void main() { gl_Position = uLightViewProjection * vec4(aPosition, 1.0); }
+"""
+
+    let shadowFragment = """
+#version 410 core
+void main() { }
+"""
+
+    let hudVertex = """
+#version 410 core
+layout(location = 0) in vec2 aPosition;
+layout(location = 1) in vec2 aUv;
+layout(location = 2) in vec4 aColor;
+uniform vec2 uResolution;
+out vec2 vUv;
+out vec4 vColor;
+void main() {
+    vec2 ndc = vec2(aPosition.x / uResolution.x * 2.0 - 1.0, 1.0 - aPosition.y / uResolution.y * 2.0);
+    gl_Position = vec4(ndc, 0.0, 1.0);
+    vUv = aUv;
+    vColor = aColor;
+}
+"""
+
+    let hudFragment = """
+#version 410 core
+in vec2 vUv;
+in vec4 vColor;
+uniform sampler2D uFont;
+uniform vec2 uFontTexel;
+out vec4 outColor;
+void main() {
+    float coverage = texture(uFont, vUv).r;
+    float outline = 0.0;
+    for (int x = -1; x <= 1; ++x)
+        for (int y = -1; y <= 1; ++y)
+            outline = max(outline, texture(uFont, vUv + vec2(x,y) * uFontTexel).r);
+    float alpha = max(coverage, outline * 0.78) * vColor.a;
+    vec3 rgb = mix(vec3(0.015), vColor.rgb, coverage);
+    outColor = vec4(rgb, alpha);
+}
+"""
+
+    let levelVertex = """
+#version 410 core
+layout(location = 0) in vec3 aPosition;
+layout(location = 1) in vec3 aNormal;
+layout(location = 2) in float aMaterial;
+uniform mat4 uViewProjection;
+uniform mat4 uLightViewProjection;
+out vec3 vWorld;
+out vec3 vNormal;
+out vec4 vLightPosition;
+flat out int vMaterial;
+void main() {
+    vWorld = aPosition;
+    vNormal = aNormal;
+    vLightPosition = uLightViewProjection * vec4(aPosition, 1.0);
+    vMaterial = int(aMaterial + 0.5);
+    gl_Position = uViewProjection * vec4(aPosition, 1.0);
+}
+"""
+
+    let levelFragment = """
+#version 410 core
+in vec3 vWorld;
+in vec3 vNormal;
+in vec4 vLightPosition;
+flat in int vMaterial;
+uniform vec3 uCamera;
+uniform int uViewmodel;
+uniform sampler2D uShadowMap;
+uniform int uImpactCount;
+uniform vec4 uImpacts[16];
+out vec4 outColor;
+
+float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+float noise(vec2 p) {
+    vec2 i = floor(p), f = fract(p); f = f*f*(3.0-2.0*f);
+    return mix(mix(hash(i), hash(i+vec2(1,0)), f.x), mix(hash(i+vec2(0,1)), hash(i+vec2(1,1)), f.x), f.y);
+}
+vec3 materialColor() {
+    // Project the procedural pattern along the dominant face axis. Using xz
+    // everywhere made vertical walls collapse into single-colour stripes.
+    vec3 axis = abs(normalize(vNormal));
+    vec2 p = axis.x > axis.y && axis.x > axis.z ? vWorld.zy
+           : axis.y > axis.z ? vWorld.xz
+           : vWorld.xy;
+    if (vMaterial == 0) {
+        vec2 cell = p * vec2(2.25, 4.0);
+        cell.x += mod(floor(cell.y), 2.0) * 0.5;
+        vec2 edge = min(fract(cell), 1.0-fract(cell));
+        float brick = smoothstep(0.035, 0.085, edge.x) * smoothstep(0.045, 0.10, edge.y);
+        vec3 mortar = vec3(0.30, 0.28, 0.25);
+        vec3 clay = vec3(0.43,0.16,0.085) * (0.78 + 0.30*hash(floor(cell)));
+        return mix(mortar, clay, brick) * (0.88 + 0.16*noise(p*3.1));
+    }
+    if (vMaterial == 1) return vec3(0.58,0.55,0.46) * (0.72 + 0.28*noise(p*0.7));
+    if (vMaterial == 2) {
+        float grain = noise(vec2(p.x * 0.34 + noise(p*0.2), p.y * 7.0));
+        return mix(vec3(0.13,0.055,0.018), vec3(0.48,0.25,0.075), smoothstep(0.18,0.82,grain));
+    }
+    if (vMaterial == 3) return vec3(0.34,0.29,0.18) * (0.72 + 0.36*noise(p*1.4));
+    if (vMaterial == 4) {
+        float grit = noise(p*3.0);
+        return mix(vec3(0.68,0.72,0.73), vec3(0.90,0.93,0.94), 0.55 + 0.45*grit);
+    }
+    if (vMaterial == 5) {
+        float weave = 0.88 + 0.12*sin((p.x+p.y)*35.0);
+        return vec3(0.42,0.36,0.22) * weave * (0.82 + 0.18*noise(p*5.0));
+    }
+    if (vMaterial == 6) return mix(vec3(0.075,0.085,0.09), vec3(0.20,0.22,0.22), noise(p*9.0));
+    if (vMaterial == 7) return vec3(0.25,0.31,0.14) * (0.90 + 0.10*noise(p*5.0));
+    if (vMaterial == 8) return vec3(0.27,0.30,0.26) * (0.90 + 0.10*noise(p*5.0));
+    if (vMaterial == 9) return vec3(0.61,0.43,0.31) * (0.93 + 0.07*noise(p*4.0));
+    return vec3(0.24,0.26,0.25);
+}
+void main() {
+    vec3 normal = normalize(vNormal);
+    vec3 sun = normalize(vec3(-0.45, 0.82, 0.34));
+    float diffuse = max(dot(normal, sun), 0.0);
+    float ambient = uViewmodel == 1 ? 0.62 : mix(0.24, 0.38, normal.y * 0.5 + 0.5);
+    vec3 shadowCoord = vLightPosition.xyz / max(vLightPosition.w, 0.0001) * 0.5 + 0.5;
+    float shadow = 1.0;
+    if (uViewmodel == 0 && all(greaterThanEqual(shadowCoord, vec3(0.0))) && all(lessThanEqual(shadowCoord, vec3(1.0)))) {
+        float bias = max(0.0012, 0.0045 * (1.0 - diffuse));
+        vec2 texel = 1.0 / vec2(textureSize(uShadowMap, 0));
+        float visibility = 0.0;
+        for (int x = -1; x <= 1; ++x)
+            for (int y = -1; y <= 1; ++y) {
+                float closest = texture(uShadowMap, shadowCoord.xy + vec2(x,y)*texel).r;
+                visibility += shadowCoord.z - bias > closest ? 0.0 : 1.0;
+            }
+        shadow = mix(0.34, 1.0, visibility / 9.0);
+    }
+    vec3 color = materialColor() * (ambient + diffuse * (1.0 - ambient) * shadow);
+    if (uViewmodel == 0) {
+        float mark = 0.0;
+        for (int i = 0; i < uImpactCount; ++i) {
+            float distanceToMark = distance(vWorld, uImpacts[i].xyz);
+            mark = max(mark, 1.0 - smoothstep(uImpacts[i].w * 0.25, uImpacts[i].w, distanceToMark));
+        }
+        color = mix(color, color * 0.16, mark * 0.82);
+    }
+    float distanceFog = uViewmodel == 1 ? 0.0 : smoothstep(43.0, 108.0, distance(uCamera, vWorld));
+    color = mix(color, vec3(0.39,0.42,0.40), distanceFog);
+    float luminance = dot(color, vec3(0.299, 0.587, 0.114));
+    color = mix(vec3(luminance), color, uViewmodel == 1 ? 0.82 : 0.66);
+    color *= vec3(1.01, 0.96, 0.84);
+    color = pow(max(color, vec3(0.0)), vec3(1.0 / 2.2));
+    outColor = vec4(color, 1.0);
+}
+"""

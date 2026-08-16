@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../Ironsight.Core/Ironsight.Core.fsproj" />
+    <PackageReference Include="Silk.NET.Windowing" Version="2.23.0" />
+    <PackageReference Include="Silk.NET.Input" Version="2.23.0" />
+    <PackageReference Include="Silk.NET.OpenGL" Version="2.23.0" />
+    <PackageReference Include="Silk.NET.OpenAL" Version="2.23.0" />
+  </ItemGroup>
+  <ItemGroup>
+    <Compile Include="Menu.fs" />
+    <Compile Include="Input.fs" />
+    <Compile Include="Shaders.fs" />
+    <Compile Include="NetworkClient.fs" />
+    <Compile Include="OnlineWorld.fs" />
+    <Compile Include="RenderInterpolation.fs" />
+    <Compile Include="Hud.fs" />
+    <Compile Include="Particles.fs" />
+    <Compile Include="Audio.fs" />
+    <Compile Include="Renderer.fs" />
+    <Compile Include="Program.fs" />
+  </ItemGroup>
+</Project>

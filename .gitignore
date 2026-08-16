@@ -1,0 +1,35 @@
+# .NET build output
+**/bin/
+**/obj/
+artifacts/
+publish/
+
+# Tests and coverage
+TestResults/
+coverage/
+*.trx
+*.coverage
+*.coveragexml
+
+# Local SDK and tool state
+.dotnet/
+.vs/
+
+# IDEs and editors
+.idea/
+.vscode/
+.fleet/
+*.suo
+*.user
+*.userosscache
+
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+*.local
+*.log
+
+# Operating systems
+.DS_Store
+Thumbs.db

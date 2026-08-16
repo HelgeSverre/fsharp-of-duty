@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../Ironsight.Core/Ironsight.Core.fsproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <Compile Include="Protocol.fs" />
+    <Compile Include="MatchHost.fs" />
+    <Compile Include="Program.fs" />
+  </ItemGroup>
+</Project>
