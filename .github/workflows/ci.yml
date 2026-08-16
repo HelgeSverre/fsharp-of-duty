@@ -1,0 +1,35 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 9.0.x
+
+      - name: Restore
+        run: dotnet restore Ironsight.sln
+
+      - name: Verify formatting
+        run: dotnet format Ironsight.sln --verify-no-changes --no-restore
+
+      - name: Build
+        run: dotnet build Ironsight.sln --no-restore
+
+      - name: Test
+        run: dotnet test Ironsight.sln --no-build --no-restore --nologo
