@@ -73,12 +73,18 @@ module Program =
                             do! send (Protocol.welcome playerId token) socket cancellationToken
                             let mutable connected = true
                             let mutable pendingReceive = receiveMessage socket cancellationToken
+                            // The snapshot timer must keep its own cadence. Starting a
+                            // fresh delay after every message meant a client streaming
+                            // inputs at tick rate starved itself of snapshots forever.
+                            let mutable snapshotDelay = Task.Delay(50, cancellationToken)
                             let mutable rateWindow = Stopwatch.GetTimestamp()
                             let mutable messagesInWindow = 0
                             while connected && socket.State = WebSocketState.Open && not cancellationToken.IsCancellationRequested do
-                                let delayTask = Task.Delay(50, cancellationToken)
-                                let! completed = Task.WhenAny(pendingReceive, delayTask)
-                                if Object.ReferenceEquals(completed, pendingReceive) then
+                                let! completed = Task.WhenAny(pendingReceive, snapshotDelay)
+                                if Object.ReferenceEquals(completed, snapshotDelay) then
+                                    do! send (host.Snapshot() |> Protocol.snapshot) socket cancellationToken
+                                    snapshotDelay <- Task.Delay(50, cancellationToken)
+                                else
                                     let! incoming = pendingReceive
                                     match incoming with
                                     | Some inputDocument ->
@@ -100,8 +106,6 @@ module Program =
                                             | _ -> ()
                                         if connected then pendingReceive <- receiveMessage socket cancellationToken
                                     | None -> connected <- false
-                                else
-                                    do! send (host.Snapshot() |> Protocol.snapshot) socket cancellationToken
                         with
                         | :? WebSocketException -> ()
                         | :? OperationCanceledException -> ()
@@ -119,7 +123,12 @@ module Program =
                 Args = args,
                 WebRootPath = if IO.Directory.Exists sourceWebRoot then sourceWebRoot else null)
         let builder = WebApplication.CreateBuilder options
-        builder.WebHost.UseUrls("http://0.0.0.0:8080") |> ignore
+        let port =
+            Environment.GetEnvironmentVariable "PORT"
+            |> Option.ofObj
+            |> Option.bind (fun value -> match Int32.TryParse value with true, parsed -> Some parsed | _ -> None)
+            |> Option.defaultValue 8080
+        builder.WebHost.UseUrls($"http://0.0.0.0:{port}") |> ignore
         let matchLevel =
             match Environment.GetEnvironmentVariable "IRONSIGHT_LEVEL" with
             | value when String.Equals(value, "stalingrad", StringComparison.OrdinalIgnoreCase) -> Ironsight.ProcGen.Levels.stalingradStreet

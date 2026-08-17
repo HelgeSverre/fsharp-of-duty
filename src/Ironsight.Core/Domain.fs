@@ -136,6 +136,7 @@ type MountedGun =
 
 type Level =
     { Name: string
+      Revision: int
       Bounds: Aabb
       Brushes: Brush array
       BrushGrid: BrushGrid

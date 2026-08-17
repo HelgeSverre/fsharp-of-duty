@@ -33,6 +33,7 @@ type Renderer(gl: GL) =
     let mutable gunIndexCount = 0u
     let mutable loadedGun = ""
     let mutable loadedLevel = ""
+    let mutable loadedLevelRevision = -1
     let mutable decals: Vector4 list = []
     let mutable recoil = 0.0f
     let mutable recoilVelocity = 0.0f
@@ -117,6 +118,7 @@ type Renderer(gl: GL) =
         gl.BindVertexArray 0u
         indexCount <- uint32 level.Indices.Length
         loadedLevel <- level.Name
+        loadedLevelRevision <- level.Revision
 
     let createDynamicMesh () =
         soldierVao <- gl.GenVertexArray()
@@ -235,7 +237,8 @@ type Renderer(gl: GL) =
         createGunMesh ()
 
     member _.Render(world: World, hudInfo: HudInfo) =
-        if loadedLevel <> world.Level.Name then uploadLevel world.Level
+        // Re-upload when the script rebuilds the level (OpenPath) or the map changes.
+        if loadedLevel <> world.Level.Name || loadedLevelRevision <> world.Level.Revision then uploadLevel world.Level
         gl.ClearColor(0.54f, 0.61f, 0.64f, 1.0f)
         if indexCount > 0u then
             let eye, viewProjection, fieldOfView = cameraMatrices world.Player

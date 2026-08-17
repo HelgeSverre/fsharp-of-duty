@@ -273,6 +273,7 @@ module LevelCompile =
         let brushGrid = compileBrushGrid brushArray
         let vertices, indices = compileMesh brushArray
         { Name = spec.Name
+          Revision = 0
           Bounds = bounds
           Brushes = brushArray
           BrushGrid = brushGrid
@@ -290,7 +291,9 @@ module LevelCompile =
     let rebuild brushes (level: Level) =
         let brushGrid = compileBrushGrid brushes
         let vertices, indices = compileMesh brushes
+        // Bump the revision so renderers holding cached geometry re-upload.
         { level with
+            Revision = level.Revision + 1
             Brushes = brushes
             BrushGrid = brushGrid
             Nav = compileNav level.Bounds brushes brushGrid

@@ -25,6 +25,9 @@ module ScriptTests =
         Assert.Equal(beforeBrushes - 1, opened.Level.Brushes.Length)
         Assert.Equal(beforeVertices - 24, opened.Level.Vertices.Length)
         Assert.NotEmpty opened.Level.Nav
+        // Renderers cache geometry per level name; the revision must advance so
+        // they re-upload instead of drawing a wall that no longer collides.
+        Assert.Equal(original.Level.Revision + 1, opened.Level.Revision)
 
     [<Fact>]
     let ``completed objective ends mission`` () =

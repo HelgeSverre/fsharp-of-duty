@@ -42,12 +42,18 @@ module ServerTests =
         Assert.Equal(5L, host.Snapshot().Players[playerId].LastInputSequence)
 
     [<Fact>]
-    let ``far future input sequence is rejected`` () =
+    let ``far future input sequence resynchronizes the input window`` () =
+        // A stalled server can fall many client frames behind. The ceiling that
+        // rejected far-future sequences could never close again, bricking the
+        // player's input stream for the rest of the match.
         let host = MatchHost FreeForAll
         let playerId, _ = host.TryAddPlayer("Time traveler").Value
         applyInput 10000 host playerId
         host.AdvanceTick()
-        Assert.Equal(-1L, host.Snapshot().Players[playerId].LastInputSequence)
+        Assert.Equal(10000L, host.Snapshot().Players[playerId].LastInputSequence)
+        applyInput 10001 host playerId
+        host.AdvanceTick()
+        Assert.Equal(10001L, host.Snapshot().Players[playerId].LastInputSequence)
 
     [<Fact>]
     let ``authoritative rifle hit awards team score and starts victim respawn`` () =

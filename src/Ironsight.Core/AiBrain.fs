@@ -143,18 +143,25 @@ module AiBrain =
         // Hundreds of troops may share contact, but only the nearest handful get
         // a clean firing lane at once. The rest advance/suppress instead of all
         // deleting the player on the same frame.
+        // Line-of-sight raycasts dominate AI cost, so visibility is computed
+        // once per soldier per tick and reused by the firing slots, the contact
+        // update, and the tactical fire decision below.
+        let playerVisible =
+            soldiers
+            |> Array.map (fun soldier -> soldier.Team = Axis && Perception.canSeePlayer level player soldier)
         let engagementSlots =
             soldiers
-            |> Array.filter (fun soldier -> soldier.Team = Axis && Perception.canSeePlayer level player soldier)
-            |> Array.sortBy (fun soldier -> Vector3.DistanceSquared(soldier.Position, player.Position))
+            |> Array.mapi (fun index soldier -> index, soldier)
+            |> Array.filter (fun (index, soldier) -> soldier.Team = Axis && playerVisible[index])
+            |> Array.sortBy (fun (_, soldier) -> Vector3.DistanceSquared(soldier.Position, player.Position))
             |> Array.truncate Tuning.EnemyMaxPlayerShooters
-            |> Array.map (fun soldier -> soldier.Id)
+            |> Array.map (fun (_, soldier) -> soldier.Id)
             |> Set.ofArray
         let updatedSoldiers =
             soldiers
-            |> Array.map (fun original ->
+            |> Array.mapi (fun index original ->
                 let recovered = { original with Suppression = max 0.0f (original.Suppression - Units.raw dt * 0.72f) }
-                let perceived = Perception.updateContacts dt level updatedPlayer recovered
+                let perceived = Perception.updateContacts playerVisible[index] dt level updatedPlayer recovered
                 match perceived.Behavior with
                 | Dying sinceDeath -> { perceived with Behavior = Dying(sinceDeath + dt) }
                 | DyingHeadshot sinceDeath -> { perceived with Behavior = DyingHeadshot(sinceDeath + dt) }
@@ -174,7 +181,7 @@ module AiBrain =
                         followRoute dt level patrolGoal perceived
                     | None -> { perceived with Behavior = Idle }
                     | Some(struct (lastKnown, contactAge)) ->
-                        let visible = Perception.canSeePlayer level updatedPlayer perceived
+                        let visible = playerVisible[index]
                         let board = Map.tryFind perceived.Squad blackboards
                         let hasCoveringFire = board |> Option.bind (fun value -> value.Suppressor) |> Option.exists ((<>) perceived.Id)
                         let tactical =
@@ -235,22 +242,25 @@ module AiBrain =
                             Weapons.step dt 0.0f shouldFire (shouldReload tactical.Weapon) 0.0f &localRng tactical.Weapon
                         let armed = { tactical with Weapon = weapon }
                         for request in requests do
-                            let origin = Ballistics.soldierMuzzleOrigin armed
-                            let target = updatedPlayer.Position + Vector3(0.0f, 1.05f, 0.0f)
-                            // Player-facing AI deliberately shoots a loose cone. The cone
-                            // tightens toward close range so a massed battlefield stays
-                            // threatening without turning every rifleman into a laser or
-                            // making point-blank encounters instant kills at range.
-                            let range = Vector3.Distance(origin, target)
-                            let aimFactor = Math.Clamp(6.0f / MathF.Max(1.0f, range), 0.35f, Tuning.EnemyAimSpreadMultiplier)
-                            let direction = aimDirection origin target (request.DirectionOffset * aimFactor)
-                            events.Add(ShotFired(Some armed.Id, origin, direction, weapon.Class.Name))
-                            match playerHitDistance origin direction updatedPlayer with
-                            | Some hitDistance when hitDistance < staticHitDistance origin direction level ->
-                                let hurt, hurtEvent = Damage.hurtPlayer (request.Damage * Tuning.EnemyDamageScale) (-direction) updatedPlayer
-                                updatedPlayer <- hurt
-                                events.Add hurtEvent
-                            | _ -> ()
+                            // Visibility was sampled at tick start; stop engaging
+                            // once the player has fallen to earlier fire this tick.
+                            if updatedPlayer.Health > Units.health 0.0f then
+                                let origin = Ballistics.soldierMuzzleOrigin armed
+                                let target = updatedPlayer.Position + Vector3(0.0f, 1.05f, 0.0f)
+                                // Player-facing AI deliberately shoots a loose cone. The cone
+                                // tightens toward close range so a massed battlefield stays
+                                // threatening without turning every rifleman into a laser or
+                                // making point-blank encounters instant kills at range.
+                                let range = Vector3.Distance(origin, target)
+                                let aimFactor = Math.Clamp(6.0f / MathF.Max(1.0f, range), 0.35f, Tuning.EnemyAimSpreadMultiplier)
+                                let direction = aimDirection origin target (request.DirectionOffset * aimFactor)
+                                events.Add(ShotFired(Some armed.Id, origin, direction, weapon.Class.Name))
+                                match playerHitDistance origin direction updatedPlayer with
+                                | Some hitDistance when hitDistance < staticHitDistance origin direction level ->
+                                    let hurt, hurtEvent = Damage.hurtPlayer (request.Damage * Tuning.EnemyDamageScale) (-direction) updatedPlayer
+                                    updatedPlayer <- hurt
+                                    events.Add hurtEvent
+                                | _ -> ()
                         armed)
         let mutable combatSoldiers = updatedSoldiers
         for allyIndex in 0..combatSoldiers.Length - 1 do

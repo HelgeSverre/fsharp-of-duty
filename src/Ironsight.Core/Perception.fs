@@ -16,7 +16,7 @@ module Perception =
             && Vector3.Dot(facing, MathEx.horizontal direction |> MathEx.normalizedOrZero) >= MathF.Cos(MathF.PI / 3.0f)
             && Ballistics.lineOfSight eye torso level
 
-    let updateContacts dt level player (soldier: Soldier) =
+    let updateContacts visible dt level (player: Player) (soldier: Soldier) =
         let aged =
             soldier.Contacts
             |> Map.toSeq
@@ -25,7 +25,7 @@ module Perception =
                 if nextAge < Units.seconds 8.0f then Some(id, struct (position, nextAge)) else None)
             |> Map.ofSeq
         let contacts =
-            if canSeePlayer level player soldier then Map.add player.Id (struct (player.Position, Units.seconds 0.0f)) aged
+            if visible then Map.add player.Id (struct (player.Position, Units.seconds 0.0f)) aged
             else aged
         { soldier with Contacts = contacts }
 

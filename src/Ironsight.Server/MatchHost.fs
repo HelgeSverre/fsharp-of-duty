@@ -150,7 +150,14 @@ type MatchHost(mode: GameMode, ?matchLevel: Level) =
     member _.ApplyInput(id, message: JsonElement) =
         lock gate (fun () ->
             match Map.tryFind id state.Players, Protocol.tryInt64 "sequence" message with
-            | Some player, Some sequence when sequence > player.LastInputSequence && sequence <= player.LastInputSequence + 120L ->
+            // Any newer sequence is accepted. The old "+120" ceiling was meant as
+            // anti-flood armour, but a stalled server (GC pause, host migration)
+            // leaves the client numbering far ahead and the window can never
+            // close again: the player's inputs stay rejected for the rest of the
+            // match, even after a session resume. Replays are still blocked by
+            // the lower bound, and flooding is capped by the per-tick application
+            // in AdvanceTick plus the message rate limit.
+            | Some player, Some sequence when sequence > player.LastInputSequence ->
                 if player.Alive then
                     let moveX = Protocol.tryFloat32 "moveX" message |> Option.defaultValue 0.0f |> clamp -1.0f 1.0f
                     let moveY = Protocol.tryFloat32 "moveY" message |> Option.defaultValue 0.0f |> clamp -1.0f 1.0f
@@ -162,6 +169,10 @@ type MatchHost(mode: GameMode, ?matchLevel: Level) =
                     let input = { Sequence = sequence; Move = Vector2(moveX, moveY); Look = Vector2(lookX, lookY); Buttons = buttons }
                     let requestedTick = Protocol.tryInt64 "estimatedServerTick" message |> Option.defaultValue state.Tick
                     let estimatedTick = Math.Clamp(requestedTick, state.Tick - 12L, state.Tick)
+                    // Only the latest input per tick is applied: applying every
+                    // queued frame would let a flooding client move and fire
+                    // faster than the server ticks. Unacknowledged frames are
+                    // replayed by the client during reconciliation.
                     pendingInputs <- Map.add id (struct (input, estimatedTick)) pendingInputs
                 else
                     // The client keeps numbering input while dead. Acknowledge

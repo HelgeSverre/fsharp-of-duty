@@ -297,7 +297,7 @@ module AiTests =
                 Position = Vector3.Zero
                 Facing = 0.0f
                 Contacts = Map.ofList [ hiddenPlayer.Id, struct (hiddenPlayer.Position, Units.seconds 7.99f) ] }
-        let updated = Perception.updateContacts (Units.seconds 0.02f) level hiddenPlayer soldier
+        let updated = Perception.updateContacts false (Units.seconds 0.02f) level hiddenPlayer soldier
         Assert.False(updated.Contacts.ContainsKey hiddenPlayer.Id)
 
     [<Fact>]
