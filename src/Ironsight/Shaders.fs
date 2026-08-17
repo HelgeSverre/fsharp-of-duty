@@ -168,6 +168,7 @@ in vec4 vLightPosition;
 flat in int vMaterial;
 uniform vec3 uCamera;
 uniform int uViewmodel;
+uniform float uContrast;
 uniform sampler2D uShadowMap;
 uniform int uImpactCount;
 uniform vec4 uImpacts[16];
@@ -246,6 +247,7 @@ void main() {
     float luminance = dot(color, vec3(0.299, 0.587, 0.114));
     color = mix(vec3(luminance), color, uViewmodel == 1 ? 0.82 : 0.66);
     color *= vec3(1.01, 0.96, 0.84);
+    color = (color - vec3(0.5)) * uContrast + vec3(0.5);
     color = pow(max(color, vec3(0.0)), vec3(1.0 / 2.2));
     outColor = vec4(color, 1.0);
 }

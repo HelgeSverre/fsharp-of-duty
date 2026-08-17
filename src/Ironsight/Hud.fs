@@ -17,7 +17,9 @@ type HudInfo =
       HitMarker: bool
       HitMarkerLethal: bool
       Subtitle: string option
-      Menu: StartMenuState option }
+      Menu: StartMenuState option
+      Settings: GameSettings
+      SettingsScreen: SettingsUi.State option }
 
 [<RequireQualifiedAccess>]
 module HudLayout =
@@ -251,8 +253,9 @@ type Hud(gl: GL) =
             addText (centerX - float32 subtitle.Length * 5.0f) (float32 height - 106.0f) 1.25f white subtitle)
         let hurt = MathEx.clamp01 (1.0f - Units.raw world.Player.Health / 100.0f)
         if hurt > 0.01f then
-            let red = Vector4(0.55f, 0.0f, 0.0f, hurt * 0.55f)
-            let clearRed = Vector4(0.55f, 0.0f, 0.0f, 0.0f)
+            let blood = Settings.bloodRgb info.Settings.BloodColor
+            let red = Vector4(blood.X, blood.Y, blood.Z, hurt * 0.55f)
+            let clearRed = Vector4(blood.X, blood.Y, blood.Z, 0.0f)
             let thickness = 50.0f + hurt * 90.0f
             gradientQuad 0.0f 0.0f (float32 width) thickness red red clearRed clearRed
             gradientQuad 0.0f (float32 height - thickness) (float32 width) thickness clearRed clearRed red red
@@ -297,6 +300,38 @@ type Hud(gl: GL) =
                 let color = if selected then Vector4(1.0f, 0.91f, 0.64f, 1.0f) else white
                 addText (panelLeft + 42.0f) y 1.3f color label)
             let prompt = "UP/DOWN OR MOUSE   ENTER/CLICK TO SELECT   ESC TO BACK"
+            addText (centerX - float32 prompt.Length * 3.6f) (panelTop + panelHeight - 30.0f) 0.9f (Vector4(0.64f, 0.67f, 0.61f, 1.0f)) prompt)
+        info.SettingsScreen
+        |> Option.iter (fun screen ->
+            let rowHeight = 40.0f
+            let rows = SettingsUi.visibleRows screen
+            let panelWidth = min 860.0f (float32 width - 48.0f)
+            let panelHeight = 150.0f + rowHeight * float32 rows.Length
+            let panelLeft = centerX - panelWidth * 0.5f
+            let panelTop = centerY - panelHeight * 0.5f
+            solid 0.0f 0.0f (float32 width) (float32 height) (Vector4(0.005f, 0.009f, 0.008f, 0.63f))
+            solid panelLeft panelTop panelWidth panelHeight (Vector4(0.025f, 0.040f, 0.034f, 0.94f))
+            solid panelLeft panelTop panelWidth 5.0f (Vector4(0.82f, 0.22f, 0.08f, 1.0f))
+            let title = "SETTINGS"
+            addText (centerX - float32 title.Length * 12.0f) (panelTop + 26.0f) 2.4f white title
+            rows
+            |> List.iteri (fun index row ->
+                let y = panelTop + 92.0f + float32 index * rowHeight
+                if row.Selected then
+                    solid (panelLeft + 18.0f) (y - 7.0f) (panelWidth - 36.0f) 31.0f (Vector4(0.47f, 0.17f, 0.07f, 0.88f))
+                    solid (panelLeft + 18.0f) (y - 7.0f) 5.0f 31.0f (Vector4(1.0f, 0.74f, 0.30f, 1.0f))
+                let labelColor =
+                    if row.Header then Vector4(0.62f, 0.67f, 0.60f, 0.85f)
+                    elif row.Selected then Vector4(1.0f, 0.91f, 0.64f, 1.0f)
+                    else white
+                addText (panelLeft + 42.0f) y 1.25f labelColor row.Label
+                let value =
+                    if row.Adjustable then $"< {row.Value} >"
+                    elif row.Value = "" then ""
+                    else row.Value
+                if value <> "" then
+                    addText (panelLeft + panelWidth - 70.0f - float32 value.Length * 8.0f) y 1.25f labelColor value)
+            let prompt = "UP/DOWN SELECT   LEFT/RIGHT ADJUST   ENTER CONFIRM   ESC BACK"
             addText (centerX - float32 prompt.Length * 3.6f) (panelTop + panelHeight - 30.0f) 0.9f (Vector4(0.64f, 0.67f, 0.61f, 1.0f)) prompt)
         let data = vertices.ToArray()
         if data.Length > 0 then

@@ -17,12 +17,18 @@ type InputSampler(context: IInputContext) =
     let mutable menuActive = false
     let mutable menuUp = false
     let mutable menuDown = false
+    let mutable menuLeft = false
+    let mutable menuRight = false
     let mutable menuActivate = false
     let mutable menuBack = false
     let mutable menuBackspace = false
     let mutable menuText = ""
     let mutable menuClick = false
     let mutable mousePosition = Vector2.Zero
+    let mutable lookSensitivity = 1.0f
+    let mutable adsToggleEnabled = false
+    let mutable adsLatched = false
+    let mutable adsPrevHeld = false
 
     do
         keyboard
@@ -31,6 +37,8 @@ type InputSampler(context: IInputContext) =
                 if menuActive then
                     if key = Key.Up then menuUp <- true
                     elif key = Key.Down then menuDown <- true
+                    elif key = Key.Left then menuLeft <- true
+                    elif key = Key.Right then menuRight <- true
                     elif key = Key.Enter then menuActivate <- true
                     elif key = Key.Escape then menuBack <- true
                     elif key = Key.Backspace then menuBackspace <- true
@@ -52,7 +60,7 @@ type InputSampler(context: IInputContext) =
                 elif not menuActive then
                     let delta = position - lastPosition
                     if delta.LengthSquared() < 40000.0f then
-                        lookDelta <- lookDelta + delta * Vector2(0.0022f, -0.0022f)
+                        lookDelta <- lookDelta + delta * Vector2(0.0022f * lookSensitivity, -0.0022f * lookSensitivity)
                 lastPosition <- position))
 
     member _.Sample() =
@@ -63,7 +71,14 @@ type InputSampler(context: IInputContext) =
         let y = (if pressed Key.W then 1.0f else 0.0f) - (if pressed Key.S then 1.0f else 0.0f)
         let mutable buttons = InputButtons.None
         if fireLatched || mousePressed MouseButton.Left then buttons <- buttons ||| InputButtons.Fire
-        if mousePressed MouseButton.Right then buttons <- buttons ||| InputButtons.Ads
+        let adsHeld = mousePressed MouseButton.Right
+        let ads =
+            if adsToggleEnabled then
+                if adsHeld && not adsPrevHeld then adsLatched <- not adsLatched
+                adsPrevHeld <- adsHeld
+                adsLatched
+            else adsHeld
+        if ads then buttons <- buttons ||| InputButtons.Ads
         if pressed Key.ShiftLeft then buttons <- buttons ||| InputButtons.Sprint
         if reloadLatched then buttons <- buttons ||| InputButtons.Reload
         if pressed Key.ControlLeft then buttons <- buttons ||| InputButtons.Crouch
@@ -89,13 +104,24 @@ type InputSampler(context: IInputContext) =
         lookDelta <- Vector2.Zero
         fireLatched <- false
         reloadLatched <- false
+        adsLatched <- false
+        adsPrevHeld <- false
         mouse
         |> Option.iter (fun device -> device.Cursor.CursorMode <- if value then CursorMode.Normal else CursorMode.Raw)
+
+    member _.SetSensitivity(value: float32) = lookSensitivity <- value
+
+    member _.SetAdsToggle(value: bool) =
+        adsToggleEnabled <- value
+        adsLatched <- false
+        adsPrevHeld <- false
 
     member _.ConsumeMenuInput() =
         let value =
             { Up = menuUp
               Down = menuDown
+              Left = menuLeft
+              Right = menuRight
               Activate = menuActivate
               Back = menuBack
               Backspace = menuBackspace
@@ -104,6 +130,8 @@ type InputSampler(context: IInputContext) =
               Clicked = menuClick }
         menuUp <- false
         menuDown <- false
+        menuLeft <- false
+        menuRight <- false
         menuActivate <- false
         menuBack <- false
         menuBackspace <- false

@@ -58,6 +58,12 @@ module Program =
         let mutable hitMarkerLethal = false
         let mutable lastHeartbeatTick = -1L
         let mutable lastDistantTick = -1L
+        let mutable settings =
+            if args |> Array.contains "--reset-settings" then Settings.defaults else Settings.load ()
+        let mutable settingsScreen: SettingsUi.State option = None
+        let applySettings () =
+            sampler |> Option.iter (fun input -> input.SetSensitivity settings.MouseSensitivity; input.SetAdsToggle settings.AdsToggle)
+            renderer |> Option.iter (fun value -> value.SetSettings settings)
         let createOfflineWorld map =
             match map with
             | "stalingrad" -> Sim.createStalingradWorld 0x1A0B3CUL
@@ -102,6 +108,7 @@ module Program =
             pendingInputs <- []
             reconciledTick <- -1L
             predictedFireHeld <- false
+            settingsScreen <- None
             menu <- Some(StartMenu.create playerName)
             inputSampler.SetMenuActive true
             window.Title <- "IRONSIGHT — F# of Duty"
@@ -121,6 +128,7 @@ module Program =
             let value = renderer.Value
             value.Resize(window.FramebufferSize.X, window.FramebufferSize.Y, window.Size)
             Console.WriteLine($"Window {window.Size.X}x{window.Size.Y} framebuffer {window.FramebufferSize.X}x{window.FramebufferSize.Y} uiScale {HudLayout.uiScale window.FramebufferSize.X window.Size.X}")
+            applySettings ()
             try audio <- Some(new AudioSystem())
             with error -> Console.Error.WriteLine($"Audio unavailable: {error.Message}")
             if onlineRequested then
@@ -170,28 +178,44 @@ module Program =
                 | Some inputSampler ->
                     match menu with
                     | Some state ->
-                        let struct (nextMenu, action) = StartMenu.update window.Size.X window.Size.Y (inputSampler.ConsumeMenuInput()) state
-                        menu <- Some nextMenu
-                        playerName <- nextMenu.PlayerName
-                        action
-                        |> Option.iter (function
-                            | StartOffline map ->
-                                onlineRequested <- false
-                                initialWorld <- createOfflineWorld map
-                                previous <- initialWorld
-                                current <- initialWorld
-                                menu <- None
-                                inputSampler.SetMenuActive false
-                                window.Title <- $"IRONSIGHT — {current.Level.Name}"
-                            | StartOnline weaponName ->
-                                connectionGeneration <- connectionGeneration + 1
-                                onlineRequested <- true
-                                selectedOnlineWeapon <- weaponName
-                                reconnectAfter <- DateTimeOffset.MinValue
-                                menu <- None
-                                inputSampler.SetMenuActive false
-                                window.Title <- "IRONSIGHT — CONNECTING TO FLY.IO"
-                            | ExitGame -> window.Close())
+                        match settingsScreen with
+                        | Some screen ->
+                            let menuInput = inputSampler.ConsumeMenuInput()
+                            if menuInput.Back then
+                                settingsScreen <- None
+                                Settings.save settings |> ignore
+                            else
+                                let updated = SettingsUi.update menuInput screen
+                                settingsScreen <- Some updated
+                                if updated.Settings <> settings then
+                                    settings <- updated.Settings
+                                    applySettings ()
+                                    Settings.save settings |> ignore
+                        | None ->
+                            let struct (nextMenu, action) = StartMenu.update window.Size.X window.Size.Y (inputSampler.ConsumeMenuInput()) state
+                            menu <- Some nextMenu
+                            playerName <- nextMenu.PlayerName
+                            action
+                            |> Option.iter (function
+                                | StartOffline map ->
+                                    onlineRequested <- false
+                                    initialWorld <- createOfflineWorld map
+                                    previous <- initialWorld
+                                    current <- initialWorld
+                                    menu <- None
+                                    inputSampler.SetMenuActive false
+                                    window.Title <- $"IRONSIGHT — {current.Level.Name}"
+                                | StartOnline weaponName ->
+                                    connectionGeneration <- connectionGeneration + 1
+                                    onlineRequested <- true
+                                    selectedOnlineWeapon <- weaponName
+                                    reconnectAfter <- DateTimeOffset.MinValue
+                                    menu <- None
+                                    inputSampler.SetMenuActive false
+                                    window.Title <- "IRONSIGHT — CONNECTING TO FLY.IO"
+                                | OpenSettings ->
+                                    settingsScreen <- Some(SettingsUi.create settings)
+                                | ExitGame -> window.Close())
                     | None ->
                         if inputSampler.ConsumeEscape() then returnToMenu inputSampler
                         let inputFrame = inputSampler.Sample()
@@ -332,7 +356,9 @@ module Program =
                   HitMarker = hitMarkerRemaining > Units.seconds 0.0f
                   HitMarkerLethal = hitMarkerLethal
                   Subtitle = subtitleText
-                  Menu = menu }
+                  Menu = if settingsScreen.IsSome then None else menu
+                  Settings = settings
+                  SettingsScreen = settingsScreen }
             renderer |> Option.iter (fun value -> value.Render(renderedWorld, hudInfo)))
         window.add_FramebufferResize(fun _ ->
             // Query the properties rather than trusting the event payload so
@@ -342,6 +368,7 @@ module Program =
             |> Option.iter (fun value ->
                 value.Resize(window.FramebufferSize.X, window.FramebufferSize.Y, window.Size)))
         window.add_Closing(fun () ->
+            Settings.save settings |> ignore
             onlineClient
             |> Option.iter (fun client ->
                 closeClient client)

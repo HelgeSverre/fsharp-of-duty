@@ -37,6 +37,7 @@ type Renderer(gl: GL) =
     let mutable loadedGun = ""
     let mutable loadedLevel = ""
     let mutable loadedLevelRevision = -1
+    let mutable settings = Settings.defaults
     let mutable decals: Vector4 list = []
     let mutable recoil = 0.0f
     let mutable recoilVelocity = 0.0f
@@ -220,7 +221,7 @@ type Renderer(gl: GL) =
         let view = Matrix4x4.CreateLookAt(eye, eye + forward, Vector3.UnitY)
         let scoped = player.Slots[player.Active].Class.Name = "Kar98k Sniper"
         let adsFov = if scoped then 20.0f else 40.0f
-        let fieldOfView = (65.0f + (adsFov - 65.0f) * player.Ads) * MathF.PI / 180.0f
+        let fieldOfView = (settings.Fov + (adsFov - settings.Fov) * player.Ads) * MathF.PI / 180.0f
         let projection = Matrix4x4.CreatePerspectiveFieldOfView(fieldOfView, float32 width / float32 (max 1 height), 0.05f, 120.0f)
         // System.Numerics stores row-vector matrices in row-major memory. OpenGL
         // reads that same memory as column-major, which supplies the required
@@ -300,6 +301,7 @@ type Renderer(gl: GL) =
             gl.Enable EnableCap.DepthTest
             gl.UseProgram program
             gl.Uniform1(gl.GetUniformLocation(program, "uViewmodel"), 0)
+            gl.Uniform1(gl.GetUniformLocation(program, "uContrast"), settings.Contrast)
             use matrixPointer = fixed matrix
             gl.UniformMatrix4(gl.GetUniformLocation(program, "uViewProjection"), 1u, false, matrixPointer)
             gl.UniformMatrix4(gl.GetUniformLocation(program, "uLightViewProjection"), 1u, false, lightPointer)
@@ -373,8 +375,10 @@ type Renderer(gl: GL) =
                 gl.Enable EnableCap.CullFace
         hud.Render(logicalWidth, logicalHeight, world, hudInfo)
 
+    member _.SetSettings(value: GameSettings) = settings <- value
+
     member _.HandleEvents(events: GameEvent list) =
-        particles.Handle events
+        particles.Handle events (Settings.bloodRgb settings.BloodColor)
         let added =
             events
             |> List.choose (function

@@ -100,7 +100,7 @@ void main() {
         gl.VertexAttribPointer(2u, 1, VertexAttribPointerType.Float, false, stride, nativeint (7 * sizeof<float32>))
         gl.BindVertexArray 0u
 
-    member _.Handle(events: GameEvent list) =
+    member _.Handle(events: GameEvent list) (blood: Vector3) =
         for event in events do
             match event with
             | ShotFired(_, origin, direction, _) ->
@@ -117,6 +117,9 @@ void main() {
                     let velocity = normal * (0.35f + float32 index * 0.08f) + tangent * MathF.Cos(angle) * 0.3f + bitangent * MathF.Sin(angle) * 0.3f
                     addPuff position velocity (Vector4(0.55f, 0.42f, 0.25f, 0.56f)) (10.0f + float32 index * 2.0f) 0.42f -1.8f
             | BloodImpact(position, direction, headshot) ->
+                let dark = Vector4(blood.X * 0.45f, blood.Y * 0.45f, blood.Z * 0.45f, 0.95f)
+                let light = Vector4(blood.X, blood.Y, blood.Z, 0.90f)
+                let lineColor = Vector4(min 1.0f (blood.X * 1.25f), min 1.0f (blood.Y * 1.25f), min 1.0f (blood.Z * 1.25f), 0.92f)
                 let forward = MathEx.normalizedOrZero direction
                 let tangent = Vector3.Cross(forward, if abs forward.Y < 0.8f then Vector3.UnitY else Vector3.UnitX) |> MathEx.normalizedOrZero
                 let bitangent = Vector3.Cross(forward, tangent) |> MathEx.normalizedOrZero
@@ -125,16 +128,18 @@ void main() {
                     let angle = float32 index * 2.39996f
                     let radial = tangent * MathF.Cos(angle) + bitangent * MathF.Sin(angle)
                     let velocity = forward * (1.5f + float32 (index % 4) * 0.42f) + radial * (0.35f + float32 (index % 3) * 0.18f)
-                    let color = if index % 3 = 0 then Vector4(0.24f, 0.005f, 0.008f, 0.95f) else Vector4(0.58f, 0.015f, 0.018f, 0.90f)
+                    let color = if index % 3 = 0 then dark else light
                     addPuff position velocity color (if headshot then 15.0f else 10.0f) (0.42f + float32 (index % 3) * 0.08f) -7.5f
-                addLine position (position + forward * (if headshot then 0.75f else 0.42f)) (Vector4(0.72f, 0.01f, 0.015f, 0.92f)) 0.18f
+                addLine position (position + forward * (if headshot then 0.75f else 0.42f)) lineColor 0.18f
             | HeadGib(position, direction) ->
+                let dark = Vector4(blood.X * 0.55f, blood.Y * 0.55f, blood.Z * 0.55f, 1.0f)
+                let light = Vector4(min 1.0f (blood.X * 1.15f), min 1.0f (blood.Y * 1.15f), min 1.0f (blood.Z * 1.15f), 1.0f)
                 let forward = MathEx.normalizedOrZero direction
                 for index in 0..7 do
                     let angle = float32 index * MathF.Tau / 8.0f
                     let spray = Vector3(MathF.Cos angle, 0.35f + float32 (index % 3) * 0.22f, MathF.Sin angle)
                     let velocity = forward * 1.8f + spray * (1.2f + float32 (index % 2) * 0.55f)
-                    let color = if index % 2 = 0 then Vector4(0.32f, 0.006f, 0.008f, 1.0f) else Vector4(0.68f, 0.20f, 0.12f, 1.0f)
+                    let color = if index % 2 = 0 then dark else light
                     addPuff position velocity color (20.0f + float32 (index % 3) * 5.0f) 0.72f -8.5f
             | Explosion(position, radius) ->
                 let size = min 1.8f (radius * 0.22f)

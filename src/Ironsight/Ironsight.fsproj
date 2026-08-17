@@ -11,7 +11,9 @@
     <PackageReference Include="Silk.NET.OpenAL" Version="2.23.0" />
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="Settings.fs" />
     <Compile Include="Menu.fs" />
+    <Compile Include="SettingsUi.fs" />
     <Compile Include="Input.fs" />
     <Compile Include="Shaders.fs" />
     <Compile Include="NetworkClient.fs" />

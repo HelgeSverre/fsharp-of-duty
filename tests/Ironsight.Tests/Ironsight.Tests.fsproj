@@ -19,6 +19,7 @@
     <Compile Include="CombatTests.fs" />
     <Compile Include="AiTests.fs" />
     <Compile Include="ScriptTests.fs" />
+    <Compile Include="SettingsTests.fs" />
     <Compile Include="ClientTests.fs" />
     <Compile Include="ServerTests.fs" />
   </ItemGroup>

@@ -107,7 +107,10 @@ the server.
 | Escape | Return to the menu; quit from the main menu |
 
 Menus support the mouse or Up/Down and Enter. The callsign editor accepts normal
-typing and Backspace.
+typing and Backspace. The main menu's SETTINGS entry opens a persisted settings
+screen: field of view, contrast, mouse sensitivity, ADS toggle, and blood color
+saved as JSON under the platform application-data directory (`--reset-settings`
+restores defaults).
 
 ## Architecture
 

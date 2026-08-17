@@ -13,6 +13,8 @@ type StartMenuState =
 type MenuInput =
     { Up: bool
       Down: bool
+      Left: bool
+      Right: bool
       Activate: bool
       Back: bool
       Backspace: bool
@@ -23,6 +25,7 @@ type MenuInput =
 type StartMenuAction =
     | StartOffline of map: string
     | StartOnline of weaponName: string
+    | OpenSettings
     | ExitGame
 
 [<RequireQualifiedAccess>]
@@ -37,7 +40,7 @@ module StartMenu =
 
     let items state =
         match state.Page with
-        | Main -> [| $"CALLSIGN  {state.PlayerName}"; "QUICK PLAY"; "OFFLINE PLAY / MAP SELECT"; "JOIN ONLINE" |]
+        | Main -> [| $"CALLSIGN  {state.PlayerName}"; "QUICK PLAY"; "OFFLINE PLAY / MAP SELECT"; "JOIN ONLINE"; "SETTINGS" |]
         | NameEntry -> [| $"> {state.PlayerName}_" |]
         | OfflineMaps -> [| "PAINTBALL KILLHOUSE"; "TRAINING YARD"; "STALINGRAD STREET"; "NORMANDY BATTLEFIELD"; "BACK" |]
         | ServerList -> [| "FLY.IO  -  FSHARP-OF-DUTY.FLY.DEV"; "BACK" |]
@@ -94,7 +97,8 @@ module StartMenu =
             | Main, 0 -> struct({ next with Page = NameEntry; Selected = 0 }, None)
             | Main, 1 -> struct(next, Some(StartOffline "paintball"))
             | Main, 2 -> struct({ next with Page = OfflineMaps; Selected = 0 }, None)
-            | Main, _ -> struct({ next with Page = ServerList; Selected = 0 }, None)
+            | Main, 3 -> struct({ next with Page = ServerList; Selected = 0 }, None)
+            | Main, _ -> struct(next, Some OpenSettings)
             | NameEntry, _ ->
                 let sanitized = Multiplayer.sanitizeName next.PlayerName
                 let playerName = if System.String.IsNullOrWhiteSpace sanitized then "Soldier" else sanitized

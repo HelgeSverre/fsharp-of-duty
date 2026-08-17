@@ -68,6 +68,8 @@ module ClientTests =
         let idle =
             { Up = false
               Down = false
+              Left = false
+              Right = false
               Activate = false
               Back = false
               Backspace = false
@@ -82,6 +84,8 @@ module ClientTests =
         Assert.Equal(Some(StartOffline "paintball"), mapAction)
         let struct (servers, _) = StartMenu.update 1280 720 activate { StartMenu.initial with Selected = 3 }
         Assert.Equal(ServerList, servers.Page)
+        let struct (_, settingsAction) = StartMenu.update 1280 720 activate { StartMenu.initial with Selected = 4 }
+        Assert.Equal(Some OpenSettings, settingsAction)
         let struct (loadout, _) = StartMenu.update 1280 720 activate servers
         Assert.Equal(OnlineLoadout, loadout.Page)
         let struct (_, onlineAction) = StartMenu.update 1280 720 activate { loadout with Selected = 3 }
