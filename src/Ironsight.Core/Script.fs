@@ -26,6 +26,7 @@ module Script =
                   Team = team
                   Position = position + Vector3((float32 (index % 3) - 1.0f) * 1.1f, 0.0f, float32 (index / 3) * 1.1f)
                   Facing = if team = Allies then 0.0f else MathF.PI
+                  Stance = Standing
                   Health = Units.health 100.0f
                   Behavior = Idle
                   Weapon = Tuning.weaponSlot (if team = Allies then Tuning.thompson else Tuning.kar98k) 3

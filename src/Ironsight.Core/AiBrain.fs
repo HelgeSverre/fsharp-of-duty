@@ -18,23 +18,63 @@ module AiBrain =
             let startNode, goalNode = nearest startPosition, nearest goalPosition
             let costs = Array.create level.Nav.Length Single.PositiveInfinity
             let previous = Array.create level.Nav.Length -1
-            let openSet = ResizeArray<int>()
             let closed = Array.create level.Nav.Length false
+            let heuristic node = Vector3.Distance(level.Nav[node].Position, level.Nav[goalNode].Position)
+            let heap = Array.create (level.Nav.Length + 1) (struct (0.0f, -1))
+            let mutable heapSize = 0
+            let heapAdd f node =
+                heapSize <- heapSize + 1
+                let mutable index = heapSize
+                heap[index] <- struct (f, node)
+                while index > 1 do
+                    let parent = index / 2
+                    let struct (parentF, _) = heap[parent]
+                    let struct (childF, _) = heap[index]
+                    if childF < parentF then
+                        let swap = heap[parent]
+                        heap[parent] <- heap[index]
+                        heap[index] <- swap
+                        index <- parent
+                    else index <- 1
+            let heapPop () =
+                let top = heap[1]
+                heap[1] <- heap[heapSize]
+                heapSize <- heapSize - 1
+                let mutable index = 1
+                let mutable settled = false
+                while not settled && index * 2 <= heapSize do
+                    let left = index * 2
+                    let right = left + 1
+                    let struct (leftF, _) = heap[left]
+                    let child = if right <= heapSize then
+                                    let struct (rightF, _) = heap[right]
+                                    if rightF < leftF then right else left
+                                else left
+                    let struct (childF, _) = heap[child]
+                    let struct (currentF, _) = heap[index]
+                    if childF < currentF then
+                        let swap = heap[child]
+                        heap[child] <- heap[index]
+                        heap[index] <- swap
+                        index <- child
+                    else settled <- true
+                top
             costs[startNode] <- 0.0f
-            openSet.Add startNode
-            while openSet.Count > 0 && not closed[goalNode] do
-                let current =
-                    openSet
-                    |> Seq.minBy (fun index -> costs[index] + Vector3.Distance(level.Nav[index].Position, level.Nav[goalNode].Position))
-                openSet.Remove current |> ignore
-                closed[current] <- true
-                for neighbour in level.Nav[current].Neighbours do
-                    if not closed[neighbour] then
-                        let tentative = costs[current] + Vector3.Distance(level.Nav[current].Position, level.Nav[neighbour].Position)
-                        if tentative < costs[neighbour] then
-                            costs[neighbour] <- tentative
-                            previous[neighbour] <- current
-                            if not (openSet.Contains neighbour) then openSet.Add neighbour
+            heapAdd (heuristic startNode) startNode
+            let mutable found = false
+            while heapSize > 0 && not found do
+                let struct (_, node) = heapPop ()
+                if not closed[node] then
+                    closed[node] <- true
+                    if node = goalNode then found <- true
+                    else
+                        for neighbour in level.Nav[node].Neighbours do
+                            if not closed[neighbour] then
+                                let tentative = costs[node] + Vector3.Distance(level.Nav[node].Position, level.Nav[neighbour].Position)
+                                if tentative < costs[neighbour] then
+                                    costs[neighbour] <- tentative
+                                    previous[neighbour] <- node
+                                    heapAdd (tentative + heuristic neighbour) neighbour
             if goalNode <> startNode && previous[goalNode] < 0 then []
             else
                 let result = ResizeArray<Vector3>()
@@ -83,10 +123,11 @@ module AiBrain =
         let right = MathEx.normalizedOrZero (Vector3.Cross(forward, Vector3.UnitY))
         MathEx.normalizedOrZero (forward + right * offset.X + Vector3.UnitY * offset.Y)
 
-    let private playerHitDistance origin direction (player: Player) =
-        [ MathEx.rayCapsule origin direction (player.Position + Vector3(0.0f, 1.48f, 0.0f)) (player.Position + Vector3(0.0f, 1.70f, 0.0f)) 0.16f
-          MathEx.rayCapsule origin direction (player.Position + Vector3(0.0f, 0.78f, 0.0f)) (player.Position + Vector3(0.0f, 1.36f, 0.0f)) 0.28f
-          MathEx.rayCapsule origin direction (player.Position + Vector3(0.0f, 0.18f, 0.0f)) (player.Position + Vector3(0.0f, 0.76f, 0.0f)) 0.22f ]
+    let playerHitDistance origin direction (player: Player) =
+        let crouch = Ballistics.stanceOffset player.Stance
+        [ MathEx.rayCapsule origin direction (player.Position + Vector3(0.0f, 1.62f - crouch, 0.0f)) (player.Position + Vector3(0.0f, 1.85f - crouch, 0.0f)) 0.13f
+          MathEx.rayCapsule origin direction (player.Position + Vector3(0.0f, 0.85f - crouch, 0.0f)) (player.Position + Vector3(0.0f, 1.55f - crouch, 0.0f)) 0.26f
+          MathEx.rayCapsule origin direction (player.Position + Vector3(0.0f, 0.10f - crouch, 0.0f)) (player.Position + Vector3(0.0f, 0.85f - crouch, 0.0f)) 0.20f ]
         |> List.choose id
         |> function [] -> None | hits -> Some(List.min hits)
 
@@ -191,15 +232,18 @@ module AiBrain =
                                    | Flanking _ -> true
                                    | _ -> false)
                         let struct (weapon, requests) =
-                            Weapons.step dt shouldFire (shouldReload tactical.Weapon) 0.0f &localRng tactical.Weapon
+                            Weapons.step dt 0.0f shouldFire (shouldReload tactical.Weapon) 0.0f &localRng tactical.Weapon
                         let armed = { tactical with Weapon = weapon }
                         for request in requests do
                             let origin = Ballistics.soldierMuzzleOrigin armed
                             let target = updatedPlayer.Position + Vector3(0.0f, 1.05f, 0.0f)
-                            // Player-facing AI deliberately shoots a loose cone. This keeps
-                            // a massed battlefield threatening without turning every rifleman
-                            // into a synchronized hitscan turret.
-                            let direction = aimDirection origin target (request.DirectionOffset * Tuning.EnemyAimSpreadMultiplier)
+                            // Player-facing AI deliberately shoots a loose cone. The cone
+                            // tightens toward close range so a massed battlefield stays
+                            // threatening without turning every rifleman into a laser or
+                            // making point-blank encounters instant kills at range.
+                            let range = Vector3.Distance(origin, target)
+                            let aimFactor = Math.Clamp(6.0f / MathF.Max(1.0f, range), 0.35f, Tuning.EnemyAimSpreadMultiplier)
+                            let direction = aimDirection origin target (request.DirectionOffset * aimFactor)
                             events.Add(ShotFired(Some armed.Id, origin, direction, weapon.Class.Name))
                             match playerHitDistance origin direction updatedPlayer with
                             | Some hitDistance when hitDistance < staticHitDistance origin direction level ->
@@ -236,7 +280,7 @@ module AiBrain =
                             { ally with Facing = MathF.Atan2(enemy.Position.X - ally.Position.X, -(enemy.Position.Z - ally.Position.Z)); Contacts = contact }
                     let shouldFire = distance <= 32.0f
                     let struct (weapon, requests) =
-                        Weapons.step dt shouldFire (shouldReload positioned.Weapon) 0.72f &localRng positioned.Weapon
+                        Weapons.step dt 0.0f shouldFire (shouldReload positioned.Weapon) 0.72f &localRng positioned.Weapon
                     combatSoldiers[allyIndex] <- { positioned with Weapon = weapon }
                     for request in requests do
                         let origin = Ballistics.soldierMuzzleOrigin positioned
@@ -273,7 +317,7 @@ module AiBrain =
                     let facing = MathF.Atan2(friendly.Position.X - axis.Position.X, -(friendly.Position.Z - axis.Position.Z))
                     let aimed = { axis with Facing = facing; Contacts = Map.add friendly.Id (struct (friendly.Position, Units.seconds 0.0f)) axis.Contacts }
                     let struct (weapon, requests) =
-                        Weapons.step dt true (shouldReload aimed.Weapon) 0.0f &localRng aimed.Weapon
+                        Weapons.step dt 0.0f true (shouldReload aimed.Weapon) 0.0f &localRng aimed.Weapon
                     combatSoldiers[axisIndex] <- { aimed with Weapon = weapon }
                     for request in requests do
                         let origin = Ballistics.soldierMuzzleOrigin aimed

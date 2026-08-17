@@ -27,17 +27,22 @@ module Ballistics =
         | "M1897 Trench Gun" -> 1.18f
         | _ -> 1.10f
 
+    let stanceOffset = function
+        | Standing -> 0.0f
+        | Crouched -> 0.34f
+        | Prone -> 0.90f
+
     let playerMuzzleOrigin (player: Player) weaponName =
         let eyeHeight =
             match player.Stance with
             | Standing -> 1.62f
-            | Crouched -> 1.15f
-            | Prone -> 0.52f
+            | Crouched -> 1.18f
+            | Prone -> 0.55f
         let forward = directionFromAngles player.Yaw player.Pitch Vector2.Zero
         let right = MathEx.yawRight player.Yaw
         let hip = 1.0f - player.Ads
         player.Position
-        + Vector3.UnitY * (eyeHeight - 0.08f - 0.12f * hip)
+        + Vector3.UnitY * (eyeHeight - 0.14f - 0.10f * hip)
         + right * (0.20f * hip)
         + forward * muzzleDistance weaponName
 
@@ -57,18 +62,30 @@ module Ballistics =
     let private soldierHit origin direction index (soldier: Soldier) =
         if soldier.Health <= Units.health 0.0f then None
         else
-            let capsule low high radius region =
-                MathEx.rayCapsule origin direction (soldier.Position + Vector3(0.0f, low, 0.0f)) (soldier.Position + Vector3(0.0f, high, 0.0f)) radius
-                |> Option.map (fun distance -> SoldierHit(distance, index, region))
-            [ capsule 1.48f 1.70f 0.16f Head
-              capsule 0.78f 1.36f 0.28f Torso
-              capsule 0.18f 0.76f 0.22f Legs ]
-            |> List.choose id
-            |> function
-                | [] -> None
-                | hits -> Some(List.minBy (function SoldierHit(distance, _, _) -> distance | _ -> Single.PositiveInfinity) hits)
+            let crouch = stanceOffset soldier.Stance
+            let capsule low high radius =
+                MathEx.rayCapsule origin direction
+                    (soldier.Position + Vector3(0.0f, low - crouch, 0.0f))
+                    (soldier.Position + Vector3(0.0f, high - crouch, 0.0f)) radius
+            let hits =
+                [ capsule 1.62f 1.85f 0.13f
+                  capsule 0.85f 1.55f 0.26f
+                  capsule 0.10f 0.85f 0.20f ]
+                |> List.choose id
+            match hits with
+            | [] -> None
+            | distances ->
+                let distance = List.min distances
+                let height = (origin + direction * distance).Y - soldier.Position.Y
+                let torsoTop = 1.55f - crouch
+                let torsoBottom = 0.85f - crouch
+                let region =
+                    if height >= torsoTop then Head
+                    elif height >= torsoBottom then Torso
+                    else Legs
+                Some(SoldierHit(distance, index, region))
 
-    let traceFiltered canHit origin direction (level: Level) (soldiers: Soldier array) =
+    let traceFilteredExcluding canHit excludeIndexes origin direction (level: Level) (soldiers: Soldier array) =
         let surfaceHits =
             LevelCompile.brushesAlongRay origin direction 200.0f level
             |> Array.choose (fun item ->
@@ -76,12 +93,16 @@ module Ballistics =
                 |> Option.map (fun struct (entry, exit, normal) -> SurfaceHit(entry, exit, normal, item)))
         let soldierHits =
             soldiers
-            |> Array.mapi (fun index soldier -> if canHit soldier then soldierHit origin direction index soldier else None)
+            |> Array.mapi (fun index soldier ->
+                if canHit soldier && not (Set.contains index excludeIndexes) then soldierHit origin direction index soldier else None)
             |> Array.choose id
         Array.append surfaceHits soldierHits
         |> function
             | [||] -> None
             | hits -> Some(Array.minBy (function SurfaceHit(distance, _, _, _) | SoldierHit(distance, _, _) -> distance) hits)
+
+    let traceFiltered canHit origin direction (level: Level) (soldiers: Soldier array) =
+        traceFilteredExcluding canHit Set.empty origin direction level soldiers
 
     let trace origin direction level soldiers = traceFiltered (fun _ -> true) origin direction level soldiers
 
@@ -94,8 +115,9 @@ module Ballistics =
         let events = ResizeArray<GameEvent>()
         let mutable tracing = true
         let mutable penetrations = 0
+        let mutable passedThrough = Set.empty
         while tracing && remainingRange > 0.0f && penetrations <= 4 do
-            match traceFiltered canHit currentOrigin direction level updated with
+            match traceFilteredExcluding canHit passedThrough currentOrigin direction level updated with
             | None -> tracing <- false
             | Some(SoldierHit(distance, index, region)) when distance <= remainingRange ->
                 let multiplier = match region with Head -> 1.5f | Torso -> 1.0f | Legs -> 0.65f
@@ -109,7 +131,14 @@ module Ballistics =
                 events.Add(HitConfirmed(victim.Id, lethal))
                 events.Add(BloodImpact(hitPosition, direction, headshot))
                 if lethal && headshot then events.Add(HeadGib(hitPosition, direction))
-                tracing <- false
+                if budget >= Tuning.BodyPenetrationCost then
+                    budget <- budget - Tuning.BodyPenetrationCost
+                    currentDamage <- currentDamage * Tuning.BodyDamageRetention
+                    currentOrigin <- currentOrigin + direction * (distance + 0.15f)
+                    remainingRange <- remainingRange - (distance + 0.15f)
+                    penetrations <- penetrations + 1
+                    passedThrough <- Set.add index passedThrough
+                else tracing <- false
             | Some(SurfaceHit(distance, exitDistance, normal, item)) when distance <= remainingRange ->
                 let impactPosition = currentOrigin + direction * distance
                 events.Add(Impact(impactPosition, normal, item.Material))

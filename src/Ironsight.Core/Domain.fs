@@ -36,7 +36,8 @@ type WeaponSlot =
       State: WeaponState
       InMag: int
       Reserve: int
-      BurstIx: int }
+      BurstIx: int
+      Bloom: float32 }
 
 type Stance = Standing | Crouched | Prone
 
@@ -51,6 +52,8 @@ type Player =
       Yaw: float32
       Pitch: float32
       Stance: Stance
+      CrouchLatched: bool
+      CrouchPrevHeld: bool
       Sprinting: bool
       Ads: float32
       Health: float32<hp>
@@ -79,6 +82,7 @@ type Soldier =
       Team: Team
       Position: Vector3
       Facing: float32
+      Stance: Stance
       Health: float32<hp>
       Behavior: AiBehavior
       Weapon: WeaponSlot

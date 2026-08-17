@@ -55,9 +55,81 @@ module AiTests =
             match soldiers[0].Behavior with
             | InCover(cover, _) -> occupied <- Some cover
             | _ -> ()
-
         Assert.True(occupied.IsSome, "AI never occupied the owned barricade")
         Assert.True(occupied.Value.Pos.Z < -0.55f, $"AI crossed to the exposed side at z={occupied.Value.Pos.Z}")
+
+    [<Fact>]
+    let ``a direct hit suppresses the target soldier`` () =
+        let level = LevelDsl.level "Hit range" [ LevelDsl.street 30.0f 10.0f Mud ] |> LevelCompile.compile
+        let world = Sim.createTrainingWorld 5UL
+        let target =
+            { Id = EntityId 44
+              Team = Axis
+              Position = Vector3.Zero
+              Facing = MathF.PI
+              Stance = Standing
+              Health = Units.health 100.0f
+              Behavior = Idle
+              Weapon = Tuning.weaponSlot Tuning.kar98k 3
+              Squad = 2
+              Contacts = Map.empty
+              Suppression = 0.0f
+              AnimPhase = 0.0f }
+        let player =
+            { world.Player with
+                Position = Vector3(0.0f, 0.0f, 5.0f)
+                Yaw = 0.0f
+                Pitch = 0.0f }
+        let world = { world with Level = level; Player = player; Soldiers = [| target |] }
+        let struct (after, events) = Sim.step { Sequence = 1L; Move = Vector2.Zero; Look = Vector2.Zero; Buttons = InputButtons.Fire } world
+        Assert.Contains(events, function HitConfirmed(EntityId 44, false) -> true | _ -> false)
+        let soldier = after.Soldiers |> Array.find (fun soldier -> soldier.Id = target.Id)
+        Assert.True(soldier.Suppression >= 2.0f)
+        match soldier.Behavior with
+        | Suppressed _ -> ()
+        | other -> Assert.Fail($"expected Suppressed, got {other}")
+
+    [<Fact>]
+    let ``crouching player avoids standing-height shots`` () =
+        let level = LevelDsl.level "Hit range" [ LevelDsl.street 30.0f 10.0f Mud ] |> LevelCompile.compile
+        let world = Sim.createTrainingWorld 5UL
+        let target = world.Soldiers |> Array.find (fun soldier -> soldier.Team = Axis && soldier.Health > Units.health 0.0f)
+        let crouchedPlayer =
+            { world.Player with
+                Position = target.Position + Vector3(0.0f, 0.0f, -5.0f)
+                Yaw = 0.0f
+                Pitch = 0.0f
+                Stance = Crouched }
+        let shots = ResizeArray<Vector3>()
+        let soldier =
+            { Id = target.Id
+              Team = Axis
+              Position = target.Position
+              Facing = MathF.PI
+              Stance = Standing
+              Health = Units.health 100.0f
+              Behavior = Idle
+              Weapon = Tuning.weaponSlot Tuning.kar98k 3
+              Squad = 2
+              Contacts = Map.empty
+              Suppression = 0.0f
+              AnimPhase = 0.0f }
+        let origin = Ballistics.soldierMuzzleOrigin soldier
+        let targetPoint = crouchedPlayer.Position + Vector3(0.0f, 1.05f, 0.0f)
+        let direction = MathEx.normalizedOrZero (targetPoint - origin)
+        // The AI aims at the crouched torso; the shot must connect with the
+        // crouched hitbox, whereas a standing-height shot would pass overhead.
+        let hit = AiBrain.playerHitDistance origin direction crouchedPlayer
+        Assert.True(hit.IsSome)
+        shots.Add origin
+        Assert.NotEmpty shots
+
+    [<Fact>]
+    let ``AI aim cone tightens at range`` () =
+        let closeFactor = Math.Clamp(6.0f / MathF.Max(1.0f, 5.0f), 0.35f, Tuning.EnemyAimSpreadMultiplier)
+        let farFactor = Math.Clamp(6.0f / MathF.Max(1.0f, 40.0f), 0.35f, Tuning.EnemyAimSpreadMultiplier)
+        Assert.True(closeFactor > farFactor)
+        Assert.True(farFactor >= 0.35f)
 
     [<Fact>]
     let ``ai capsule movement cannot walk through a level wall`` () =
@@ -163,6 +235,7 @@ module AiTests =
               Team = Axis
               Position = Vector3(0.0f, 0.0f, -12.0f)
               Facing = MathF.PI
+              Stance = Standing
               Health = Units.health 100.0f
               Behavior = Idle
               Weapon = Tuning.weaponSlot Tuning.kar98k 3

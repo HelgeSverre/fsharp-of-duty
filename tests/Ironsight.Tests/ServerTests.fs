@@ -202,6 +202,20 @@ module ServerTests =
         Assert.Equal("Returned", host.Snapshot().Players[playerId].Name)
 
     [<Fact>]
+    let ``crouch toggles online and survives the player round trip`` () =
+        let host = MatchHost TeamDeathmatch
+        let playerId, _ = host.TryAddPlayer("Croucher").Value
+        applyCustom 1L 0.0f 0.0f (int InputButtons.Crouch) host playerId
+        host.AdvanceTick()
+        Assert.Equal(Crouched, host.Snapshot().Players[playerId].Stance)
+        applyCustom 2L 0.0f 0.0f 0 host playerId
+        host.AdvanceTick()
+        Assert.Equal(Crouched, host.Snapshot().Players[playerId].Stance)
+        applyCustom 3L 0.0f 0.0f (int InputButtons.Crouch) host playerId
+        host.AdvanceTick()
+        Assert.Equal(Standing, host.Snapshot().Players[playerId].Stance)
+
+    [<Fact>]
     let ``selected online weapon is authoritative and replicated`` () =
         let host = MatchHost TeamDeathmatch
         let playerId, _ = host.TryAddPlayer("Scout", weaponName = "Kar98k Sniper").Value

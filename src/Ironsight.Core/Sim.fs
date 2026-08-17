@@ -147,9 +147,10 @@ module Sim =
             && not weaponLocked
         let reload = hasButton InputButtons.Reload input.Buttons
         let mutable rng = world.Rng
+        let moveSpeed = MathEx.horizontal prepared.Velocity |> fun velocity -> velocity.Length()
         let struct (weapon, shots) =
             if weaponLocked then struct (active, [])
-            else Weapons.step Tuning.TickDuration fire reload prepared.Ads &rng active
+            else Weapons.step Tuning.TickDuration moveSpeed fire reload prepared.Ads &rng active
         let slots = Array.copy prepared.Slots
         slots[prepared.Active] <- weapon
         let armedPlayer = { prepared with Slots = slots }
@@ -179,6 +180,11 @@ module Sim =
                             Suppression = suppression
                             Behavior = if suppression >= 2.0f then Suppressed(Units.seconds 1.5f) else soldier.Behavior
                             Contacts = if heard then Map.add playerWithHand.Id (struct (playerWithHand.Position, Units.seconds 0.0f)) soldier.Contacts else soldier.Contacts }
+                    elif soldier.Team = Axis && soldier.Health < soldiers[index].Health then
+                        { soldier with
+                            Suppression = 3.0f
+                            Behavior = Suppressed(Units.seconds 1.5f)
+                            Contacts = Map.add playerWithHand.Id (struct (playerWithHand.Position, Units.seconds 0.0f)) soldier.Contacts }
                     else soldier)
             shotEvents.AddRange hitEvents
         let grenades = match thrown with Some grenade -> Array.append world.Grenades [| grenade |] | None -> world.Grenades
@@ -241,6 +247,8 @@ module Sim =
               Yaw = 0.0f
               Pitch = 0.0f
               Stance = Standing
+              CrouchLatched = false
+              CrouchPrevHeld = false
               Sprinting = false
               Ads = 0.0f
               Health = Units.health 100.0f
@@ -265,6 +273,7 @@ module Sim =
                           Team = soldierTeam
                           Position = position
                           Facing = if soldierTeam = Allies then 0.0f else MathF.PI
+                          Stance = Standing
                           Health = Units.health 100.0f
                           Behavior = Idle
                           Weapon = staggeredWeapon
@@ -284,6 +293,7 @@ module Sim =
                   Team = emplacement.Team
                   Position = emplacement.Position
                   Facing = emplacement.Facing
+                  Stance = Crouched
                   Health = Units.health 100.0f
                   Behavior =
                     InCover(

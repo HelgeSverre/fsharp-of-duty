@@ -49,11 +49,19 @@ module Grenades =
         for grenade in grenades do
             let velocity = grenade.Velocity + Vector3(0.0f, -Tuning.Gravity * seconds, 0.0f)
             let requested = grenade.Position + velocity * seconds
-            let collision = LevelCompile.brushesNear requested 0.25f level |> Array.tryFind (fun item -> MathEx.overlapsPoint requested item.Bounds)
+            // Sample the swept segment as well as the endpoint so a fast grenade
+            // cannot tunnel straight through a thin brush or sandbag.
+            let collision =
+                [| 0.25f; 0.5f; 0.75f; 1.0f |]
+                |> Array.tryPick (fun t ->
+                    let point = Vector3.Lerp(grenade.Position, requested, t)
+                    LevelCompile.brushesNear point 0.25f level
+                    |> Array.tryFind (fun item -> MathEx.overlapsPoint point item.Bounds)
+                    |> Option.map (fun item -> point, item))
             let position, bouncedVelocity =
                 match collision with
-                | Some item ->
-                    let normal = collisionNormal requested item.Bounds
+                | Some(point, item) ->
+                    let normal = collisionNormal point item.Bounds
                     grenade.Position, Vector3.Reflect(velocity, normal) * 0.3f
                 | None when requested.Y < 0.08f ->
                     Vector3(requested.X, 0.08f, requested.Z), Vector3(velocity.X * 0.65f, MathF.Abs velocity.Y * 0.3f, velocity.Z * 0.65f)

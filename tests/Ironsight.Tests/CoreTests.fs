@@ -86,7 +86,7 @@ module CoreTests =
                 let x = (float32 (index % 10) - 4.5f) * 2.0f
                 let z = -28.0f - float32 (index / 10) * 1.4f
                 let weapon = { Tuning.weaponSlot Tuning.kar98k 4 with State = Cooling(Units.seconds (float32 (index % 60) / 60.0f)) }
-                { Id = EntityId(100 + index); Team = Axis; Position = Vector3(x, 0.0f, z); Facing = MathF.PI
+                { Id = EntityId(100 + index); Team = Axis; Position = Vector3(x, 0.0f, z); Facing = MathF.PI; Stance = Standing
                   Health = Units.health 100.0f; Behavior = AdvancingTo(player.Position, []); Weapon = weapon; Squad = 2
                   Contacts = Map.add player.Id (struct (player.Position, Units.seconds 0.0f)) Map.empty; Suppression = 0.0f; AnimPhase = float32 index })
         let mutable world = { baseline with Player = player; Soldiers = enemies; Level = arena; Objectives = [||]; Script = { baseline.Script with Rules = [||] } }
@@ -176,7 +176,7 @@ module CoreTests =
             events
             |> List.filter (function ShotFired(Some(EntityId 1), _, _, "M1897 Trench Gun") -> true | _ -> false)
         let mutable rng = Rng.create 91UL
-        let struct (_, pellets) = Weapons.step Tuning.TickDuration true false 0.0f &rng (Tuning.weaponSlot Tuning.m1897 5)
+        let struct (_, pellets) = Weapons.step Tuning.TickDuration 0.0f true false 0.0f &rng (Tuning.weaponSlot Tuning.m1897 5)
         Assert.Equal(4, world.Player.Active)
         Assert.Equal("M1897 Trench Gun", world.Player.Slots[world.Player.Active].Class.Name)
         Assert.Equal(1, shots.Length)
@@ -192,6 +192,37 @@ module CoreTests =
             world <- next
             shots <- shots + (events |> List.filter (function ShotFired(Some(EntityId 1), _, _, _) -> true | _ -> false) |> List.length)
         Assert.Equal(1, shots)
+
+    [<Fact>]
+    let ``sustained automatic fire grows bloom`` () =
+        let mutable rng = Rng.create 13UL
+        let mutable slot = Tuning.weaponSlot Tuning.thompson 4
+        let mutable firstShotBloom = 0.0f
+        let mutable maxBloom = 0.0f
+        let mutable shots = 0
+        for _ in 1..120 do
+            let struct (next, requests) = Weapons.step Tuning.TickDuration 0.0f true false 0.0f &rng slot
+            if requests.Length > 0 then
+                if shots = 0 then firstShotBloom <- next.Bloom
+                maxBloom <- max maxBloom next.Bloom
+                shots <- shots + 1
+            slot <- next
+        Assert.True(shots >= 8, $"expected sustained fire, fired {shots}")
+        Assert.True(maxBloom > firstShotBloom)
+
+    [<Fact>]
+    let ``firing while moving widens the spread`` () =
+        let maxSpread speed =
+            let mutable rng = Rng.create 17UL
+            let mutable slot = Tuning.weaponSlot Tuning.m1911 4
+            let mutable worst = 0.0f
+            for _ in 1..120 do
+                let struct (next, requests) = Weapons.step Tuning.TickDuration speed true false 0.0f &rng slot
+                for request in requests do
+                    worst <- max worst (request.DirectionOffset.Length())
+                slot <- next
+            worst
+        Assert.True(maxSpread 0.0f < maxSpread (Tuning.WalkSpeed * Tuning.SprintMultiplier))
 
     [<Fact>]
     let ``jump follows gravity and lands on generated ground`` () =
@@ -229,7 +260,7 @@ module CoreTests =
     let ``friendly kill does not score in team deathmatch`` () =
         let makePlayer id team =
             { Id = EntityId id; Name = string id; Team = team; Position = Vector3.Zero; Velocity = Vector3.Zero
-              Yaw = 0.0f; Pitch = 0.0f; Stance = Standing; Sprinting = false; Ads = 0.0f
+              Yaw = 0.0f; Pitch = 0.0f; Stance = Standing; CrouchLatched = false; CrouchPrevHeld = false; Sprinting = false; Ads = 0.0f
               Health = Units.health 100.0f; RegenIn = Units.seconds 0.0f; Weapon = Tuning.weaponSlot Tuning.kar98k 2
               Grenade = GrenadeIdle 3; Connected = true; Ready = true; Alive = true; RespawnIn = Units.seconds 0.0f; SpawnProtection = Units.seconds 0.0f
               Kills = 0; Deaths = 0; LastInputSequence = 0L }
@@ -244,7 +275,7 @@ module CoreTests =
     let ``team deathmatch hostile kill scores and marks victim dead`` () =
         let makePlayer id team =
             { Id = EntityId id; Name = string id; Team = team; Position = Vector3.Zero; Velocity = Vector3.Zero
-              Yaw = 0.0f; Pitch = 0.0f; Stance = Standing; Sprinting = false; Ads = 0.0f
+              Yaw = 0.0f; Pitch = 0.0f; Stance = Standing; CrouchLatched = false; CrouchPrevHeld = false; Sprinting = false; Ads = 0.0f
               Health = Units.health 100.0f; RegenIn = Units.seconds 0.0f; Weapon = Tuning.weaponSlot Tuning.kar98k 2
               Grenade = GrenadeIdle 3; Connected = true; Ready = true; Alive = true; RespawnIn = Units.seconds 0.0f; SpawnProtection = Units.seconds 0.0f
               Kills = 0; Deaths = 0; LastInputSequence = 0L }

@@ -13,11 +13,18 @@ module Movement =
         | Crouched -> Tuning.CrouchedHeight
         | Prone -> Tuning.ProneHeight
 
-    let private requestedStance buttons current =
-        if hasButton InputButtons.Prone buttons then Prone
-        elif hasButton InputButtons.Crouch buttons then Crouched
-        elif current = Prone || current = Crouched then Standing
-        else current
+    let private requestedStance (player: Player) buttons =
+        let proneHeld = hasButton InputButtons.Prone buttons
+        let crouchHeld = hasButton InputButtons.Crouch buttons
+        let crouchPressed = crouchHeld && not player.CrouchPrevHeld
+        let latched = if crouchPressed then not player.CrouchLatched else player.CrouchLatched
+        let stance =
+            if proneHeld then Prone
+            elif latched then Crouched
+            elif player.Stance = Prone then Standing
+            elif player.Stance = Crouched then Standing
+            else player.Stance
+        stance, latched, crouchHeld
 
     let private collides (level: Level) (stance: Stance) (position: Vector3) =
         LevelCompile.brushesNear position (Tuning.PlayerRadius + 0.1f) level
@@ -84,7 +91,7 @@ module Movement =
         let yaw = player.Yaw + input.Look.X
         let pitch = Math.Clamp(player.Pitch + input.Look.Y, -1.45f, 1.45f)
         let move = if input.Move.LengthSquared() > 1.0f then Vector2.Normalize input.Move else input.Move
-        let stance = requestedStance input.Buttons player.Stance
+        let stance, crouchLatched, crouchPrevHeld = requestedStance player input.Buttons
         let wantsSprint = hasButton InputButtons.Sprint input.Buttons && move.Y > 0.1f && stance = Standing
         let targetSpeed = Tuning.WalkSpeed * (if wantsSprint then Tuning.SprintMultiplier else 1.0f)
         let wishDirection = MathEx.normalizedOrZero (MathEx.yawRight yaw * move.X + MathEx.yawForward yaw * move.Y)
@@ -116,5 +123,7 @@ module Movement =
             Yaw = yaw
             Pitch = pitch
             Stance = stance
+            CrouchLatched = crouchLatched
+            CrouchPrevHeld = crouchPrevHeld
             Sprinting = wantsSprint
             Ads = ads }

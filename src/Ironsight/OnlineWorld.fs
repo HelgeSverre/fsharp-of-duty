@@ -46,6 +46,7 @@ module OnlineWorld =
           Team = snapshot.Team
           Position = snapshot.Position
           Facing = snapshot.Yaw
+          Stance = Standing
           Health = Units.health snapshot.Health
           Behavior = if snapshot.Alive then Idle else Dying(Units.seconds 0.7f)
           Weapon = weaponFor snapshot
