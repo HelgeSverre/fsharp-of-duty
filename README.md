@@ -30,7 +30,7 @@ unions model gameplay.
 
 ## Requirements
 
-- [.NET 9 SDK](https://dotnet.microsoft.com/download/dotnet/9.0). The checked-in
+- [.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0). The checked-in
   `global.json` also permits a newer installed SDK.
 - An OpenGL 4.1-capable desktop for the graphical client.
 - OpenAL support. If audio initialization fails, the game continues silently.
