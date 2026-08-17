@@ -213,8 +213,9 @@ module Program =
                                 audio |> Option.iter (fun value -> value.Handle cosmetic)
                                 predictedFireCooldown <- 60.0f / localWeapon.Class.RoundsPerMin
                             predictedFireHeld <- firePressed
-                            pendingInputs <- (pendingInputs @ [ inputFrame ]) |> List.truncate 240
-                            current <- OnlineWorld.applyPrediction current.Level inputFrame current
+                            if current.Player.Health > Units.health 0.0f then
+                                pendingInputs <- (pendingInputs @ [ inputFrame ]) |> List.truncate 240
+                                current <- OnlineWorld.applyPrediction current.Level inputFrame current
                             match client.TryLatestSnapshot() with
                             | Some snapshot when snapshot.Tick > reconciledTick ->
                                 if snapshot.LevelName <> current.Level.Name then
@@ -272,7 +273,17 @@ module Program =
                                 subtitle <- None
                             elif current.Player.Health > Units.health 0.0f || current.Round.IsSome then
                                 let previousWeaponState = current.Player.Slots[current.Player.Active].State
-                                let struct (next, events) = Sim.step inputFrame current
+                                // A fallen player no longer steers the body or the
+                                // camera, but the world keeps stepping so the round
+                                // timer, friendly AI, and grenades settle.
+                                let aliveInput =
+                                    if current.Player.Health > Units.health 0.0f then inputFrame
+                                    else
+                                        { inputFrame with
+                                            Move = System.Numerics.Vector2.Zero
+                                            Look = System.Numerics.Vector2.Zero
+                                            Buttons = InputButtons.None }
+                                let struct (next, events) = Sim.step aliveInput current
                                 current <- next
                                 let previousRound = previous.Round |> Option.map (fun round -> round.Number)
                                 let currentRound = current.Round |> Option.map (fun round -> round.Number)

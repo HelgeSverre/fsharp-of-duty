@@ -60,9 +60,14 @@ module OnlineWorld =
         | None -> world, pendingInputs
         | Some authoritative ->
             let pending = pendingInputs |> List.filter (fun input -> input.Sequence > authoritative.AcknowledgedInput)
+            let basePlayer = localPlayer world.Player authoritative
+            // A fallen player is not moved by unacknowledged frames — the server
+            // treats inputs while dead as no-ops anyway.
             let predicted =
-                pending
-                |> List.fold (fun player input -> Movement.step Tuning.TickDuration input level player) (localPlayer world.Player authoritative)
+                if authoritative.Health <= 0.0f then basePlayer
+                else
+                    pending
+                    |> List.fold (fun player input -> Movement.step Tuning.TickDuration input level player) basePlayer
             let soldiers =
                 snapshot.Players
                 |> Array.filter (fun player -> player.Id <> localId)

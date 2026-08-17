@@ -3,6 +3,7 @@ namespace Ironsight.Shell
 #nowarn "9"
 
 open System
+open System.Diagnostics
 open System.Numerics
 open Microsoft.FSharp.NativeInterop
 open Ironsight
@@ -41,6 +42,8 @@ type Renderer(gl: GL) =
     let mutable recoilVelocity = 0.0f
     let mutable viewSway = Vector2.Zero
     let mutable lastView = Vector2.Zero
+    let mutable deathWatching = false
+    let mutable deathStarted = Stopwatch.GetTimestamp()
 
     let compileShader (shaderType: ShaderType) (source: string) =
         let shader = gl.CreateShader shaderType
@@ -202,10 +205,18 @@ type Renderer(gl: GL) =
             use indexPointer = fixed meshIndices
             gl.BufferData(BufferTargetARB.ElementArrayBuffer, unativeint (meshIndices.Length * sizeof<uint32>), NativePtr.toVoidPtr indexPointer, BufferUsageARB.DynamicDraw)
 
-    let cameraMatrices (player: Player) =
-        let eyeHeight = match player.Stance with Standing -> 1.62f | Crouched -> 1.15f | Prone -> 0.52f
-        let eye = player.Position + Vector3(0.0f, eyeHeight, 0.0f)
-        let forward = Ballistics.directionFromAngles player.Yaw (player.Pitch + recoil * 0.18f) Vector2.Zero
+    let cameraMatrices (player: Player) (deathFall: float32) =
+        // Death fall: the camera tips forward, slides a little in the facing
+        // direction, and drops to ground level over the fall duration.
+        let eased = deathFall * deathFall * (3.0f - 2.0f * deathFall)
+        let stanceEye = match player.Stance with Standing -> 1.62f | Crouched -> 1.15f | Prone -> 0.52f
+        let eyeHeight = stanceEye + (0.15f - stanceEye) * eased
+        let pitch = player.Pitch + recoil * 0.18f - eased * 0.95f
+        let eye =
+            player.Position
+            + Vector3.UnitY * eyeHeight
+            + MathEx.yawForward player.Yaw * (0.35f * eased)
+        let forward = Ballistics.directionFromAngles player.Yaw pitch Vector2.Zero
         let view = Matrix4x4.CreateLookAt(eye, eye + forward, Vector3.UnitY)
         let scoped = player.Slots[player.Active].Class.Name = "Kar98k Sniper"
         let adsFov = if scoped then 20.0f else 40.0f
@@ -214,7 +225,7 @@ type Renderer(gl: GL) =
         // System.Numerics stores row-vector matrices in row-major memory. OpenGL
         // reads that same memory as column-major, which supplies the required
         // transpose automatically for GLSL's matrix * column-vector convention.
-        eye, view * projection, fieldOfView
+        eye, view * projection, fieldOfView, pitch
 
     let lightMatrix =
         let view = Matrix4x4.CreateLookAt(Vector3(-38.0f, 58.0f, 34.0f), Vector3.Zero, Vector3.UnitY)
@@ -241,9 +252,21 @@ type Renderer(gl: GL) =
     member _.Render(world: World, hudInfo: HudInfo) =
         // Re-upload when the script rebuilds the level (OpenPath) or the map changes.
         if loadedLevel <> world.Level.Name || loadedLevelRevision <> world.Level.Revision then uploadLevel world.Level
+        // Watch the player's health and time the first-person fall. Wall-clock
+        // timing keeps the collapse consistent regardless of tick cadence.
+        if world.Player.Health <= Units.health 0.0f then
+            if not deathWatching then
+                deathWatching <- true
+                deathStarted <- Stopwatch.GetTimestamp()
+        else
+            deathWatching <- false
+        let deathFall =
+            if deathWatching then
+                Math.Clamp(float32 (Stopwatch.GetElapsedTime(deathStarted).TotalSeconds) / 0.7f, 0.0f, 1.0f)
+            else 0.0f
         gl.ClearColor(0.54f, 0.61f, 0.64f, 1.0f)
         if indexCount > 0u then
-            let eye, viewProjection, fieldOfView = cameraMatrices world.Player
+            let eye, viewProjection, fieldOfView, cameraPitch = cameraMatrices world.Player deathFall
             let matrix = matrixArray viewProjection
             let light = matrixArray lightMatrix
             uploadActors world
@@ -268,7 +291,7 @@ type Renderer(gl: GL) =
             gl.Disable EnableCap.CullFace
             gl.UseProgram skyProgram
             gl.Uniform1(gl.GetUniformLocation(skyProgram, "uYaw"), world.Player.Yaw)
-            gl.Uniform1(gl.GetUniformLocation(skyProgram, "uPitch"), world.Player.Pitch + recoil * 0.18f)
+            gl.Uniform1(gl.GetUniformLocation(skyProgram, "uPitch"), cameraPitch)
             gl.Uniform1(gl.GetUniformLocation(skyProgram, "uAspect"), float32 width / float32 (max 1 height))
             gl.Uniform1(gl.GetUniformLocation(skyProgram, "uTanHalfFov"), MathF.Tan(fieldOfView * 0.5f))
             gl.BindVertexArray vao
@@ -299,7 +322,7 @@ type Renderer(gl: GL) =
             let weaponName = world.Player.Slots[world.Player.Active].Class.Name
             if loadedGun <> weaponName then uploadGun weaponName
             let lookingThroughScope = weaponName = "Kar98k Sniper" && world.Player.Ads >= 0.72f
-            if gunIndexCount > 0u && not lookingThroughScope then
+            if gunIndexCount > 0u && not lookingThroughScope && not deathWatching then
                 // Particle rendering binds its own shader. Rebind the level/
                 // viewmodel program before setting uniforms or the weapon draw
                 // is interpreted with the particle vertex layout on shot frames.

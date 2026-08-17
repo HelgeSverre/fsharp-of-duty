@@ -151,11 +151,12 @@ type Hud(gl: GL) =
             solid (centerX - 0.5f) (centerY - radius) 1.0f (radius * 2.0f) reticle
             solid (centerX - 2.0f) (centerY - 2.0f) 4.0f 4.0f reticle
         else
-            let spread = 7.0f + (weapon.Class.HipSpread + (weapon.Class.AdsSpread - weapon.Class.HipSpread) * world.Player.Ads) * 220.0f
-            solid (centerX - spread - 8.0f) (centerY - 1.0f) 8.0f 2.0f white
-            solid (centerX + spread) (centerY - 1.0f) 8.0f 2.0f white
-            solid (centerX - 1.0f) (centerY - spread - 8.0f) 2.0f 8.0f white
-            solid (centerX - 1.0f) (centerY + spread) 2.0f 8.0f white
+            if world.Player.Health > Units.health 0.0f then
+                let spread = 7.0f + (weapon.Class.HipSpread + (weapon.Class.AdsSpread - weapon.Class.HipSpread) * world.Player.Ads) * 220.0f
+                solid (centerX - spread - 8.0f) (centerY - 1.0f) 8.0f 2.0f white
+                solid (centerX + spread) (centerY - 1.0f) 8.0f 2.0f white
+                solid (centerX - 1.0f) (centerY - spread - 8.0f) 2.0f 8.0f white
+                solid (centerX - 1.0f) (centerY + spread) 2.0f 8.0f white
         if info.HitMarker then
             let hit = if info.HitMarkerLethal then Vector4(0.95f, 0.12f, 0.08f, 1.0f) else Vector4(1.0f, 0.86f, 0.30f, 0.95f)
             let reach = if info.HitMarkerLethal then 14.0f else 11.0f
