@@ -163,6 +163,11 @@ module AiBrain =
             |> Array.truncate Tuning.EnemyMaxPlayerShooters
             |> Array.map (fun (_, soldier) -> soldier.Id)
             |> Set.ofArray
+        // A soldier can be visible to both the player and the friendly squad in
+        // the same tick. Its weapon state machine must only advance once per
+        // tick, so the player-facing pass records who it already stepped and the
+        // squad-engagement pass below skips those.
+        let steppedWeapons = System.Collections.Generic.HashSet<int>()
         let updatedSoldiers =
             soldiers
             |> Array.mapi (fun index original ->
@@ -191,7 +196,7 @@ module AiBrain =
                         let board = Map.tryFind perceived.Squad blackboards
                         let hasCoveringFire = board |> Option.bind (fun value -> value.Suppressor) |> Option.exists ((<>) perceived.Id)
                         let tactical =
-                            if perceived.Weapon.Class.Name = "MG42" then
+                            if perceived.Weapon.Class.Kind = MachineGun then
                                 let facing = MathF.Atan2(lastKnown.X - perceived.Position.X, -(lastKnown.Z - perceived.Position.Z))
                                 let cover =
                                     { Pos = perceived.Position
@@ -247,6 +252,8 @@ module AiBrain =
                         let struct (weapon, requests) =
                             Weapons.step dt 0.0f (wantsFire shouldFire tactical.Weapon) (shouldReload tactical.Weapon) 0.0f &localRng tactical.Weapon
                         let armed = { tactical with Weapon = weapon }
+                        let (EntityId armedId) = armed.Id
+                        steppedWeapons.Add armedId |> ignore
                         for request in requests do
                             // Visibility was sampled at tick start; stop engaging
                             // once the player has fallen to earlier fire this tick.
@@ -336,19 +343,25 @@ module AiBrain =
                 | Some(targetIndex, friendly) ->
                     let facing = MathF.Atan2(friendly.Position.X - axis.Position.X, -(friendly.Position.Z - axis.Position.Z))
                     let aimed = { axis with Facing = facing; Contacts = Map.add friendly.Id (struct (friendly.Position, Units.seconds 0.0f)) axis.Contacts }
-                    let struct (weapon, requests) =
-                        Weapons.step dt 0.0f (wantsFire true aimed.Weapon) (shouldReload aimed.Weapon) 0.0f &localRng aimed.Weapon
-                    combatSoldiers[axisIndex] <- { aimed with Weapon = weapon }
-                    for request in requests do
-                        let origin = Ballistics.soldierMuzzleOrigin aimed
-                        let targetPoint = friendly.Position + Vector3(0.0f, 1.05f, 0.0f)
-                        let direction = aimDirection origin targetPoint request.DirectionOffset
-                        events.Add(ShotFired(Some aimed.Id, origin, direction, weapon.Class.Name))
-                        let hitSoldiers, hitEvents =
-                            Ballistics.applyShotFiltered (fun candidate -> candidate.Team = Allies) origin direction (request.Damage * Tuning.EnemyFriendlyDamageScale) request.Penetration request.HeadshotMultiplier level combatSoldiers
-                        combatSoldiers <- hitSoldiers
-                        events.AddRange(hitEvents |> List.filter (function HitConfirmed _ -> false | _ -> true))
-                        if combatSoldiers[targetIndex].Health <= Units.health 0.0f then
-                            combatSoldiers[targetIndex] <- { combatSoldiers[targetIndex] with Behavior = Dying(Units.seconds 0.0f) }
+                    let (EntityId axisId) = axis.Id
+                    if steppedWeapons.Contains axisId then
+                        // Already fired or cycled against the player this tick;
+                        // just turn to face the squad without advancing twice.
+                        combatSoldiers[axisIndex] <- aimed
+                    else
+                        let struct (weapon, requests) =
+                            Weapons.step dt 0.0f (wantsFire true aimed.Weapon) (shouldReload aimed.Weapon) 0.0f &localRng aimed.Weapon
+                        combatSoldiers[axisIndex] <- { aimed with Weapon = weapon }
+                        for request in requests do
+                            let origin = Ballistics.soldierMuzzleOrigin aimed
+                            let targetPoint = friendly.Position + Vector3(0.0f, 1.05f, 0.0f)
+                            let direction = aimDirection origin targetPoint request.DirectionOffset
+                            events.Add(ShotFired(Some aimed.Id, origin, direction, weapon.Class.Name))
+                            let hitSoldiers, hitEvents =
+                                Ballistics.applyShotFiltered (fun candidate -> candidate.Team = Allies) origin direction (request.Damage * Tuning.EnemyFriendlyDamageScale) request.Penetration request.HeadshotMultiplier level combatSoldiers
+                            combatSoldiers <- hitSoldiers
+                            events.AddRange(hitEvents |> List.filter (function HitConfirmed _ -> false | _ -> true))
+                            if combatSoldiers[targetIndex].Health <= Units.health 0.0f then
+                                combatSoldiers[targetIndex] <- { combatSoldiers[targetIndex] with Behavior = Dying(Units.seconds 0.0f) }
         rng <- localRng
         updatedPlayer, combatSoldiers, List.ofSeq events

@@ -12,6 +12,9 @@ type MatchHost(mode: GameMode, ?matchLevel: Level) =
     let mutable state = { Multiplayer.create mode with LevelName = level.Name }
     let mutable pendingInputs: Map<EntityId, struct (InputFrame * int64)> = Map.empty
     let mutable positionHistory: Map<int64, Map<EntityId, Vector3>> = Map.empty
+    // Session tokens are a convenience for reconnecting after a disconnect, not
+    // a security boundary: the server does no authentication and a token simply
+    // resumes whichever player slot it was minted for.
     let mutable sessionOwners: Map<string, EntityId> = Map.empty
     let mutable disconnectedSince: Map<EntityId, DateTimeOffset> = Map.empty
 
@@ -279,7 +282,7 @@ type MatchHost(mode: GameMode, ?matchLevel: Level) =
                             emit (FootStep(handPlayer.Position, Mud))
                         requests
                         |> List.iteri (fun index request ->
-                            let origin = Ballistics.playerMuzzleOrigin handPlayer weapon.Class.Name
+                            let origin = Ballistics.playerMuzzleOrigin handPlayer weapon.Class
                             let direction = Ballistics.directionFromAngles moved.Yaw moved.Pitch request.DirectionOffset
                             shots.Add(id, origin, direction, request.Damage, request.Penetration, request.HeadshotMultiplier, estimatedTick, (index = 0)))
                         let updated =

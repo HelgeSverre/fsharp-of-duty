@@ -129,7 +129,7 @@ type Hud(gl: GL) =
         let shadow = Vector4(0.0f, 0.0f, 0.0f, 0.7f)
         let centerX, centerY = float32 width * 0.5f, float32 height * 0.5f
         let weapon = world.Player.Slots[world.Player.Active]
-        let scoped = weapon.Class.Name = "Kar98k Sniper" && world.Player.Ads >= 0.72f
+        let scoped = weapon.Class.Kind = SniperRifle && world.Player.Ads >= 0.72f
         if scoped then
             let radius = min (float32 width * 0.46f) (float32 height * 0.47f)
             let left, right = centerX - radius, centerX + radius

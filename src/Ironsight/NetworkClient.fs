@@ -101,11 +101,33 @@ type OnlineClient(serverUri: Uri, playerName: string, requestedMode: GameMode, w
         else return Some(JsonDocument.Parse(ReadOnlyMemory(receiveBuffer, 0, total)))
     }
 
-    let getString (name: string) (element: JsonElement) = element.GetProperty(name).GetString() |> Option.ofObj |> Option.defaultValue ""
-    let getFloat (name: string) (element: JsonElement) = element.GetProperty(name).GetSingle()
-    let getInt (name: string) (element: JsonElement) = element.GetProperty(name).GetInt32()
-    let getInt64 (name: string) (element: JsonElement) = element.GetProperty(name).GetInt64()
-    let getBool (name: string) (element: JsonElement) = element.GetProperty(name).GetBoolean()
+    let getString (name: string) (element: JsonElement) =
+        match element.TryGetProperty name with
+        | true, property when property.ValueKind = JsonValueKind.String -> property.GetString() |> Option.ofObj |> Option.defaultValue ""
+        | _ -> ""
+
+    let getFloat (name: string) (element: JsonElement) =
+        match element.TryGetProperty name with
+        | true, property when property.ValueKind = JsonValueKind.Number ->
+            match property.TryGetSingle() with true, value -> value | _ -> 0.0f
+        | _ -> 0.0f
+
+    let getInt (name: string) (element: JsonElement) =
+        match element.TryGetProperty name with
+        | true, property when property.ValueKind = JsonValueKind.Number ->
+            match property.TryGetInt32() with true, value -> value | _ -> 0
+        | _ -> 0
+
+    let getInt64 (name: string) (element: JsonElement) =
+        match element.TryGetProperty name with
+        | true, property when property.ValueKind = JsonValueKind.Number ->
+            match property.TryGetInt64() with true, value -> value | _ -> 0L
+        | _ -> 0L
+
+    let getBool (name: string) (element: JsonElement) =
+        match element.TryGetProperty name with
+        | true, property when property.ValueKind = JsonValueKind.True -> true
+        | _ -> false
 
     let parseSnapshot (root: JsonElement) =
         let players =
@@ -185,7 +207,9 @@ type OnlineClient(serverUri: Uri, playerName: string, requestedMode: GameMode, w
         with
         | :? OperationCanceledException -> ()
         | :? WebSocketException -> cancellation.Cancel()
-        | _ -> cancellation.Cancel()
+        | error ->
+            Console.Error.WriteLine($"Receive loop failed: {error.Message}")
+            cancellation.Cancel()
     }
 
     let senderLoop () = task {
@@ -206,6 +230,7 @@ type OnlineClient(serverUri: Uri, playerName: string, requestedMode: GameMode, w
                     do! sendJson payload
         with
         | :? OperationCanceledException -> ()
+        | :? ObjectDisposedException -> ()
         | :? WebSocketException -> cancellation.Cancel()
     }
 

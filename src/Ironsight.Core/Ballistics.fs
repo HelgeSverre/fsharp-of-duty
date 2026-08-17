@@ -20,19 +20,14 @@ module Ballistics =
                 -MathF.Cos yaw * MathF.Cos pitch)
         MathEx.normalizedOrZero (forward + MathEx.yawRight yaw * offset.X + Vector3.UnitY * offset.Y)
 
-    let private muzzleDistance weaponName =
-        match weaponName with
-        | "M1911" -> 0.58f
-        | "Thompson" -> 0.92f
-        | "M1897 Trench Gun" -> 1.18f
-        | _ -> 1.10f
+    let private muzzleDistance (weapon: WeaponClass) = weapon.MuzzleDistance
 
     let stanceOffset = function
         | Standing -> 0.0f
         | Crouched -> 0.34f
         | Prone -> 0.90f
 
-    let playerMuzzleOrigin (player: Player) weaponName =
+    let playerMuzzleOrigin (player: Player) (weapon: WeaponClass) =
         let eyeHeight =
             match player.Stance with
             | Standing -> 1.62f
@@ -44,11 +39,11 @@ module Ballistics =
         player.Position
         + Vector3.UnitY * (eyeHeight - 0.14f - 0.10f * hip)
         + right * (0.20f * hip)
-        + forward * muzzleDistance weaponName
+        + forward * muzzleDistance weapon
 
     let soldierMuzzleOrigin (soldier: Soldier) =
         let forward = directionFromAngles soldier.Facing 0.0f Vector2.Zero
-        soldier.Position + Vector3(0.0f, 1.42f, 0.0f) + forward * muzzleDistance soldier.Weapon.Class.Name
+        soldier.Position + Vector3(0.0f, 1.42f, 0.0f) + forward * soldier.Weapon.Class.MuzzleDistance
 
     let private materialResistance = function
         | Wood -> 1.0f

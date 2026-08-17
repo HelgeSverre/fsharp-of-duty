@@ -219,7 +219,7 @@ type Renderer(gl: GL) =
             + MathEx.yawForward player.Yaw * (0.35f * eased)
         let forward = Ballistics.directionFromAngles player.Yaw pitch Vector2.Zero
         let view = Matrix4x4.CreateLookAt(eye, eye + forward, Vector3.UnitY)
-        let scoped = player.Slots[player.Active].Class.Name = "Kar98k Sniper"
+        let scoped = player.Slots[player.Active].Class.Kind = SniperRifle
         let adsFov = if scoped then 20.0f else 40.0f
         let fieldOfView = (settings.Fov + (adsFov - settings.Fov) * player.Ads) * MathF.PI / 180.0f
         let projection = Matrix4x4.CreatePerspectiveFieldOfView(fieldOfView, float32 width / float32 (max 1 height), 0.05f, 120.0f)
@@ -321,9 +321,10 @@ type Renderer(gl: GL) =
                 gl.DrawElements(PrimitiveType.Triangles, soldierIndexCount, DrawElementsType.UnsignedInt, noOffset)
             gl.BindVertexArray 0u
             particles.Render viewProjection
-            let weaponName = world.Player.Slots[world.Player.Active].Class.Name
+            let activeClass = world.Player.Slots[world.Player.Active].Class
+            let weaponName = activeClass.Name
             if loadedGun <> weaponName then uploadGun weaponName
-            let lookingThroughScope = weaponName = "Kar98k Sniper" && world.Player.Ads >= 0.72f
+            let lookingThroughScope = activeClass.Kind = SniperRifle && world.Player.Ads >= 0.72f
             if gunIndexCount > 0u && not lookingThroughScope && not deathWatching then
                 // Particle rendering binds its own shader. Rebind the level/
                 // viewmodel program before setting uniforms or the weapon draw

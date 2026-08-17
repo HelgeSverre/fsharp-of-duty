@@ -11,9 +11,12 @@ type GameMode = Campaign | FreeForAll | TeamDeathmatch
 
 type FireMode = SemiAuto | FullAuto | BoltAction
 
+type WeaponKind = Rifle | SniperRifle | Smg | Pistol | Shotgun | MachineGun
+
 type WeaponClass =
     { Name: string
       Mode: FireMode
+      Kind: WeaponKind
       Damage: float32<hp>
       RoundsPerMin: float32
       MagSize: int
@@ -24,7 +27,8 @@ type WeaponClass =
       AdsSpread: float32
       Recoil: Vector2 array
       Penetration: float32
-      HeadshotMultiplier: float32 }
+      HeadshotMultiplier: float32
+      MuzzleDistance: float32 }
 
 type WeaponState =
     | Ready

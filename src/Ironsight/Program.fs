@@ -46,7 +46,7 @@ module Program =
         let mutable reconnectTask: Task<struct (int * OnlineClient option)> option = None
         let mutable connectionGeneration = 0
         let mutable reconnectAfter = DateTimeOffset.MinValue
-        let mutable pendingInputs: InputFrame list = []
+        let pendingInputs = System.Collections.Generic.Queue<InputFrame>()
         let mutable reconciledTick = -1L
         let mutable lastOnlineEventId = 0L
         let mutable onlineSnapshot: OnlineSnapshot option = None
@@ -105,7 +105,7 @@ module Program =
             onlineClient |> Option.iter closeClient
             onlineClient <- None
             onlineSnapshot <- None
-            pendingInputs <- []
+            pendingInputs.Clear()
             reconciledTick <- -1L
             predictedFireHeld <- false
             settingsScreen <- None
@@ -139,7 +139,7 @@ module Program =
                     window.Title <- $"IRONSIGHT — ONLINE — {client.ServerUri.Host}"
                 with error ->
                     Console.Error.WriteLine($"Online connection failed: {error.Message}")
-                    window.Title <- "IRONSIGHT — ONLINE UNAVAILABLE — CAMPAIGN FALLBACK")
+                    window.Title <- "IRONSIGHT — CONNECTING")
 
         window.add_Update(fun elapsed ->
             accumulator <- min 0.25 (accumulator + elapsed)
@@ -165,7 +165,7 @@ module Program =
                     | Some client when onlineRequested && generation = connectionGeneration ->
                         onlineClient |> Option.iter closeClient
                         onlineClient <- Some client
-                        pendingInputs <- []
+                        pendingInputs.Clear()
                         reconciledTick <- -1L
                         lastOnlineEventId <- 0L
                         window.Title <- $"IRONSIGHT — ONLINE — {client.ServerUri.Host}"
@@ -230,7 +230,7 @@ module Program =
                             let mayRepeat = localWeapon.Class.Mode = FullAuto && firePressed
                             if inLiveMatch && current.Player.Health > Units.health 0.0f && localWeapon.InMag > 0
                                && predictedFireCooldown <= 0.0f && (triggerEdge || mayRepeat) then
-                                let origin = Ballistics.playerMuzzleOrigin current.Player localWeapon.Class.Name
+                                let origin = Ballistics.playerMuzzleOrigin current.Player localWeapon.Class
                                 let direction = Ballistics.directionFromAngles current.Player.Yaw current.Player.Pitch System.Numerics.Vector2.Zero
                                 let cosmetic = [ ShotFired(Some current.Player.Id, origin, direction, localWeapon.Class.Name) ]
                                 renderer |> Option.iter (fun value -> value.HandleEvents cosmetic; value.KickWeapon())
@@ -238,7 +238,8 @@ module Program =
                                 predictedFireCooldown <- 60.0f / localWeapon.Class.RoundsPerMin
                             predictedFireHeld <- firePressed
                             if current.Player.Health > Units.health 0.0f then
-                                pendingInputs <- (pendingInputs @ [ inputFrame ]) |> List.truncate 240
+                                pendingInputs.Enqueue inputFrame
+                                while pendingInputs.Count > 240 do pendingInputs.Dequeue() |> ignore
                                 current <- OnlineWorld.applyPrediction current.Level inputFrame current
                             match client.TryLatestSnapshot() with
                             | Some snapshot when snapshot.Tick > reconciledTick ->
@@ -272,9 +273,10 @@ module Program =
                                     hitMarkerLethal <- lethal
                                     hitMarkerRemaining <- Units.seconds (if lethal then 0.26f else 0.16f)
                                 | None -> ()
-                                let reconciled, remaining = OnlineWorld.reconcile current.Level pendingInputs client.PlayerId current snapshot
+                                let reconciled, remaining = OnlineWorld.reconcile current.Level (pendingInputs |> Seq.toList) client.PlayerId current snapshot
                                 current <- reconciled
-                                pendingInputs <- remaining
+                                pendingInputs.Clear()
+                                remaining |> List.iter pendingInputs.Enqueue
                                 reconciledTick <- snapshot.Tick
                                 onlineSnapshot <- Some snapshot
                             | _ -> ()

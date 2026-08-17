@@ -133,7 +133,7 @@ module CombatTests =
     let ``standing muzzle origin sits at torso height`` () =
         let world = Sim.createTrainingWorld 3UL
         let standing = { world.Player with Stance = Standing; Ads = 0.0f }
-        let origin = Ballistics.playerMuzzleOrigin standing standing.Slots[standing.Active].Class.Name
+        let origin = Ballistics.playerMuzzleOrigin standing standing.Slots[standing.Active].Class
         Assert.InRange(origin.Y - standing.Position.Y, 1.30f, 1.55f)
 
     [<Fact>]

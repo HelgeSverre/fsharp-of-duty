@@ -75,7 +75,7 @@ module Humanoid =
         let leftHand = Vector3(-0.11f, 1.28f - crouch, -0.46f)
         let rightHand = Vector3(0.10f, 1.27f - crouch, -0.31f)
         let heldWeapon =
-            if soldier.Weapon.Class.Name = "MG42" then
+            if soldier.Weapon.Class.Kind = MachineGun then
                 MeshGen.union
                     [| MeshGen.box (Vector3(0.15f, 0.15f, 0.58f)) Metal |> MeshGen.translate (Vector3(0.0f, 1.24f - crouch, -0.48f))
                        MeshGen.cylinder 10 0.032f 0.78f Metal |> MeshGen.translate (Vector3(0.0f, 1.27f - crouch, -1.14f))

@@ -159,18 +159,22 @@ module Sim =
         let shotEvents = ResizeArray<GameEvent>()
         let mutable soldiers = world.Soldiers
         if not shots.IsEmpty then
-            let origin = Ballistics.playerMuzzleOrigin playerWithHand weapon.Class.Name
+            let origin = Ballistics.playerMuzzleOrigin playerWithHand weapon.Class
             let direction = shotDirection playerWithHand shots.Head
             shotEvents.Add(ShotFired(Some playerWithHand.Id, origin, direction, weapon.Class.Name))
         for shot in shots do
-            let origin = Ballistics.playerMuzzleOrigin playerWithHand weapon.Class.Name
+            let origin = Ballistics.playerMuzzleOrigin playerWithHand weapon.Class
             let direction = shotDirection playerWithHand shot
             let hitSoldiers, hitEvents =
                 Ballistics.applyShotFiltered (fun soldier -> soldier.Team = Axis) origin direction shot.Damage shot.Penetration shot.HeadshotMultiplier world.Level soldiers
+            let hitIds =
+                hitEvents
+                |> List.choose (function HitConfirmed(victim, _) -> Some victim | _ -> None)
+                |> Set.ofList
             soldiers <-
                 hitSoldiers
-                |> Array.mapi (fun index soldier ->
-                    if soldier.Team = Axis && soldier.Health = soldiers[index].Health then
+                |> Array.map (fun soldier ->
+                    if soldier.Team = Axis && soldier.Health > Units.health 0.0f && not (Set.contains soldier.Id hitIds) then
                         let offset = soldier.Position + Vector3(0.0f, 1.0f, 0.0f) - origin
                         let alongRay = max 0.0f (Vector3.Dot(offset, direction))
                         let nearMissDistance = Vector3.Distance(origin + direction * alongRay, soldier.Position + Vector3(0.0f, 1.0f, 0.0f))
@@ -180,17 +184,15 @@ module Sim =
                             Suppression = suppression
                             Behavior = if suppression >= 2.0f then Suppressed(Units.seconds 1.5f) else soldier.Behavior
                             Contacts = if heard then Map.add playerWithHand.Id (struct (playerWithHand.Position, Units.seconds 0.0f)) soldier.Contacts else soldier.Contacts }
-                    elif soldier.Team = Axis && soldier.Health < soldiers[index].Health then
+                    elif soldier.Team = Axis && soldier.Health > Units.health 0.0f then
                         // Direct hits flinch and duck living soldiers. A lethal
                         // hit already carries its Dying/DyingHeadshot behaviour;
                         // overwriting it with Suppressed would let a corpse
                         // stand back up and keep walking.
-                        if soldier.Health > Units.health 0.0f then
-                            { soldier with
-                                Suppression = 3.0f
-                                Behavior = Suppressed(Units.seconds 1.5f)
-                                Contacts = Map.add playerWithHand.Id (struct (playerWithHand.Position, Units.seconds 0.0f)) soldier.Contacts }
-                        else soldier
+                        { soldier with
+                            Suppression = 3.0f
+                            Behavior = Suppressed(Units.seconds 1.5f)
+                            Contacts = Map.add playerWithHand.Id (struct (playerWithHand.Position, Units.seconds 0.0f)) soldier.Contacts }
                     else soldier)
             shotEvents.AddRange hitEvents
         let grenades = match thrown with Some grenade -> Array.append world.Grenades [| grenade |] | None -> world.Grenades

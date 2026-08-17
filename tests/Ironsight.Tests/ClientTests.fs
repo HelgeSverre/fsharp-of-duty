@@ -239,7 +239,7 @@ module ClientTests =
         let world = Sim.createTrainingWorld 11UL
         let player = { world.Player with Yaw = 0.4f; Pitch = -0.1f; Ads = 0.0f }
         let weapon = player.Slots[player.Active].Class
-        let origin = Ballistics.playerMuzzleOrigin player weapon.Name
+        let origin = Ballistics.playerMuzzleOrigin player weapon
         let eye = player.Position + Vector3(0.0f, 1.62f, 0.0f)
         let forward = Ballistics.directionFromAngles player.Yaw player.Pitch Vector2.Zero
         Assert.True(Vector3.Dot(origin - eye, forward) > 0.5f)
