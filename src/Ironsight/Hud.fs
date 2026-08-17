@@ -22,8 +22,10 @@ type HudInfo =
 [<RequireQualifiedAccess>]
 module HudLayout =
     /// Ratio of framebuffer pixels to logical window units. High-DPI displays
-    /// (retina, Windows scaling) report a framebuffer larger than the window;
-    /// the HUD lays out in logical units and is scaled to native pixels.
+    /// (retina, Windows scaling) report a framebuffer larger than the window.
+    /// The HUD itself needs no scaling — its logical coordinates map to the
+    /// framebuffer through NDC — but the ratio is logged at startup to make
+    /// display-density problems diagnosable.
     let uiScale (framebufferWidth: int) (logicalWidth: int) =
         if framebufferWidth <= 0 || logicalWidth <= 0 then 1.0f
         else Math.Clamp(float32 framebufferWidth / float32 logicalWidth, 0.5f, 4.0f)
@@ -119,7 +121,7 @@ type Hud(gl: GL) =
         gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapS, int TextureWrapMode.ClampToEdge)
         gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapT, int TextureWrapMode.ClampToEdge)
 
-    member _.Render(width: int, height: int, uiScale: float32, world: World, info: HudInfo) =
+    member _.Render(width: int, height: int, world: World, info: HudInfo) =
         vertices.Clear()
         let white = Vector4(0.92f, 0.94f, 0.89f, 0.95f)
         let shadow = Vector4(0.0f, 0.0f, 0.0f, 0.7f)
@@ -303,7 +305,6 @@ type Hud(gl: GL) =
             gl.BlendFunc(BlendingFactor.SrcAlpha, BlendingFactor.OneMinusSrcAlpha)
             gl.UseProgram program
             gl.Uniform2(gl.GetUniformLocation(program, "uResolution"), float32 width, float32 height)
-            gl.Uniform1(gl.GetUniformLocation(program, "uUiScale"), uiScale)
             gl.ActiveTexture TextureUnit.Texture0
             gl.BindTexture(TextureTarget.Texture2D, texture)
             gl.Uniform1(gl.GetUniformLocation(program, "uFont"), 0)
