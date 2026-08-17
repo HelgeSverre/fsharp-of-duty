@@ -90,6 +90,48 @@ module AiTests =
         | other -> Assert.Fail($"expected Suppressed, got {other}")
 
     [<Fact>]
+    let ``a killed soldier stays down instead of standing back up`` () =
+        let level = LevelDsl.level "Kill range" [ LevelDsl.street 30.0f 10.0f Mud ] |> LevelCompile.compile
+        let world = Sim.createTrainingWorld 5UL
+        let precise = { Tuning.kar98k with HipSpread = 0.0f; AdsSpread = 0.0f }
+        let target =
+            { Id = EntityId 44
+              Team = Axis
+              Position = Vector3.Zero
+              Facing = MathF.PI
+              Stance = Standing
+              Health = Units.health 10.0f
+              Behavior = Idle
+              Weapon = Tuning.weaponSlot Tuning.kar98k 3
+              Squad = 2
+              Contacts = Map.empty
+              Suppression = 0.0f
+              AnimPhase = 0.0f }
+        let slots = Array.copy world.Player.Slots
+        slots[0] <- Tuning.weaponSlot precise 4
+        let player =
+            { world.Player with
+                Position = Vector3(0.0f, 0.0f, 5.0f)
+                Yaw = 0.0f
+                Pitch = 0.0f
+                Slots = slots
+                Active = 0 }
+        let mutable world = { world with Level = level; Player = player; Soldiers = [| target |] }
+        let struct (after, _) = Sim.step { Sequence = 1L; Move = Vector2.Zero; Look = Vector2.Zero; Buttons = InputButtons.Fire } world
+        Assert.True(after.Soldiers[0].Health <= Units.health 0.0f)
+        match after.Soldiers[0].Behavior with
+        | Dying _ | DyingHeadshot _ -> ()
+        | other -> Assert.Fail($"expected dying behaviour, got {other}")
+        let mutable stepped = after
+        for tick in 2L..120L do
+            stepped <-
+                let struct (next, _) = Sim.step { Sequence = tick; Move = Vector2.Zero; Look = Vector2.Zero; Buttons = InputButtons.None } stepped
+                next
+        match stepped.Soldiers[0].Behavior with
+        | Dying _ | DyingHeadshot _ -> ()
+        | other -> Assert.Fail($"corpse stood back up as {other}")
+
+    [<Fact>]
     let ``crouching player avoids standing-height shots`` () =
         let level = LevelDsl.level "Hit range" [ LevelDsl.street 30.0f 10.0f Mud ] |> LevelCompile.compile
         let world = Sim.createTrainingWorld 5UL
@@ -256,6 +298,38 @@ module AiTests =
         Assert.True(currentPlayer.Health < Units.health 100.0f)
         Assert.True(soldiers[0].Position.Z > enemy.Position.Z)
         Assert.True(soldiers[0].Contacts.ContainsKey player.Id)
+
+    [<Fact>]
+    let ``bolt action bot cycles the bolt and fires repeatedly under sustained contact`` () =
+        let level = LevelDsl.level "Cycle range" [ LevelDsl.street 40.0f 10.0f Mud ] |> LevelCompile.compile
+        let world = Sim.createTrainingWorld 288UL
+        let player = { world.Player with Position = Vector3.Zero }
+        let template = world.Soldiers |> Array.find (fun soldier -> soldier.Team = Axis)
+        let enemy =
+            { template with
+                Position = Vector3(0.0f, 0.0f, -10.0f)
+                Facing = MathF.PI
+                Behavior = Idle
+                Weapon = Tuning.weaponSlot Tuning.kar98k 3
+                Contacts = Map.ofList [ player.Id, struct (player.Position, Units.seconds 0.0f) ] }
+        let mutable rng = Rng.create 289UL
+        let mutable currentPlayer = player
+        let mutable soldiers = [| enemy |]
+        let mutable shots = 0
+        for _ in 1..300 do
+            let nextPlayer, nextSoldiers, events = AiBrain.step Tuning.TickDuration &rng level Map.empty currentPlayer soldiers
+            currentPlayer <- nextPlayer
+            soldiers <- nextSoldiers
+            shots <-
+                shots
+                + (events
+                   |> List.filter (function
+                       | ShotFired(Some shooter, _, _, _) when shooter = enemy.Id -> true
+                       | _ -> false)
+                   |> List.length)
+        // A bolt action that never releases the trigger fires once and stalls.
+        // The AI must cycle the bolt and keep firing on its natural cadence.
+        Assert.True(shots >= 2, $"expected the bolt to cycle, fired {shots} times")
 
     [<Fact>]
     let ``enemy reloads an empty weapon and resumes firing`` () =

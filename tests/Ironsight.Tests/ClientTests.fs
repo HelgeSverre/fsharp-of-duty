@@ -1,5 +1,6 @@
 namespace Ironsight.Tests
 
+open System
 open System.Numerics
 open Ironsight
 open Ironsight.ProcGen
@@ -117,6 +118,32 @@ module ClientTests =
         let headless = Humanoid.pose { soldier with Behavior = DyingHeadshot(Units.seconds 0.1f) }
         Assert.True(headless.Vertices.Length < normal.Vertices.Length)
         Assert.True(headless.Indices.Length < normal.Indices.Length)
+
+    [<Fact>]
+    let ``soldier model faces its movement direction at every yaw`` () =
+        let soldierAt yaw =
+            { Id = EntityId 1
+              Team = Axis
+              Position = Vector3.Zero
+              Facing = yaw
+              Stance = Standing
+              Health = Units.health 100.0f
+              Behavior = Idle
+              Weapon = Tuning.weaponSlot Tuning.kar98k 2
+              Squad = 1
+              Contacts = Map.empty
+              Suppression = 0.0f
+              AnimPhase = 0.0f }
+        for yaw in [ 0.0f; MathF.PI / 2.0f; MathF.PI; -MathF.PI / 2.0f ] do
+            let posed = Humanoid.pose (soldierAt yaw)
+            let forward = MathEx.yawForward yaw
+            let projection = posed.Vertices |> Array.map (fun vertex -> Vector3.Dot(vertex.Position, forward))
+            // The weapon barrel reaches ~1.26 units along the facing axis; the
+            // mesh must extend much further forward than backward.
+            let front = Array.max projection
+            let back = -Array.min projection
+            Assert.True(front > 0.9f, $"yaw {yaw}: front extent {front}")
+            Assert.True(front > back, $"yaw {yaw}: front {front} not ahead of back {back}")
 
     [<Fact>]
     let ``noise and mesh combinators are deterministic asset sources`` () =

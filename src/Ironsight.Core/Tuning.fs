@@ -27,7 +27,7 @@ module Tuning =
     // from the weapon's player-facing HipSpread. Tightening a player rifle must
     // not turn massed riflemen into lasers.
     let EnemyHipSpread = 0.045f
-    let EnemyDamageScale = 0.24f
+    let EnemyDamageScale = 0.05f
     let EnemyFriendlyDamageScale = 0.55f
     let BloomDecayPerSecond = 3.0f
     let BloomMax = 0.045f

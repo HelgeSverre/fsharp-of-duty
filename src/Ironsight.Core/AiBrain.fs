@@ -7,6 +7,12 @@ open Ironsight.ProcGen
 [<RequireQualifiedAccess>]
 module AiBrain =
     let private shouldReload (weapon: WeaponSlot) = weapon.InMag = 0 && weapon.Reserve > 0
+
+    // Semi-auto and bolt-action weapons fire one shot per trigger pull. A human
+    // re-clicks; the AI must release between shots so BurstIx resets and the
+    // weapon cycles at its natural cadence (and eventually empties + reloads).
+    let private wantsFire desired (weapon: WeaponSlot) =
+        desired && (weapon.Class.Mode = FullAuto || weapon.BurstIx = 0)
     let private findPath (level: Level) startPosition goalPosition =
         if level.Nav.Length = 0 then []
         else
@@ -239,7 +245,7 @@ module AiBrain =
                                    | Flanking _ -> true
                                    | _ -> false)
                         let struct (weapon, requests) =
-                            Weapons.step dt 0.0f shouldFire (shouldReload tactical.Weapon) 0.0f &localRng tactical.Weapon
+                            Weapons.step dt 0.0f (wantsFire shouldFire tactical.Weapon) (shouldReload tactical.Weapon) 0.0f &localRng tactical.Weapon
                         let armed = { tactical with Weapon = weapon }
                         for request in requests do
                             // Visibility was sampled at tick start; stop engaging
@@ -294,7 +300,7 @@ module AiBrain =
                             { ally with Facing = MathF.Atan2(enemy.Position.X - ally.Position.X, -(enemy.Position.Z - ally.Position.Z)); Contacts = contact }
                     let shouldFire = distance <= 32.0f
                     let struct (weapon, requests) =
-                        Weapons.step dt 0.0f shouldFire (shouldReload positioned.Weapon) 0.72f &localRng positioned.Weapon
+                        Weapons.step dt 0.0f (wantsFire shouldFire positioned.Weapon) (shouldReload positioned.Weapon) 0.72f &localRng positioned.Weapon
                     combatSoldiers[allyIndex] <- { positioned with Weapon = weapon }
                     for request in requests do
                         let origin = Ballistics.soldierMuzzleOrigin positioned
@@ -331,7 +337,7 @@ module AiBrain =
                     let facing = MathF.Atan2(friendly.Position.X - axis.Position.X, -(friendly.Position.Z - axis.Position.Z))
                     let aimed = { axis with Facing = facing; Contacts = Map.add friendly.Id (struct (friendly.Position, Units.seconds 0.0f)) axis.Contacts }
                     let struct (weapon, requests) =
-                        Weapons.step dt 0.0f true (shouldReload aimed.Weapon) 0.0f &localRng aimed.Weapon
+                        Weapons.step dt 0.0f (wantsFire true aimed.Weapon) (shouldReload aimed.Weapon) 0.0f &localRng aimed.Weapon
                     combatSoldiers[axisIndex] <- { aimed with Weapon = weapon }
                     for request in requests do
                         let origin = Ballistics.soldierMuzzleOrigin aimed

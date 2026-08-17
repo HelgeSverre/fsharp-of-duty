@@ -57,7 +57,7 @@ module Humanoid =
             | _ -> 0.0f
         let headless = match soldier.Behavior with DyingHeadshot _ -> true | _ -> false
         let crouch = match soldier.Behavior with InCover(cover, _) when cover.Crouch -> 0.34f | _ -> 0.0f
-        let stride = MathF.Sin soldier.AnimPhase * 0.15f
+        let stride = MathF.Sin soldier.AnimPhase * 0.15f * (1.0f - death)
         let opposite = -stride
         let pelvis = Vector3(0.0f, 0.90f - crouch, 0.0f)
         let chest = Vector3(0.0f, 1.43f - crouch, -0.015f)
@@ -108,9 +108,9 @@ module Humanoid =
                 Array.append bodyParts [| head headCenter; helmet uniform (headCenter + Vector3(0.0f, 0.12f, 0.0f)) |]
                 |> MeshGen.union
         let worldTransform =
-            Matrix4x4.CreateRotationX(death * 1.35f)
-            * Matrix4x4.CreateRotationY(soldier.Facing)
-            * Matrix4x4.CreateTranslation(soldier.Position + Vector3(0.0f, death * 0.12f, 0.0f))
+            Matrix4x4.CreateRotationX(death * MathF.PI * 0.5f)
+            * Matrix4x4.CreateRotationY(-soldier.Facing)
+            * Matrix4x4.CreateTranslation(soldier.Position + Vector3(0.0f, death * 0.25f, 0.0f))
         MeshGen.transform worldTransform local
 
     let mesh soldiers =

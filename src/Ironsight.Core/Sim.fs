@@ -181,10 +181,16 @@ module Sim =
                             Behavior = if suppression >= 2.0f then Suppressed(Units.seconds 1.5f) else soldier.Behavior
                             Contacts = if heard then Map.add playerWithHand.Id (struct (playerWithHand.Position, Units.seconds 0.0f)) soldier.Contacts else soldier.Contacts }
                     elif soldier.Team = Axis && soldier.Health < soldiers[index].Health then
-                        { soldier with
-                            Suppression = 3.0f
-                            Behavior = Suppressed(Units.seconds 1.5f)
-                            Contacts = Map.add playerWithHand.Id (struct (playerWithHand.Position, Units.seconds 0.0f)) soldier.Contacts }
+                        // Direct hits flinch and duck living soldiers. A lethal
+                        // hit already carries its Dying/DyingHeadshot behaviour;
+                        // overwriting it with Suppressed would let a corpse
+                        // stand back up and keep walking.
+                        if soldier.Health > Units.health 0.0f then
+                            { soldier with
+                                Suppression = 3.0f
+                                Behavior = Suppressed(Units.seconds 1.5f)
+                                Contacts = Map.add playerWithHand.Id (struct (playerWithHand.Position, Units.seconds 0.0f)) soldier.Contacts }
+                        else soldier
                     else soldier)
             shotEvents.AddRange hitEvents
         let grenades = match thrown with Some grenade -> Array.append world.Grenades [| grenade |] | None -> world.Grenades
