@@ -23,7 +23,8 @@ type WeaponClass =
       HipSpread: float32
       AdsSpread: float32
       Recoil: Vector2 array
-      Penetration: float32 }
+      Penetration: float32
+      HeadshotMultiplier: float32 }
 
 type WeaponState =
     | Ready
@@ -224,4 +225,5 @@ type InputFrame =
 type ShotRequest =
     { DirectionOffset: Vector2
       Damage: float32<hp>
-      Penetration: float32 }
+      Penetration: float32
+      HeadshotMultiplier: float32 }

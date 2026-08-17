@@ -106,7 +106,7 @@ module Ballistics =
 
     let trace origin direction level soldiers = traceFiltered (fun _ -> true) origin direction level soldiers
 
-    let applyShotFiltered canHit (origin: Vector3) (direction: Vector3) (damage: float32<hp>) (penetration: float32) (level: Level) (soldiers: Soldier array) =
+    let applyShotFiltered canHit (origin: Vector3) (direction: Vector3) (damage: float32<hp>) (penetration: float32) (headshotMultiplier: float32) (level: Level) (soldiers: Soldier array) =
         let mutable currentOrigin = origin
         let mutable budget = penetration
         let mutable currentDamage = damage
@@ -120,7 +120,7 @@ module Ballistics =
             match traceFilteredExcluding canHit passedThrough currentOrigin direction level updated with
             | None -> tracing <- false
             | Some(SoldierHit(distance, index, region)) when distance <= remainingRange ->
-                let multiplier = match region with Head -> 1.5f | Torso -> 1.0f | Legs -> 0.65f
+                let multiplier = match region with Head -> headshotMultiplier | Torso -> 1.0f | Legs -> 0.65f
                 let victim = updated[index]
                 let health = max (Units.health 0.0f) (victim.Health - currentDamage * multiplier)
                 let lethal = health <= Units.health 0.0f
@@ -155,8 +155,8 @@ module Ballistics =
             | _ -> tracing <- false
         updated, List.ofSeq events
 
-    let applyShot origin direction damage penetration level soldiers =
-        applyShotFiltered (fun _ -> true) origin direction damage penetration level soldiers
+    let applyShot origin direction damage penetration headshotMultiplier level soldiers =
+        applyShotFiltered (fun _ -> true) origin direction damage penetration headshotMultiplier level soldiers
 
     let lineOfSight (origin: Vector3) (target: Vector3) (level: Level) =
         let offset = target - origin

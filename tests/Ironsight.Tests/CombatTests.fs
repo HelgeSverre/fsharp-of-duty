@@ -51,12 +51,22 @@ module CombatTests =
     let ``head capsule applies lethal multiplier`` () =
         let targets = [| soldier Vector3.Zero |]
         let updated, events =
-            Ballistics.applyShot (Vector3(0.0f, 1.6f, 5.0f)) -Vector3.UnitZ (Units.health 85.0f) 0.0f openLevel targets
+            Ballistics.applyShot (Vector3(0.0f, 1.6f, 5.0f)) -Vector3.UnitZ (Units.health 85.0f) 0.0f 1.5f openLevel targets
         Assert.Equal(Units.health 0.0f, updated[0].Health)
         Assert.Contains(HitConfirmed(EntityId 9, true), events)
         Assert.Contains(events, function BloodImpact(_, _, true) -> true | _ -> false)
         Assert.Contains(events, function HeadGib _ -> true | _ -> false)
         Assert.Matches("DyingHeadshot.*", string updated[0].Behavior)
+
+    [<Fact>]
+    let ``kar98k headshot is a one shot kill while a thompson headshot is not`` () =
+        let targets = [| soldier Vector3.Zero |]
+        let kar98kUpdated, _ =
+            Ballistics.applyShot (Vector3(0.0f, 1.6f, 5.0f)) -Vector3.UnitZ Tuning.kar98k.Damage 0.0f Tuning.kar98k.HeadshotMultiplier openLevel targets
+        Assert.Equal(Units.health 0.0f, kar98kUpdated[0].Health)
+        let thompsonUpdated, _ =
+            Ballistics.applyShot (Vector3(0.0f, 1.6f, 5.0f)) -Vector3.UnitZ Tuning.thompson.Damage 0.0f Tuning.thompson.HeadshotMultiplier openLevel [| soldier Vector3.Zero |]
+        Assert.True(thompsonUpdated[0].Health > Units.health 0.0f)
 
     [<Fact>]
     let ``kar98k penetrates thin wood with reduced damage`` () =
@@ -65,7 +75,7 @@ module CombatTests =
               Material = Wood }
         let level = LevelCompile.rebuild (Array.append openLevel.Brushes [| wall |]) openLevel
         let updated, events =
-            Ballistics.applyShot (Vector3(0.0f, 1.0f, 5.0f)) -Vector3.UnitZ (Units.health 85.0f) 18.0f level [| soldier Vector3.Zero |]
+            Ballistics.applyShot (Vector3(0.0f, 1.0f, 5.0f)) -Vector3.UnitZ (Units.health 85.0f) 18.0f 1.5f level [| soldier Vector3.Zero |]
         Assert.InRange(Units.raw updated[0].Health, 38.0f, 40.0f)
         Assert.Contains(events, function Impact(_, _, Wood) -> true | _ -> false)
         Assert.Contains(events, function HitConfirmed(EntityId 9, false) -> true | _ -> false)
@@ -79,7 +89,7 @@ module CombatTests =
               Material = Brick }
         let level = LevelCompile.rebuild (Array.append openLevel.Brushes [| wall |]) openLevel
         let updated, events =
-            Ballistics.applyShot (Vector3(0.0f, 1.0f, 5.0f)) -Vector3.UnitZ (Units.health 85.0f) 18.0f level [| soldier Vector3.Zero |]
+            Ballistics.applyShot (Vector3(0.0f, 1.0f, 5.0f)) -Vector3.UnitZ (Units.health 85.0f) 18.0f 1.5f level [| soldier Vector3.Zero |]
         Assert.Equal(Units.health 100.0f, updated[0].Health)
         Assert.DoesNotContain(events, function HitConfirmed _ -> true | _ -> false)
 
@@ -87,7 +97,7 @@ module CombatTests =
     let ``center screen shots land on the torso not the head`` () =
         let targets = [| soldier Vector3.Zero |]
         let updated, events =
-            Ballistics.applyShot (Vector3(0.0f, 1.4f, 5.0f)) -Vector3.UnitZ (Units.health 85.0f) 18.0f openLevel targets
+            Ballistics.applyShot (Vector3(0.0f, 1.4f, 5.0f)) -Vector3.UnitZ (Units.health 85.0f) 18.0f 1.5f openLevel targets
         Assert.InRange(Units.raw updated[0].Health, 14.0f, 16.0f)
         Assert.Contains(events, function HitConfirmed(EntityId 9, false) -> true | _ -> false)
         Assert.Contains(events, function BloodImpact(_, _, false) -> true | _ -> false)
@@ -97,24 +107,24 @@ module CombatTests =
     let ``legs receive reduced damage`` () =
         let targets = [| soldier Vector3.Zero |]
         let updated, _ =
-            Ballistics.applyShot (Vector3(0.0f, 0.5f, 5.0f)) -Vector3.UnitZ (Units.health 85.0f) 18.0f openLevel targets
+            Ballistics.applyShot (Vector3(0.0f, 0.5f, 5.0f)) -Vector3.UnitZ (Units.health 85.0f) 18.0f 1.5f openLevel targets
         Assert.InRange(Units.raw updated[0].Health, 44.0f, 45.5f)
 
     [<Fact>]
     let ``crouched target is missed high and hit low`` () =
         let crouched = { soldier Vector3.Zero with Stance = Crouched }
         let over, _ =
-            Ballistics.applyShot (Vector3(0.0f, 1.7f, 5.0f)) -Vector3.UnitZ (Units.health 85.0f) 18.0f openLevel [| crouched |]
+            Ballistics.applyShot (Vector3(0.0f, 1.7f, 5.0f)) -Vector3.UnitZ (Units.health 85.0f) 18.0f 1.5f openLevel [| crouched |]
         Assert.Equal(Units.health 100.0f, over[0].Health)
         let low, _ =
-            Ballistics.applyShot (Vector3(0.0f, 0.9f, 5.0f)) -Vector3.UnitZ (Units.health 85.0f) 18.0f openLevel [| crouched |]
+            Ballistics.applyShot (Vector3(0.0f, 0.9f, 5.0f)) -Vector3.UnitZ (Units.health 85.0f) 18.0f 1.5f openLevel [| crouched |]
         Assert.True(low[0].Health < Units.health 100.0f)
 
     [<Fact>]
     let ``rifle overpenetrates the first body into a second`` () =
         let targets = [| soldierAt 1 Vector3.Zero; soldierAt 2 (Vector3(0.0f, 0.0f, -1.5f)) |]
         let updated, events =
-            Ballistics.applyShot (Vector3(0.0f, 1.0f, 5.0f)) -Vector3.UnitZ (Units.health 85.0f) 18.0f openLevel targets
+            Ballistics.applyShot (Vector3(0.0f, 1.0f, 5.0f)) -Vector3.UnitZ (Units.health 85.0f) 18.0f 1.5f openLevel targets
         Assert.True(updated[0].Health < Units.health 100.0f)
         Assert.True(updated[1].Health < Units.health 100.0f)
         Assert.Contains(events, function HitConfirmed(EntityId 2, false) -> true | _ -> false)

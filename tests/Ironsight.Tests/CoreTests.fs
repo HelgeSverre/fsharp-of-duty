@@ -112,6 +112,13 @@ module CoreTests =
         Assert.True(Tuning.thompson.AdsTime <= Units.seconds 0.14f)
 
     [<Fact>]
+    let ``kar98k hip fire is the tightest among player weapons`` () =
+        let tightest = Tuning.onlineWeapons |> Array.minBy (fun weapon -> weapon.HipSpread)
+        Assert.Equal("Kar98k", tightest.Name)
+        Assert.True(Tuning.kar98k.HipSpread < Tuning.thompson.HipSpread)
+        Assert.True(Tuning.kar98kSniper.HipSpread < Tuning.thompson.HipSpread)
+
+    [<Fact>]
     let ``simulation is deterministic for equal seed and inputs`` () =
         let inputs = [ for tick in 1L..180L -> input tick InputButtons.Sprint (Vector2(0.2f, 1.0f)) ]
         let run () =

@@ -37,15 +37,43 @@ module Guns =
 
     let private kar98k =
         MeshGen.union
-            [| MeshGen.wedge (Vector3(0.23f, 0.28f, 0.72f)) Wood |> placed (Vector3(0.0f, -0.09f, 0.08f))
-               MeshGen.box (Vector3(0.24f, 0.29f, 0.035f)) Metal |> placed (Vector3(0.0f, -0.09f, 0.455f))
-               MeshGen.box (Vector3(0.16f, 0.16f, 0.30f)) Metal |> placed (Vector3(0.0f, 0.02f, -0.45f))
-               MeshGen.box (Vector3(0.14f, 0.12f, 0.46f)) Wood |> placed (Vector3(0.0f, 0.0f, -0.71f))
-               MeshGen.cylinder 10 0.035f 0.72f Metal |> placed (Vector3(0.0f, 0.07f, -0.94f))
-               MeshGen.box (Vector3(0.035f, 0.10f, 0.035f)) Metal |> placed (Vector3(0.0f, 0.15f, -1.25f))
-               MeshGen.box (Vector3(0.035f, 0.08f, 0.08f)) Metal |> placed (Vector3(0.0f, 0.13f, -0.38f))
-               MeshGen.cylinder 8 0.025f 0.20f Metal |> MeshGen.rotateX 1.5708f |> placed (Vector3(0.12f, 0.02f, -0.38f))
-               MeshGen.box (Vector3(0.10f, 0.34f, 0.16f)) Wood |> MeshGen.rotateX -0.28f |> placed (Vector3(0.0f, -0.18f, 0.20f)) |]
+            [| // Tapered lathe barrel: thick chamber stepping down to a slim muzzle.
+               MeshGen.lathe 14
+                   [| Vector2(0.050f, -0.35f); Vector2(0.046f, -0.22f); Vector2(0.036f, -0.05f)
+                      Vector2(0.028f, 0.20f); Vector2(0.024f, 0.35f) |]
+                   Metal
+               |> placed (Vector3(0.0f, 0.075f, -0.95f))
+               // Cleaning rod tucked under the barrel.
+               MeshGen.cylinder 6 0.008f 0.44f Metal |> placed (Vector3(0.0f, 0.015f, -0.96f))
+               // Wooden handguard cradling the top half of the barrel.
+               MeshGen.box (Vector3(0.12f, 0.06f, 0.34f)) Wood |> placed (Vector3(0.0f, 0.135f, -0.80f))
+               // Barrel band and front sight band ring the barrel.
+               MeshGen.cylinder 10 0.041f 0.05f Metal |> placed (Vector3(0.0f, 0.075f, -0.66f))
+               MeshGen.cylinder 10 0.039f 0.03f Metal |> placed (Vector3(0.0f, 0.075f, -1.22f))
+               // Front sight blade.
+               MeshGen.box (Vector3(0.02f, 0.10f, 0.02f)) Metal |> placed (Vector3(0.0f, 0.135f, -1.26f))
+               // Receiver block and its top bridge.
+               MeshGen.box (Vector3(0.15f, 0.16f, 0.34f)) Metal |> placed (Vector3(0.0f, 0.03f, -0.46f))
+               MeshGen.box (Vector3(0.13f, 0.05f, 0.20f)) Metal |> placed (Vector3(0.0f, 0.135f, -0.42f))
+               // Rear sight ladder.
+               MeshGen.box (Vector3(0.02f, 0.06f, 0.02f)) Metal |> placed (Vector3(0.0f, 0.175f, -0.36f))
+               // Bolt: body along the receiver, stem out to the right, lathe knob.
+               MeshGen.cylinder 8 0.022f 0.30f Metal |> placed (Vector3(0.11f, 0.05f, -0.42f))
+               MeshGen.cylinder 8 0.018f 0.14f Metal
+               |> MeshGen.rotateY (MathF.PI * 0.5f)
+               |> placed (Vector3(0.16f, 0.05f, -0.34f))
+               MeshGen.lathe 10
+                   [| Vector2(0.0f, -0.03f); Vector2(0.026f, -0.02f); Vector2(0.030f, 0.0f); Vector2(0.020f, 0.02f); Vector2(0.0f, 0.03f) |]
+                   Metal
+               |> placed (Vector3(0.24f, 0.03f, -0.34f))
+               // Trigger guard loop and magazine floor plate.
+               MeshGen.box (Vector3(0.10f, 0.02f, 0.16f)) Metal |> placed (Vector3(0.0f, -0.06f, -0.40f))
+               MeshGen.box (Vector3(0.02f, 0.07f, 0.02f)) Metal |> placed (Vector3(0.0f, -0.02f, -0.34f))
+               MeshGen.box (Vector3(0.02f, 0.07f, 0.02f)) Metal |> placed (Vector3(0.0f, -0.02f, -0.48f))
+               // Walnut stock, angled grip and metal buttplate.
+               MeshGen.wedge (Vector3(0.22f, 0.30f, 0.60f)) Wood |> placed (Vector3(0.0f, -0.11f, 0.16f))
+               MeshGen.box (Vector3(0.10f, 0.30f, 0.16f)) Wood |> MeshGen.rotateX -0.30f |> placed (Vector3(0.0f, -0.21f, 0.20f))
+               MeshGen.box (Vector3(0.20f, 0.26f, 0.03f)) Metal |> placed (Vector3(0.0f, -0.10f, 0.46f)) |]
 
     let private kar98kSniper =
         MeshGen.union

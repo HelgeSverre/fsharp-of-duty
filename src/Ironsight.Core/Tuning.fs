@@ -23,6 +23,10 @@ module Tuning =
     let EnemySightRange = 65.0f
     let EnemyMaxPlayerShooters = 7
     let EnemyAimSpreadMultiplier = 2.25f
+    // Player-facing enemy fire draws its cone from a fixed spread, decoupled
+    // from the weapon's player-facing HipSpread. Tightening a player rifle must
+    // not turn massed riflemen into lasers.
+    let EnemyHipSpread = 0.045f
     let EnemyDamageScale = 0.24f
     let EnemyFriendlyDamageScale = 0.55f
     let BloomDecayPerSecond = 3.0f
@@ -41,10 +45,11 @@ module Tuning =
           ReloadTime = Units.seconds 2.35f
           Pellets = 1
           AdsTime = Units.seconds 0.16f
-          HipSpread = 0.045f
+          HipSpread = 0.030f
           AdsSpread = 0.003f
           Recoil = [| Vector2(0.003f, 0.025f); Vector2(-0.004f, 0.028f) |]
-          Penetration = 18.0f }
+          Penetration = 18.0f
+          HeadshotMultiplier = 2.0f }
 
     let kar98kSniper =
         { Name = "Kar98k Sniper"
@@ -55,10 +60,11 @@ module Tuning =
           ReloadTime = Units.seconds 2.7f
           Pellets = 1
           AdsTime = Units.seconds 0.18f
-          HipSpread = 0.085f
+          HipSpread = 0.050f
           AdsSpread = 0.00045f
           Recoil = [| Vector2(0.002f, 0.042f); Vector2(-0.003f, 0.046f) |]
-          Penetration = 24.0f }
+          Penetration = 24.0f
+          HeadshotMultiplier = 2.0f }
 
     let thompson =
         { Name = "Thompson"
@@ -72,7 +78,8 @@ module Tuning =
           HipSpread = 0.055f
           AdsSpread = 0.012f
           Recoil = [| Vector2(0.003f, 0.012f); Vector2(-0.006f, 0.014f); Vector2(0.008f, 0.016f) |]
-          Penetration = 8.0f }
+          Penetration = 8.0f
+          HeadshotMultiplier = 1.5f }
 
     let m1911 =
         { Name = "M1911"
@@ -86,7 +93,8 @@ module Tuning =
           HipSpread = 0.048f
           AdsSpread = 0.010f
           Recoil = [| Vector2(0.002f, 0.019f); Vector2(-0.003f, 0.022f) |]
-          Penetration = 5.0f }
+          Penetration = 5.0f
+          HeadshotMultiplier = 1.5f }
 
     let mg42 =
         { Name = "MG42"
@@ -100,7 +108,8 @@ module Tuning =
           HipSpread = 0.065f
           AdsSpread = 0.025f
           Recoil = [| Vector2(0.012f, 0.018f); Vector2(-0.015f, 0.021f); Vector2(0.020f, 0.024f) |]
-          Penetration = 12.0f }
+          Penetration = 12.0f
+          HeadshotMultiplier = 1.5f }
 
     let m1897 =
         { Name = "M1897 Trench Gun"
@@ -114,7 +123,8 @@ module Tuning =
           HipSpread = 0.105f
           AdsSpread = 0.045f
           Recoil = [| Vector2(0.012f, 0.045f); Vector2(-0.010f, 0.052f) |]
-          Penetration = 2.0f }
+          Penetration = 2.0f
+          HeadshotMultiplier = 1.5f }
 
     let onlineWeapons = [| kar98k; thompson; m1911; kar98kSniper; m1897 |]
 

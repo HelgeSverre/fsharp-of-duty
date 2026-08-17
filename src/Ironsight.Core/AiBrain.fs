@@ -253,7 +253,11 @@ module AiBrain =
                                 // making point-blank encounters instant kills at range.
                                 let range = Vector3.Distance(origin, target)
                                 let aimFactor = Math.Clamp(6.0f / MathF.Max(1.0f, range), 0.35f, Tuning.EnemyAimSpreadMultiplier)
-                                let direction = aimDirection origin target (request.DirectionOffset * aimFactor)
+                                // Player-facing enemy fire keeps a fixed cone regardless of the
+                                // weapon's player-facing hip spread. Scaling the existing offset
+                                // preserves both the random distribution and the RNG stream.
+                                let spreadScale = Tuning.EnemyHipSpread / MathF.Max(1e-4f, weapon.Class.HipSpread)
+                                let direction = aimDirection origin target (request.DirectionOffset * spreadScale * aimFactor)
                                 events.Add(ShotFired(Some armed.Id, origin, direction, weapon.Class.Name))
                                 match playerHitDistance origin direction updatedPlayer with
                                 | Some hitDistance when hitDistance < staticHitDistance origin direction level ->
@@ -298,7 +302,7 @@ module AiBrain =
                         let direction = aimDirection origin targetPoint request.DirectionOffset
                         events.Add(ShotFired(Some positioned.Id, origin, direction, weapon.Class.Name))
                         let hitSoldiers, hitEvents =
-                            Ballistics.applyShotFiltered (fun candidate -> candidate.Team = Axis) origin direction request.Damage request.Penetration level combatSoldiers
+                            Ballistics.applyShotFiltered (fun candidate -> candidate.Team = Axis) origin direction request.Damage request.Penetration request.HeadshotMultiplier level combatSoldiers
                         combatSoldiers <- hitSoldiers
                         events.AddRange(hitEvents |> List.filter (function HitConfirmed _ -> false | _ -> true))
                         if combatSoldiers[targetIndex].Health <= Units.health 0.0f then
@@ -335,7 +339,7 @@ module AiBrain =
                         let direction = aimDirection origin targetPoint request.DirectionOffset
                         events.Add(ShotFired(Some aimed.Id, origin, direction, weapon.Class.Name))
                         let hitSoldiers, hitEvents =
-                            Ballistics.applyShotFiltered (fun candidate -> candidate.Team = Allies) origin direction (request.Damage * Tuning.EnemyFriendlyDamageScale) request.Penetration level combatSoldiers
+                            Ballistics.applyShotFiltered (fun candidate -> candidate.Team = Allies) origin direction (request.Damage * Tuning.EnemyFriendlyDamageScale) request.Penetration request.HeadshotMultiplier level combatSoldiers
                         combatSoldiers <- hitSoldiers
                         events.AddRange(hitEvents |> List.filter (function HitConfirmed _ -> false | _ -> true))
                         if combatSoldiers[targetIndex].Health <= Units.health 0.0f then

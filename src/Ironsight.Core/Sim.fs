@@ -166,7 +166,7 @@ module Sim =
             let origin = Ballistics.playerMuzzleOrigin playerWithHand weapon.Class.Name
             let direction = shotDirection playerWithHand shot
             let hitSoldiers, hitEvents =
-                Ballistics.applyShotFiltered (fun soldier -> soldier.Team = Axis) origin direction shot.Damage shot.Penetration world.Level soldiers
+                Ballistics.applyShotFiltered (fun soldier -> soldier.Team = Axis) origin direction shot.Damage shot.Penetration shot.HeadshotMultiplier world.Level soldiers
             soldiers <-
                 hitSoldiers
                 |> Array.mapi (fun index soldier ->

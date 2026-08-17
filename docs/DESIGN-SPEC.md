@@ -110,6 +110,7 @@ type WeaponClass = {
     AdsSpread   : float32
     Recoil      : Vector2[]        // per-shot kick pattern, CoD-style
     Penetration : float32          // how many cm of "wood" a round survives
+    HeadshotMultiplier: float32    // damage multiplier applied to head shots
 }
 
 /// The state machine. Impossible states are unrepresentable:

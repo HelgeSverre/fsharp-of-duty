@@ -231,7 +231,7 @@ type MatchHost(mode: GameMode, ?matchLevel: Level) =
                     { state with Phase = Warmup; PhaseRemaining = Units.seconds 10.0f; Players = resetPlayers; Grenades = [||]; AlliesScore = 0; AxisScore = 0 }
                 | Results -> { state with PhaseRemaining = state.PhaseRemaining - Tuning.TickDuration }
             let mutable rng = state.Rng
-            let shots = ResizeArray<EntityId * Vector3 * Vector3 * float32<hp> * float32 * int64 * bool>()
+            let shots = ResizeArray<EntityId * Vector3 * Vector3 * float32<hp> * float32 * float32 * int64 * bool>()
             let thrownGrenades = ResizeArray<Grenade>()
             let emitted = ResizeArray<struct (EntityId option * GameEvent)>()
             let emit event = emitted.Add(struct (None, event))
@@ -281,7 +281,7 @@ type MatchHost(mode: GameMode, ?matchLevel: Level) =
                         |> List.iteri (fun index request ->
                             let origin = Ballistics.playerMuzzleOrigin handPlayer weapon.Class.Name
                             let direction = Ballistics.directionFromAngles moved.Yaw moved.Pitch request.DirectionOffset
-                            shots.Add(id, origin, direction, request.Damage, request.Penetration, estimatedTick, (index = 0)))
+                            shots.Add(id, origin, direction, request.Damage, request.Penetration, request.HeadshotMultiplier, estimatedTick, (index = 0)))
                         let updated =
                             { player with
                                 Position = handPlayer.Position
@@ -302,7 +302,7 @@ type MatchHost(mode: GameMode, ?matchLevel: Level) =
             pendingInputs <- Map.empty
             let mutable combatState = { lifecycleState with Players = movedPlayers; Rng = rng }
             let authoritativeShots = if lifecycleState.Phase = Playing then shots :> seq<_> else Seq.empty
-            for shooterId, origin, direction, damage, penetration, estimatedTick, isFirstPellet in authoritativeShots do
+            for shooterId, origin, direction, damage, penetration, headshotMultiplier, estimatedTick, isFirstPellet in authoritativeShots do
                 match Map.tryFind shooterId combatState.Players with
                 | Some shooter when shooter.Alive ->
                     if isFirstPellet then emit (ShotFired(Some shooterId, origin, direction, shooter.Weapon.Class.Name))
@@ -321,7 +321,7 @@ type MatchHost(mode: GameMode, ?matchLevel: Level) =
                             target.Alive && target.SpawnProtection <= Units.seconds 0.0f
                             && Multiplayer.areHostile combatState.Mode shooter target
                         | None -> false
-                    let hitSoldiers, hitEvents = Ballistics.applyShotFiltered canHit origin direction damage penetration level soldiers
+                    let hitSoldiers, hitEvents = Ballistics.applyShotFiltered canHit origin direction damage penetration headshotMultiplier level soldiers
                     for event in hitEvents do
                         match event with
                         | HitConfirmed _ -> emitOnly shooterId event
