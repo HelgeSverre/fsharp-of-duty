@@ -115,6 +115,12 @@ module Program =
             menu |> Option.iter (fun _ -> inputSampler.SetMenuActive true)
             sampler <- Some inputSampler
             renderer <- Some(new Renderer(api))
+            // The OS can deliver the initial framebuffer size before the
+            // renderer exists, which would leave the viewport at its 1280x720
+            // default while the surface is larger (retina). Seed it explicitly.
+            let value = renderer.Value
+            value.Resize(window.FramebufferSize.X, window.FramebufferSize.Y, window.Size)
+            Console.WriteLine($"Window {window.Size.X}x{window.Size.Y} framebuffer {window.FramebufferSize.X}x{window.FramebufferSize.Y} uiScale {HudLayout.uiScale window.FramebufferSize.X window.Size.X}")
             try audio <- Some(new AudioSystem())
             with error -> Console.Error.WriteLine($"Audio unavailable: {error.Message}")
             if onlineRequested then
@@ -317,11 +323,13 @@ module Program =
                   Subtitle = subtitleText
                   Menu = menu }
             renderer |> Option.iter (fun value -> value.Render(renderedWorld, hudInfo)))
-        window.add_FramebufferResize(fun size ->
-            // The framebuffer can be larger than the window on high-DPI displays;
-            // the renderer derives the UI scale from both so the HUD keeps its
-            // logical size while the world renders at native resolution.
-            renderer |> Option.iter (fun value -> value.Resize(size.X, size.Y, window.Size)))
+        window.add_FramebufferResize(fun _ ->
+            // Query the properties rather than trusting the event payload so
+            // high-DPI platforms that report logical sizes through the event
+            // still get the true framebuffer dimensions.
+            renderer
+            |> Option.iter (fun value ->
+                value.Resize(window.FramebufferSize.X, window.FramebufferSize.Y, window.Size)))
         window.add_Closing(fun () ->
             onlineClient
             |> Option.iter (fun client ->
