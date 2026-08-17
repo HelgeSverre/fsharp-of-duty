@@ -317,7 +317,11 @@ module Program =
                   Subtitle = subtitleText
                   Menu = menu }
             renderer |> Option.iter (fun value -> value.Render(renderedWorld, hudInfo)))
-        window.add_FramebufferResize(fun size -> renderer |> Option.iter (fun value -> value.Resize(size.X, size.Y)))
+        window.add_FramebufferResize(fun size ->
+            // The framebuffer can be larger than the window on high-DPI displays;
+            // the renderer derives the UI scale from both so the HUD keeps its
+            // logical size while the world renders at native resolution.
+            renderer |> Option.iter (fun value -> value.Resize(size.X, size.Y, window.Size)))
         window.add_Closing(fun () ->
             onlineClient
             |> Option.iter (fun client ->

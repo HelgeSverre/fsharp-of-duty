@@ -14,6 +14,9 @@ type Renderer(gl: GL) =
     let particles = new Particles(gl)
     let mutable width = 1280
     let mutable height = 720
+    let mutable logicalWidth = 1280
+    let mutable logicalHeight = 720
+    let mutable uiScale = 1.0f
     let mutable vao = 0u
     let mutable vertexBuffer = 0u
     let mutable indexBuffer = 0u
@@ -346,7 +349,7 @@ type Renderer(gl: GL) =
                 gl.DrawElements(PrimitiveType.Triangles, gunIndexCount, DrawElementsType.UnsignedInt, noOffset)
                 gl.BindVertexArray 0u
                 gl.Enable EnableCap.CullFace
-        hud.Render(width, height, world, hudInfo)
+        hud.Render(logicalWidth, logicalHeight, uiScale, world, hudInfo)
 
     member _.HandleEvents(events: GameEvent list) =
         particles.Handle events
@@ -365,9 +368,12 @@ type Renderer(gl: GL) =
         recoilVelocity <- recoilVelocity + (-recoil * 68.0f - recoilVelocity * 15.0f) * dt
         recoil <- Math.Clamp(recoil + recoilVelocity * dt, 0.0f, 0.12f)
 
-    member _.Resize(newWidth, newHeight) =
-        width <- max 1 newWidth
-        height <- max 1 newHeight
+    member _.Resize(framebufferWidth, framebufferHeight, logicalSize: Silk.NET.Maths.Vector2D<int>) =
+        width <- max 1 framebufferWidth
+        height <- max 1 framebufferHeight
+        logicalWidth <- max 1 logicalSize.X
+        logicalHeight <- max 1 logicalSize.Y
+        uiScale <- HudLayout.uiScale width logicalWidth
         gl.Viewport(0, 0, uint32 width, uint32 height)
 
     interface IDisposable with

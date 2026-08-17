@@ -111,10 +111,11 @@ layout(location = 0) in vec2 aPosition;
 layout(location = 1) in vec2 aUv;
 layout(location = 2) in vec4 aColor;
 uniform vec2 uResolution;
+uniform float uUiScale;
 out vec2 vUv;
 out vec4 vColor;
 void main() {
-    vec2 ndc = vec2(aPosition.x / uResolution.x * 2.0 - 1.0, 1.0 - aPosition.y / uResolution.y * 2.0);
+    vec2 ndc = vec2(aPosition.x * uUiScale / uResolution.x * 2.0 - 1.0, 1.0 - aPosition.y * uUiScale / uResolution.y * 2.0);
     gl_Position = vec4(ndc, 0.0, 1.0);
     vUv = aUv;
     vColor = aColor;

@@ -8,6 +8,18 @@ open Xunit
 
 module ClientTests =
     [<Fact>]
+    let ``hud ui scale maps framebuffer pixels to logical window units`` () =
+        Assert.Equal(1.0f, HudLayout.uiScale 1280 1280)
+        Assert.Equal(2.0f, HudLayout.uiScale 2560 1280)
+        Assert.Equal(1.5f, HudLayout.uiScale 2880 1920)
+        Assert.Equal(4.0f, HudLayout.uiScale 4000 100)
+        Assert.Equal(0.5f, HudLayout.uiScale 50 100)
+        // Degenerate sizes fall back to 1x instead of dividing by zero.
+        Assert.Equal(1.0f, HudLayout.uiScale 0 1280)
+        Assert.Equal(1.0f, HudLayout.uiScale 1280 0)
+        Assert.Equal(1.0f, HudLayout.uiScale -2560 1280)
+
+    [<Fact>]
     let ``render interpolation blends transforms without changing current gameplay state`` () =
         let previous = Sim.createTrainingWorld 4UL
         let movedPlayer = { previous.Player with Position = Vector3(10.0f, 2.0f, -4.0f); Health = Units.health 37.0f; Ads = 1.0f }
