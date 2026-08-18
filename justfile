@@ -99,6 +99,32 @@ release-build: _sdk
 clean: _sdk
     {{ dotnet }} clean {{ solution }}
 
+# Build a release .app for this Mac and install it to /Applications (dev only).
+[group('build')]
+[macos]
+install: _sdk
+    #!/usr/bin/env bash
+    set -euo pipefail
+    rid=$([ "$(sysctl -n hw.optional.arm64 2>/dev/null)" = "1" ] && echo osx-arm64 || echo osx-x64)
+    out="$PWD/.build/install"
+    PATH="$PWD/.dotnet:$PATH" dotnet publish {{ client }} -c Release -r "$rid" --self-contained -o "$out"
+    app="/Applications/Ironsight.app"
+    rm -rf "$app"
+    mkdir -p "$app/Contents/Resources"
+    # Single-arch dev install: the publish goes straight into MacOS/, no launcher shim.
+    sed "s/@VERSION@/0.0.0-dev/g" packaging/Info.plist > "$app/Contents/Info.plist"
+    cp packaging/icon.icns "$app/Contents/Resources/icon.icns"
+    cp -R "$out" "$app/Contents/MacOS"
+    codesign --force --deep -s - "$app"
+    echo "Installed $app ($rid)"
+
+# Remove the locally installed .app.
+[group('build')]
+[macos]
+uninstall:
+    rm -rf /Applications/Ironsight.app
+    @echo "Removed /Applications/Ironsight.app"
+
 # Format F# and project files.
 [group('format')]
 format: _sdk
