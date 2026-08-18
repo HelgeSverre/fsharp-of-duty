@@ -26,16 +26,15 @@ module MapFile =
     [<Literal>]
     let MaxBytes = 4 * 1024 * 1024
 
-    let private materialTag = function
-        | Brick -> 0uy | Plaster -> 1uy | Wood -> 2uy | Mud -> 3uy | Snow -> 4uy
-        | Sandbag -> 5uy | Metal -> 6uy | UniformOlive -> 7uy | UniformFeldgrau -> 8uy | Skin -> 9uy
-        | Water -> 10uy
+    // Derived from Materials.all, the single source of truth for the tag
+    // order; tag numbers are a serialization format, so Materials.all only
+    // ever grows at the end.
+    let private materialTag material = byte (Materials.id material)
 
-    let private materialOf = function
-        | 0uy -> Brick | 1uy -> Plaster | 2uy -> Wood | 3uy -> Mud | 4uy -> Snow
-        | 5uy -> Sandbag | 6uy -> Metal | 7uy -> UniformOlive | 8uy -> UniformFeldgrau | 9uy -> Skin
-        | 10uy -> Water
-        | tag -> failwith $"unknown material tag {tag}"
+    let private materialOf tag =
+        let index = int tag
+        if index >= 0 && index < Materials.all.Length then Materials.all[index]
+        else failwith $"unknown material tag {tag}"
 
     let private teamTag = function Allies -> 0uy | Axis -> 1uy
     let private teamOf = function 0uy -> Allies | 1uy -> Axis | tag -> failwith $"unknown team tag {tag}"

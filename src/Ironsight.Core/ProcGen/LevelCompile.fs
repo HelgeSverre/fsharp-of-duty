@@ -41,19 +41,6 @@ module LevelCompile =
         |> Array.distinct
         |> Array.map (fun index -> level.Brushes[index])
 
-    let brushesAlongRay (origin: Vector3) (direction: Vector3) distance (level: Level) =
-        let step = level.BrushGrid.CellSize * 0.45f
-        let samples = max 1 (int (MathF.Ceiling(distance / step)))
-        [| for sample in 0..samples do
-               let point = origin + direction * (min distance (float32 sample * step))
-               let x = int (MathF.Floor(point.X / level.BrushGrid.CellSize))
-               let z = int (MathF.Floor(point.Z / level.BrushGrid.CellSize))
-               match Map.tryFind (struct (x, z)) level.BrushGrid.Cells with
-               | Some indices -> yield! indices
-               | None -> () |]
-        |> Array.distinct
-        |> Array.map (fun index -> level.Brushes[index])
-
     /// The twelve triangles of a box, wound counter-clockwise seen from outside
     /// so the stored normal and the winding agree.
     let boxTriangles (bounds: Aabb) (material: Material) =
@@ -316,11 +303,6 @@ module LevelCompile =
     let private brush (minimum: Vector3) (maximum: Vector3) (material: Material) : Brush =
         { Bounds = { Min = minimum; Max = maximum }; Material = material }
 
-    let private lineBrush (startPoint: Vector3) (endPoint: Vector3) (height: float32) (width: float32) material =
-        let minimum = Vector3.Min(startPoint, endPoint) - Vector3(width * 0.5f, 0.0f, width * 0.5f)
-        let maximum = Vector3.Max(startPoint, endPoint) + Vector3(width * 0.5f, height, width * 0.5f)
-        brush minimum maximum material
-
     let private ruinBrushes (center: Vector3) (size: Vector2) (height: float32) (material: Material) condition =
         let halfX, halfZ = size.X * 0.5f, size.Y * 0.5f
         let thickness = 0.3f
@@ -468,6 +450,41 @@ module LevelCompile =
             { Position = positions[index]; Neighbours = neighbours })
         |> Seq.toArray
 
+    /// Distance from (x, z) to the horizontal segment startPoint-endPoint, used
+    /// by both the ground cut and the trench-notch tests below so the two stay
+    /// in sync by construction rather than by comment.
+    let private distanceToSegment (startPoint: Vector3) (endPoint: Vector3) (x: float32) (z: float32) : float32 =
+        let point = Vector3(x, 0.0f, z)
+        let segment = MathEx.horizontal (endPoint - startPoint)
+        let lengthSquared = segment.LengthSquared()
+        let t =
+            if lengthSquared < 0.000001f then 0.0f
+            else MathEx.clamp01 (Vector3.Dot(point - startPoint, segment) / lengthSquared)
+        Vector3.Distance(MathEx.horizontal (startPoint + segment * t), point)
+
+    /// Box + sloped triangles folded into a render mesh, a collision mesh, and
+    /// (if present) a water surface layered on top of the render mesh only.
+    /// Shared by a fresh compile and a brush-only rebuild so the two pipelines
+    /// cannot drift apart.
+    let private buildGeometry (brushes: Brush array) (sloped: Tri array) (waterLevel: float32 option) (waterBounds: Aabb) =
+        let boxVertices, boxIndices = compileMesh brushes
+        let vertices, indices = appendTriangleMesh boxVertices boxIndices sloped
+        let vertices, indices =
+            match waterLevel with
+            | Some height -> appendTriangleMesh vertices indices (waterTriangles waterBounds height)
+            | None -> vertices, indices
+        let collision =
+            Array.append (brushes |> Array.collect (fun item -> boxTriangles item.Bounds item.Material)) sloped
+            |> compileCollision
+        vertices, indices, collision
+
+    /// Drops a point onto whatever ground lies beneath it, so spawns and cover
+    /// never keep the Y the DSL author wrote and end up floating or buried.
+    let private snapToGround (collision: CollisionMesh) (position: Vector3) =
+        match surfaceUnderneath collision position.X position.Z with
+        | ValueSome(struct (height, _)) -> Vector3(position.X, height, position.Z)
+        | ValueNone -> position
+
     let compile (spec: LevelSpec) =
         let streets = spec.Items |> List.choose (function Street(length, width, surface) -> Some(length, width, surface) | _ -> None)
         let length, width, surface = streets |> List.tryHead |> Option.defaultValue (40.0f, 16.0f, Mud)
@@ -491,14 +508,7 @@ module LevelCompile =
                     // (width/2 + 0.3 offset + 0.3 half-thickness) or the ground
                     // grid leaves a hole beside the trench.
                     let reach = trenchWidth * 0.5f + 0.95f
-                    Some(fun x z ->
-                        let point = Vector3(x, 0.0f, z)
-                        let segment = MathEx.horizontal (endPoint - startPoint)
-                        let lengthSquared = segment.LengthSquared()
-                        let t =
-                            if lengthSquared < 0.000001f then 0.0f
-                            else MathEx.clamp01 (Vector3.Dot(point - startPoint, segment) / lengthSquared)
-                        Vector3.Distance(MathEx.horizontal (startPoint + segment * t), point) <= reach)
+                    Some(fun x z -> distanceToSegment startPoint endPoint x z <= reach)
                 | _ -> None)
         let isCut x z = cut |> List.exists (fun test -> test x z)
         // Trench footprints, paired with the floor height they cut down to, for
@@ -508,14 +518,7 @@ module LevelCompile =
             |> List.choose (function
                 | Trench(startPoint, endPoint, trenchWidth) ->
                     let reach = trenchWidth * 0.5f + 0.35f
-                    let inside (x: float32) (z: float32) =
-                        let point = Vector3(x, 0.0f, z)
-                        let segment = MathEx.horizontal (endPoint - startPoint)
-                        let lengthSquared = segment.LengthSquared()
-                        let t =
-                            if lengthSquared < 0.000001f then 0.0f
-                            else MathEx.clamp01 (Vector3.Dot(point - startPoint, segment) / lengthSquared)
-                        Vector3.Distance(MathEx.horizontal (startPoint + segment * t), point) <= reach
+                    let inside (x: float32) (z: float32) = distanceToSegment startPoint endPoint x z <= reach
                     Some(inside, (min startPoint.Y endPoint.Y) - 0.8f)
                 | _ -> None)
         let groundCell = 2.0f
@@ -664,12 +667,6 @@ module LevelCompile =
         let brushGrid = compileBrushGrid brushArray
         let slopedArray = sloped.ToArray()
         let waterLevel = spec.Items |> List.tryPick (function WaterPlane height -> Some height | _ -> None)
-        let vertices, indices =
-            let boxVertices, boxIndices = compileMesh brushArray
-            appendTriangleMesh boxVertices boxIndices slopedArray
-        let collision =
-            Array.append (brushArray |> Array.collect (fun item -> boxTriangles item.Bounds item.Material)) slopedArray
-            |> compileCollision
         // The vertical extent follows the content rather than a fixed 8 m lid,
         // so a bluff or a below-sea-level beach is expressible. Headroom above
         // the tallest brush keeps the top of it reachable.
@@ -682,10 +679,7 @@ module LevelCompile =
                 |> Array.fold (fun acc t -> max acc (max t.A.Y (max t.B.Y t.C.Y))) (brushArray |> Array.fold (fun acc item -> max acc item.Bounds.Max.Y) 0.0f)
             { Min = Vector3(bounds.Min.X, lowest, bounds.Min.Z)
               Max = Vector3(bounds.Max.X, max bounds.Max.Y (highest + 4.0f), bounds.Max.Z) }
-        let vertices, indices =
-            match waterLevel with
-            | Some height -> appendTriangleMesh vertices indices (waterTriangles worldBounds height)
-            | None -> vertices, indices
+        let vertices, indices, collision = buildGeometry brushArray slopedArray waterLevel worldBounds
         { Name = spec.Name
           Revision = 0
           Bounds = worldBounds
@@ -699,16 +693,10 @@ module LevelCompile =
           // end of a slope and floating at the other.
           Cover =
             covers.ToArray()
-            |> Array.map (fun point ->
-                match surfaceUnderneath collision point.Pos.X point.Pos.Z with
-                | ValueSome(struct (height, _)) -> { point with Pos = Vector3(point.Pos.X, height, point.Pos.Z) }
-                | ValueNone -> point)
+            |> Array.map (fun point -> { point with Pos = snapToGround collision point.Pos })
           Spawns =
             spawns.ToArray()
-            |> Array.map (fun struct (team, position) ->
-                match surfaceUnderneath collision position.X position.Z with
-                | ValueSome(struct (height, _)) -> struct (team, Vector3(position.X, height, position.Z))
-                | ValueNone -> struct (team, position))
+            |> Array.map (fun struct (team, position) -> struct (team, snapToGround collision position))
           MountedGuns = mountedGuns.ToArray()
           MissionRules =
             spec.Items
@@ -723,15 +711,7 @@ module LevelCompile =
         let brushGrid = compileBrushGrid brushes
         // Sloped geometry survives a rebuild; deriving collision from brushes
         // alone would delete every ramp and terrain patch in the level.
-        let rebuiltCollision =
-            Array.append (brushes |> Array.collect (fun item -> boxTriangles item.Bounds item.Material)) level.Sloped
-            |> compileCollision
-        let vertices, indices =
-            let boxVertices, boxIndices = compileMesh brushes
-            let merged, mergedIx = appendTriangleMesh boxVertices boxIndices level.Sloped
-            match level.WaterLevel with
-            | Some height -> appendTriangleMesh merged mergedIx (waterTriangles level.Bounds height)
-            | None -> merged, mergedIx
+        let vertices, indices, rebuiltCollision = buildGeometry brushes level.Sloped level.WaterLevel level.Bounds
         // Bump the revision so renderers holding cached geometry re-upload.
         { level with
             Revision = level.Revision + 1

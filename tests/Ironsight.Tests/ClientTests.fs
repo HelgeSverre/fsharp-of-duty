@@ -397,7 +397,7 @@ module ClientTests =
         let previous = System.Environment.GetEnvironmentVariable "IRONSIGHT_SERVER"
         try
             System.Environment.SetEnvironmentVariable("IRONSIGHT_SERVER", null)
-            Assert.Equal("wss://fsharp-of-duty.fly.dev/play", OnlineDefaults.serverUri().AbsoluteUri)
+            Assert.Equal("wss://fsharp-of-duty.fly.dev/play", ServerDirectory.defaultUri().AbsoluteUri)
         finally
             System.Environment.SetEnvironmentVariable("IRONSIGHT_SERVER", previous)
 

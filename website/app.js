@@ -68,58 +68,98 @@
     addEventListener("pagehide", () => cancelAnimationFrame(frame), { once: true });
   }
 
-  function initializeLeaderboard() {
-    const body = byId("leaderboard-body");
-    if (!body) return;
-    let activeMode = "TeamDeathmatch";
-    let latest = null;
+  const MASTER_LIST = "https://raw.githubusercontent.com/HelgeSverre/fsharp-of-duty/main/servers.json";
 
-    function render() {
-      const room = latest?.rooms?.find((candidate) => candidate.mode === activeMode);
-      body.replaceChildren();
-      text(byId("match-phase"), room?.phase ?? "NO SIGNAL");
-      text(byId("allies-score"), room?.alliesScore ?? 0);
-      text(byId("axis-score"), room?.axisScore ?? 0);
-      text(byId("population"), `${room?.connectedPlayers ?? 0} / ${latest?.capacityPerRoom ?? 16}`);
-      document.querySelector(".tdm-score")?.toggleAttribute("hidden", activeMode !== "TeamDeathmatch");
-      const players = Array.isArray(room?.players) ? room.players : [];
+  function initializeServerBrowser() {
+    const serverBody = byId("server-body");
+    const playerBody = byId("leaderboard-body");
+    if (!serverBody || !playerBody) return;
+    let servers = null;
+    let rows = [];
+    let selectedKey = null;
+
+    const httpRoot = (ws) => ws.replace(/^ws/, "http").replace(/\/play\/?$/, "");
+
+    async function loadServers() {
+      const fallback = [{ name: "Official Fly.io", url: apiRoot || "https://fsharp-of-duty.fly.dev" }];
+      try {
+        const response = await fetch(MASTER_LIST, { cache: "no-store", signal: AbortSignal.timeout(3000) });
+        const list = (await response.json()).servers
+          .filter((server) => /^wss?:/.test(server.url))
+          .map((server) => ({ name: server.name, url: httpRoot(server.url) }));
+        return list.length ? list : fallback;
+      } catch { return fallback; }
+    }
+
+    // One leaderboard GET per server yields ping, rooms, and players —
+    // the same probe the in-game server browser performs.
+    async function probe(server) {
+      const started = performance.now();
+      try {
+        const response = await fetch(`${server.url}/api/leaderboard`, { cache: "no-store", signal: AbortSignal.timeout(4000) });
+        if (!response.ok) throw new Error();
+        const payload = await response.json();
+        const ping = Math.round(performance.now() - started);
+        return (payload.rooms ?? []).map((room) => ({
+          key: `${server.url}|${room.mode}`,
+          server: server.name,
+          mode: room.mode === "FreeForAll" ? "Free For All" : "Team Deathmatch",
+          phase: room.phase,
+          players: Array.isArray(room.players) ? room.players : [],
+          count: room.connectedPlayers ?? 0,
+          capacity: payload.capacityPerRoom ?? 16,
+          ping,
+          online: true,
+        }));
+      } catch {
+        return [{ key: server.url, server: server.name, mode: "—", phase: "OFFLINE", players: [], count: 0, capacity: 0, ping: null, online: false }];
+      }
+    }
+
+    function renderServers() {
+      serverBody.replaceChildren();
+      rows.forEach((row) => {
+        const tr = document.createElement("tr");
+        if (!row.online) tr.className = "offline";
+        if (row.key === selectedKey) tr.classList.add("selected");
+        [row.server, row.mode, row.phase, row.online ? `${row.count} / ${row.capacity}` : "—", row.ping === null ? "—" : `${row.ping} ms`]
+          .forEach((value) => { const cell = document.createElement("td"); text(cell, value); tr.append(cell); });
+        tr.addEventListener("click", () => { selectedKey = row.key; renderServers(); renderPlayers(); });
+        serverBody.append(tr);
+      });
+    }
+
+    function renderPlayers() {
+      const row = rows.find((candidate) => candidate.key === selectedKey);
+      playerBody.replaceChildren();
+      const players = row?.players ?? [];
       byId("empty-state").hidden = players.length > 0;
       players.forEach((player, index) => {
-        const row = document.createElement("tr");
-        const values = [index + 1, player.name, player.team, player.weapon, player.kills, player.deaths];
-        values.forEach((value) => { const cell = document.createElement("td"); text(cell, value); row.append(cell); });
+        const tr = document.createElement("tr");
+        [index + 1, player.name, player.team, player.weapon, player.kills, player.deaths]
+          .forEach((value) => { const cell = document.createElement("td"); text(cell, value); tr.append(cell); });
         const status = document.createElement("td");
         status.className = player.alive ? "status-alive" : "status-down";
         text(status, player.alive ? "ACTIVE" : "RESPAWNING");
-        row.append(status);
-        body.append(row);
+        tr.append(status);
+        playerBody.append(tr);
       });
     }
 
     async function refresh() {
-      try {
-        const response = await fetch(`${apiRoot}/api/leaderboard`, { cache: "no-store" });
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        latest = await response.json();
-        text(byId("server-status"), "LIVE");
-        text(byId("persistence-note"), latest.persistence);
-        text(byId("last-updated"), `Updated ${new Date(latest.generatedAt).toLocaleTimeString()}`);
-        render();
-      } catch {
-        text(byId("server-status"), "OFFLINE");
-        text(byId("last-updated"), "Server unreachable");
+      servers ??= await loadServers();
+      const probed = await Promise.all(servers.map(probe));
+      rows = probed.flat();
+      if (!rows.some((row) => row.key === selectedKey)) {
+        const preferred = rows.find((row) => row.online && row.players.length) ?? rows.find((row) => row.online) ?? rows[0];
+        selectedKey = preferred?.key ?? null;
       }
+      text(byId("server-status"), rows.some((row) => row.online) ? "LIVE" : "OFFLINE");
+      text(byId("last-updated"), `Updated ${new Date().toLocaleTimeString()}`);
+      renderServers();
+      renderPlayers();
     }
 
-    document.querySelectorAll(".room-tab").forEach((tab) => tab.addEventListener("click", () => {
-      activeMode = tab.dataset.room;
-      document.querySelectorAll(".room-tab").forEach((candidate) => {
-        const selected = candidate === tab;
-        candidate.classList.toggle("active", selected);
-        candidate.setAttribute("aria-selected", String(selected));
-      });
-      render();
-    }));
     refresh();
     const timer = setInterval(refresh, 5000);
     addEventListener("pagehide", () => clearInterval(timer), { once: true });
@@ -251,6 +291,6 @@
 
   initializeBackdrop();
   initializeQuickStart();
-  initializeLeaderboard();
+  initializeServerBrowser();
   initializeArsenal();
 })();

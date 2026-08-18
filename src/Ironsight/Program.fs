@@ -1,6 +1,7 @@
 namespace Ironsight.Shell
 
 open System
+open System.Numerics
 open System.Threading.Tasks
 open Ironsight
 open Silk.NET.Input
@@ -17,6 +18,14 @@ module Program =
     let private hitMarkerKind events =
         let hits = events |> List.choose (function HitConfirmed(_, lethal) -> Some lethal | _ -> None)
         if List.isEmpty hits then None else Some(List.contains true hits)
+
+    /// One fixed-step tick off a `struct (payload * remaining)` countdown,
+    /// clearing the option once time runs out.
+    let private tickTimer (timer: struct ('a * float32<s>) option) =
+        timer
+        |> Option.bind (fun struct (payload, remaining) ->
+            let next = remaining - Tuning.TickDuration
+            if next > Units.seconds 0.0f then Some(struct (payload, next)) else None)
 
     type MenuHome =
         /// The boot menu: no session behind it, Esc on the root page does nothing.
@@ -39,7 +48,7 @@ module Program =
     let main args =
         let mutable onlineRequested = args |> Array.contains "--online"
         let mutable selectedOnlineMode = if args |> Array.contains "--ffa" then FreeForAll else TeamDeathmatch
-        let mutable selectedServerUri = OnlineDefaults.serverUri ()
+        let mutable selectedServerUri = ServerDirectory.defaultUri ()
         let mutable playerName =
             argumentValue "--name" args
             |> Option.defaultValue (Environment.GetEnvironmentVariable "USER" |> Option.ofObj |> Option.defaultValue "Soldier")
@@ -72,17 +81,23 @@ module Program =
         // Residual misprediction after a reconcile, decayed over ~100 ms and
         // applied to the *rendered* position only (QuakeWorld-style error
         // smoothing): tiny corrections glide instead of snapping the camera.
-        let mutable predictionError = System.Numerics.Vector3.Zero
+        let mutable predictionError = Vector3.Zero
         let mutable debugView = false
         let mutable serverStatusTask: Task<ServerRow array option> option = None
         let mutable serverStatusAt = DateTimeOffset.MinValue
         let mutable predictedFireCooldown = 0.0f
         let mutable predictedFireHeld = false
         let mutable subtitle: struct (string * float32<s>) option = None
-        let mutable damageDirection: struct (System.Numerics.Vector3 * float32<s>) option = None
+        let mutable damageDirection: struct (Vector3 * float32<s>) option = None
         let mutable hitMarkerRemaining = Units.seconds 0.0f
         let hitMarkerDuration lethal = Units.seconds (if lethal then 0.34f else 0.22f)
         let mutable hitMarkerLethal = false
+        let applyHitMarker events =
+            match hitMarkerKind events with
+            | Some lethal ->
+                hitMarkerLethal <- lethal
+                hitMarkerRemaining <- hitMarkerDuration lethal
+            | None -> ()
         let mutable inventoryShow = Units.seconds 0.0f
         let mutable lastActiveWeaponName = ""
         let mutable lastActiveInMag = -1
@@ -219,16 +234,8 @@ module Program =
         window.add_Update(fun elapsed ->
             accumulator <- min 0.25 (accumulator + elapsed)
             while accumulator >= fixedStep do
-                subtitle <-
-                    subtitle
-                    |> Option.bind (fun struct (text, remaining) ->
-                        let next = remaining - Tuning.TickDuration
-                        if next > Units.seconds 0.0f then Some(struct (text, next)) else None)
-                damageDirection <-
-                    damageDirection
-                    |> Option.bind (fun struct (direction, remaining) ->
-                        let next = remaining - Tuning.TickDuration
-                        if next > Units.seconds 0.0f then Some(struct (direction, next)) else None)
+                subtitle <- tickTimer subtitle
+                damageDirection <- tickTimer damageDirection
                 hitMarkerRemaining <- max (Units.seconds 0.0f) (hitMarkerRemaining - Tuning.TickDuration)
                 if hitMarkerRemaining <= Units.seconds 0.0f then hitMarkerLethal <- false
                 inventoryShow <- max (Units.seconds 0.0f) (inventoryShow - Tuning.TickDuration)
@@ -363,7 +370,7 @@ module Program =
                         let inputFrame =
                             match screen with
                             | Screen.Loadout _ ->
-                                { sampledFrame with Move = System.Numerics.Vector2.Zero; Look = System.Numerics.Vector2.Zero; Buttons = InputButtons.None }
+                                { sampledFrame with Move = Vector2.Zero; Look = Vector2.Zero; Buttons = InputButtons.None }
                             | _ -> sampledFrame
                         let weaponKeys =
                             InputButtons.Weapon1 ||| InputButtons.Weapon2 ||| InputButtons.Weapon3
@@ -383,7 +390,7 @@ module Program =
                                && not current.Player.Sprinting
                                && predictedFireCooldown <= 0.0f && (triggerEdge || mayRepeat) then
                                 let origin = Ballistics.playerMuzzleOrigin current.Player localWeapon.Class
-                                let direction = Ballistics.directionFromAngles current.Player.Yaw current.Player.Pitch System.Numerics.Vector2.Zero
+                                let direction = Ballistics.directionFromAngles current.Player.Yaw current.Player.Pitch Vector2.Zero
                                 let cosmetic = [ ShotFired(Some current.Player.Id, origin, direction, localWeapon.Class.Name) ]
                                 renderer |> Option.iter (fun value -> value.HandleEvents cosmetic; value.KickWeapon())
                                 audio |> Option.iter (fun value -> value.Handle cosmetic)
@@ -412,8 +419,8 @@ module Program =
                                     if current.Player.Health > Units.health 0.0f then inputFrame
                                     else
                                         { inputFrame with
-                                            Move = System.Numerics.Vector2.Zero
-                                            Look = System.Numerics.Vector2.Zero
+                                            Move = Vector2.Zero
+                                            Look = Vector2.Zero
                                             Buttons = InputButtons.None }
                                 let struct (next, events) = Sim.step aliveInput current
                                 current <- next
@@ -434,11 +441,7 @@ module Program =
                                 events
                                 |> List.tryPick (function PlayerHurt(direction, _) -> Some direction | _ -> None)
                                 |> Option.iter (fun direction -> damageDirection <- Some(struct (direction, Units.seconds 0.75f)))
-                                match hitMarkerKind events with
-                                | Some lethal ->
-                                    hitMarkerLethal <- lethal
-                                    hitMarkerRemaining <- hitMarkerDuration lethal
-                                | None -> ()
+                                applyHitMarker events
                 | None -> ()
                 // The receive half of the online session runs on every screen,
                 // so the match keeps flowing behind the pause menu and a
@@ -477,17 +480,13 @@ module Program =
                         networkEvents
                         |> List.tryPick (function Subtitle(_, line) -> Some line | _ -> None)
                         |> Option.iter (fun text -> subtitle <- Some(struct (text, Units.seconds 4.0f)))
-                        match hitMarkerKind networkEvents with
-                        | Some lethal ->
-                            hitMarkerLethal <- lethal
-                            hitMarkerRemaining <- hitMarkerDuration lethal
-                        | None -> ()
+                        applyHitMarker networkEvents
                         let beforeReconcile = current.Player.Position
                         let reconciled, remaining = OnlineWorld.reconcile current.Level (pendingInputs |> Seq.toList) client.PlayerId current snapshot
                         let error = predictionError + (beforeReconcile - reconciled.Player.Position)
                         // Large errors are teleports (respawn, round
                         // reset): snapping is correct there.
-                        predictionError <- if error.Length() > 1.0f then System.Numerics.Vector3.Zero else error
+                        predictionError <- if error.Length() > 1.0f then Vector3.Zero else error
                         current <- reconciled
                         pendingInputs.Clear()
                         remaining |> List.iter pendingInputs.Enqueue
@@ -522,7 +521,7 @@ module Program =
                     audio |> Option.iter (fun value -> value.PlayHeartbeat current.Player.Position)
                     lastHeartbeatTick <- current.Tick
                 if onlineClient.IsNone && current.Tick <> lastDistantTick && current.Tick % 480L = 240L then
-                    let offset = if (current.Tick / 480L) % 2L = 0L then System.Numerics.Vector3(38.0f, 3.0f, -30.0f) else System.Numerics.Vector3(-34.0f, 4.0f, -36.0f)
+                    let offset = if (current.Tick / 480L) % 2L = 0L then Vector3(38.0f, 3.0f, -30.0f) else Vector3(-34.0f, 4.0f, -36.0f)
                     audio |> Option.iter (fun value -> value.PlayDistantShot(current.Player.Position + offset))
                     lastDistantTick <- current.Tick
                 accumulator <- accumulator - fixedStep)
@@ -536,7 +535,7 @@ module Program =
                 | _ -> float32 (accumulator / fixedStep)
             let renderedWorld =
                 let interpolated = RenderInterpolation.world alpha previous current
-                if predictionError = System.Numerics.Vector3.Zero then interpolated
+                if predictionError = Vector3.Zero then interpolated
                 else { interpolated with Player = { interpolated.Player with Position = interpolated.Player.Position + predictionError } }
             let subtitleText = subtitle |> Option.map (fun struct (text, _) -> text)
             let hudInfo =

@@ -20,8 +20,6 @@ module Ballistics =
                 -MathF.Cos yaw * MathF.Cos pitch)
         MathEx.normalizedOrZero (forward + MathEx.yawRight yaw * offset.X + Vector3.UnitY * offset.Y)
 
-    let private muzzleDistance (weapon: WeaponClass) = weapon.MuzzleDistance
-
     let stanceOffset = function
         | Standing -> 0.0f
         | Crouched -> 0.34f
@@ -50,7 +48,7 @@ module Ballistics =
         player.Position
         + Vector3.UnitY * (eyeHeight player.Stance - 0.14f - 0.10f * hip)
         + right * (0.20f * hip)
-        + forward * muzzleDistance weapon
+        + forward * weapon.MuzzleDistance
 
     let soldierMuzzleOrigin (soldier: Soldier) =
         let forward = directionFromAngles soldier.Facing 0.0f Vector2.Zero
@@ -67,26 +65,36 @@ module Ballistics =
         // Render-only; never in the collision mesh, kept for match totality.
         | Water -> 0.0f
 
+    // Head/torso/legs capsule bounds, single source of truth: shared by the
+    // authoritative player-shot trace (soldierHit below) and the AI's
+    // shot-at-player check (AiBrain.playerHitDistance).
+    let private HeadLow, HeadHigh, HeadRadius = 1.62f, 1.85f, 0.13f
+    let private TorsoLow, TorsoHigh, TorsoRadius = 0.85f, 1.55f, 0.26f
+    let private LegsLow, LegsHigh, LegsRadius = 0.10f, 0.85f, 0.20f
+
+    /// Crouch-corrected capsule bounds (low point, high point, radius) for a
+    /// character at `position`, in head/torso/legs order.
+    let hitCapsules stance (position: Vector3) : struct (Vector3 * Vector3 * float32) array =
+        let crouch = stanceOffset stance
+        let at height = position + Vector3(0.0f, height - crouch, 0.0f)
+        [| struct (at HeadLow, at HeadHigh, HeadRadius)
+           struct (at TorsoLow, at TorsoHigh, TorsoRadius)
+           struct (at LegsLow, at LegsHigh, LegsRadius) |]
+
     let private soldierHit origin direction index (soldier: Soldier) =
         if soldier.Health <= Units.health 0.0f then None
         else
-            let crouch = stanceOffset soldier.Stance
-            let capsule low high radius =
-                MathEx.rayCapsule origin direction
-                    (soldier.Position + Vector3(0.0f, low - crouch, 0.0f))
-                    (soldier.Position + Vector3(0.0f, high - crouch, 0.0f)) radius
             let hits =
-                [ capsule 1.62f 1.85f 0.13f
-                  capsule 0.85f 1.55f 0.26f
-                  capsule 0.10f 0.85f 0.20f ]
-                |> List.choose id
+                hitCapsules soldier.Stance soldier.Position
+                |> Array.choose (fun struct (low, high, radius) -> MathEx.rayCapsule origin direction low high radius)
             match hits with
-            | [] -> None
+            | [||] -> None
             | distances ->
-                let distance = List.min distances
+                let distance = Array.min distances
+                let crouch = stanceOffset soldier.Stance
                 let height = (origin + direction * distance).Y - soldier.Position.Y
-                let torsoTop = 1.55f - crouch
-                let torsoBottom = 0.85f - crouch
+                let torsoTop = TorsoHigh - crouch
+                let torsoBottom = TorsoLow - crouch
                 let region =
                     if height >= torsoTop then Head
                     elif height >= torsoBottom then Torso
@@ -131,8 +139,6 @@ module Ballistics =
 
     let traceFiltered canHit origin direction (level: Level) (soldiers: Soldier array) =
         traceFilteredExcluding canHit Set.empty origin direction level soldiers
-
-    let trace origin direction level soldiers = traceFiltered (fun _ -> true) origin direction level soldiers
 
     let applyShotFiltered canHit (origin: Vector3) (direction: Vector3) (damage: float32<hp>) (penetration: float32) (headshotMultiplier: float32) (level: Level) (soldiers: Soldier array) =
         let mutable currentOrigin = origin

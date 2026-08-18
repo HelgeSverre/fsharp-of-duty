@@ -4,6 +4,23 @@ open System
 open System.Numerics
 open Ironsight
 
+/// Shared geometry for the start-menu panel, used both to draw it (Hud) and
+/// to hit-test mouse hover against it (here). The two offsets below are not
+/// currently equal (106 vs 99), which is a pre-existing few-pixel mismatch
+/// between the drawn rows and the hover hitbox; kept as-is rather than
+/// "fixed" as part of a behavior-preserving refactor.
+[<RequireQualifiedAccess>]
+module MenuLayout =
+    let RowHeight = 54.0f
+    let panelWidth (width: int) = min 840.0f (float32 width - 48.0f)
+    let panelHeight (rowCount: int) = 156.0f + RowHeight * float32 rowCount
+    /// Offset from panel-vertical-center to the first row's y, as used when
+    /// hit-testing mouse hover in hoveredIndex below.
+    let HitTestFirstRowOffset = 99.0f
+    /// Offset from panel-vertical-center to the first row's y, as used when
+    /// drawing the menu in Hud.fs.
+    let DrawFirstRowOffset = 106.0f
+
 type MenuPage = Main | NameEntry | OfflineMaps | ServerList | OnlineLoadout
 
 type StartMenuState =
@@ -106,10 +123,10 @@ module StartMenu =
         | OnlineLoadout -> "SELECT ONLINE LOADOUT"
 
     let private hoveredIndex (width: int) (height: int) (count: int) (pointer: Vector2) =
-        let rowHeight = 54.0f
-        let panelWidth = min 840.0f (float32 width - 48.0f)
+        let rowHeight = MenuLayout.RowHeight
+        let panelWidth = MenuLayout.panelWidth width
         let left = float32 width * 0.5f - panelWidth * 0.5f
-        let top = float32 height * 0.5f - (156.0f + float32 count * rowHeight) * 0.5f + 99.0f
+        let top = float32 height * 0.5f - MenuLayout.panelHeight count * 0.5f + MenuLayout.HitTestFirstRowOffset
         if pointer.X >= left + 18.0f && pointer.X <= left + panelWidth - 18.0f && pointer.Y >= top && pointer.Y < top + rowHeight * float32 count then
             Some(int ((pointer.Y - top) / rowHeight))
         else None

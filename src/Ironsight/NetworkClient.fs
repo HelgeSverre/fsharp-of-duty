@@ -258,14 +258,10 @@ type OnlineClient(serverUri: Uri, playerName: string, requestedMode: GameMode, w
         | :? WebSocketException -> cancellation.Cancel()
     }
 
-    let lerpAngle first second amount =
-        let delta = MathF.Atan2(MathF.Sin(second - first), MathF.Cos(second - first))
-        first + delta * amount
-
     let interpolatePlayer (amount: float32) (first: OnlinePlayer) (second: OnlinePlayer) =
         { second with
             Position = Vector3.Lerp(first.Position, second.Position, amount)
-            Yaw = lerpAngle first.Yaw second.Yaw amount
+            Yaw = MathEx.lerpAngle first.Yaw second.Yaw amount
             Pitch = first.Pitch + (second.Pitch - first.Pitch) * amount }
 
     member _.ServerUri = serverUri
@@ -369,13 +365,3 @@ type OnlineClient(serverUri: Uri, playerName: string, requestedMode: GameMode, w
                 socket.Abort()
                 socket.Dispose()
                 cancellation.Dispose()
-
-[<RequireQualifiedAccess>]
-module OnlineDefaults =
-    [<Literal>]
-    let FlyServer = "wss://fsharp-of-duty.fly.dev/play"
-
-    let serverUri () =
-        match Environment.GetEnvironmentVariable "IRONSIGHT_SERVER" with
-        | value when not (String.IsNullOrWhiteSpace value) -> Uri value
-        | _ -> Uri FlyServer

@@ -148,12 +148,9 @@ module AiBrain =
         MathEx.normalizedOrZero (forward + right * offset.X + Vector3.UnitY * offset.Y)
 
     let playerHitDistance origin direction (player: Player) =
-        let crouch = Ballistics.stanceOffset player.Stance
-        [ MathEx.rayCapsule origin direction (player.Position + Vector3(0.0f, 1.62f - crouch, 0.0f)) (player.Position + Vector3(0.0f, 1.85f - crouch, 0.0f)) 0.13f
-          MathEx.rayCapsule origin direction (player.Position + Vector3(0.0f, 0.85f - crouch, 0.0f)) (player.Position + Vector3(0.0f, 1.55f - crouch, 0.0f)) 0.26f
-          MathEx.rayCapsule origin direction (player.Position + Vector3(0.0f, 0.10f - crouch, 0.0f)) (player.Position + Vector3(0.0f, 0.85f - crouch, 0.0f)) 0.20f ]
-        |> List.choose id
-        |> function [] -> None | hits -> Some(List.min hits)
+        Ballistics.hitCapsules player.Stance player.Position
+        |> Array.choose (fun struct (low, high, radius) -> MathEx.rayCapsule origin direction low high radius)
+        |> function [||] -> None | hits -> Some(Array.min hits)
 
     let private staticHitDistance origin direction (level: Level) =
         // Triangles, so a soldier treats a slope or a bank as cover the same way
@@ -164,6 +161,59 @@ module AiBrain =
             | ValueSome entry -> Some entry
             | ValueNone -> None)
         |> function [||] -> Single.PositiveInfinity | hits -> Array.min hits
+
+    /// Shared target-select + weapon-step + fire-apply for the two intra-AI
+    /// engagement passes below (allies-vs-axis, axis-vs-squad): find the
+    /// nearest enemy of `enemyTeam` within `rangeSq` (among the `maxCandidates`
+    /// closest) with line of sight, let `position` place/face the soldier and
+    /// decide whether it should fire, then step the weapon and apply any
+    /// resulting shots. `guard` (the axis pass's steppedWeapons check; always
+    /// false for the allies pass) skips the weapon-step/fire but still applies
+    /// positioning, so a soldier that already fired against the player this
+    /// tick only turns to face the squad. Ballistics.applyShotFiltered already
+    /// marks every soldier a shot kills — including a second body an
+    /// overpenetrating round passes into — as Dying/DyingHeadshot, so this
+    /// (and its callers) must not re-mark death on top of it. Returns the
+    /// updated soldiers and whether a target was found, so the allies pass can
+    /// still run its own no-target fallback (advance to objective).
+    let private engage
+        dt (level: Level) (rng: byref<Rng.State>) (events: ResizeArray<GameEvent>)
+        enemyTeam (rangeSq: float32) maxCandidates (damageScale: float32) (adsAmount: float32)
+        (guard: EntityId -> bool) (position: Soldier -> Soldier -> struct (Soldier * bool))
+        (index: int) (combatSoldiers: Soldier array) : Soldier array * bool =
+        let self = combatSoldiers[index]
+        let target =
+            combatSoldiers
+            |> Array.mapi (fun i s -> i, s)
+            |> Array.filter (fun (_, s) ->
+                s.Team = enemyTeam && s.Health > Units.health 0.0f
+                && Vector3.DistanceSquared(self.Position, s.Position) < rangeSq)
+            |> Array.sortBy (fun (_, s) -> Vector3.DistanceSquared(self.Position, s.Position))
+            |> Array.truncate maxCandidates
+            |> Array.tryFind (fun (_, s) ->
+                Ballistics.lineOfSight (self.Position + Vector3(0.0f, 1.45f, 0.0f)) (s.Position + Vector3(0.0f, 1.05f, 0.0f)) level)
+        match target with
+        | None -> combatSoldiers, false
+        | Some(_, enemy) ->
+            let mutable soldiers = combatSoldiers
+            let struct (positioned, wantsToFire) = position self enemy
+            soldiers[index] <- positioned
+            if guard positioned.Id then soldiers, true
+            else
+                let struct (weapon, requests) =
+                    Weapons.step dt 0.0f (wantsFire wantsToFire positioned.Weapon) (shouldReload positioned.Weapon) adsAmount &rng positioned.Weapon
+                soldiers[index] <- { positioned with Weapon = weapon }
+                for request in requests do
+                    let origin = Ballistics.soldierMuzzleOrigin positioned
+                    let targetPoint = enemy.Position + Vector3(0.0f, 1.05f, 0.0f)
+                    let direction = aimDirection origin targetPoint request.DirectionOffset
+                    events.Add(ShotFired(Some positioned.Id, origin, direction, weapon.Class.Name))
+                    let hitSoldiers, hitEvents =
+                        Ballistics.applyShotFiltered (fun candidate -> candidate.Team = enemyTeam) origin direction
+                            (request.Damage * damageScale) request.Penetration request.HeadshotMultiplier level soldiers
+                    soldiers <- hitSoldiers
+                    events.AddRange(hitEvents |> List.filter (function HitConfirmed _ -> false | _ -> true))
+                soldiers, true
 
     let step dt (rng: byref<Rng.State>) (level: Level) (blackboards: Map<int, SquadBlackboard>) (player: Player) (soldiers: Soldier array) =
         let mutable localRng = rng
@@ -325,85 +375,36 @@ module AiBrain =
         for allyIndex in 0..combatSoldiers.Length - 1 do
             let ally = combatSoldiers[allyIndex]
             if ally.Team = Allies && ally.Health > Units.health 0.0f then
-                let target =
-                    combatSoldiers
-                    |> Array.mapi (fun index soldier -> index, soldier)
-                    |> Array.filter (fun (_, soldier) ->
-                        soldier.Team = Axis && soldier.Health > Units.health 0.0f
-                        && Vector3.DistanceSquared(ally.Position, soldier.Position) < 2500.0f
-                        && Ballistics.lineOfSight (ally.Position + Vector3(0.0f, 1.45f, 0.0f)) (soldier.Position + Vector3(0.0f, 1.05f, 0.0f)) level)
-                    |> Array.sortBy (fun (_, soldier) -> Vector3.DistanceSquared(ally.Position, soldier.Position))
-                    |> Array.tryHead
-                match target with
-                | None ->
+                let position (self: Soldier) (enemy: Soldier) =
+                    let distance = Vector3.Distance(self.Position, enemy.Position)
+                    let positioned =
+                        if distance > 18.0f then
+                            followRoute dt level enemy.Position self
+                        else
+                            let contact = Map.add enemy.Id (struct (enemy.Position, Units.seconds 0.0f)) self.Contacts
+                            { self with Facing = MathF.Atan2(enemy.Position.X - self.Position.X, -(enemy.Position.Z - self.Position.Z)); Contacts = contact }
+                    struct (positioned, distance <= 32.0f)
+                let updated, engaged =
+                    engage dt level &localRng events Axis 2500.0f Int32.MaxValue 1.0f 0.72f (fun _ -> false) position allyIndex combatSoldiers
+                combatSoldiers <- updated
+                if not engaged then
                     let objective = Vector3(0.0f, ally.Position.Y, level.Bounds.Min.Z + 4.0f)
                     if ally.Position.Z > objective.Z + 0.5f then
                         combatSoldiers[allyIndex] <- followRoute dt level objective ally
-                | Some(targetIndex, enemy) ->
-                    let distance = Vector3.Distance(ally.Position, enemy.Position)
-                    let positioned =
-                        if distance > 18.0f then
-                            followRoute dt level enemy.Position ally
-                        else
-                            let contact = Map.add enemy.Id (struct (enemy.Position, Units.seconds 0.0f)) ally.Contacts
-                            { ally with Facing = MathF.Atan2(enemy.Position.X - ally.Position.X, -(enemy.Position.Z - ally.Position.Z)); Contacts = contact }
-                    let shouldFire = distance <= 32.0f
-                    let struct (weapon, requests) =
-                        Weapons.step dt 0.0f (wantsFire shouldFire positioned.Weapon) (shouldReload positioned.Weapon) 0.72f &localRng positioned.Weapon
-                    combatSoldiers[allyIndex] <- { positioned with Weapon = weapon }
-                    for request in requests do
-                        let origin = Ballistics.soldierMuzzleOrigin positioned
-                        let targetPoint = enemy.Position + Vector3(0.0f, 1.05f, 0.0f)
-                        let direction = aimDirection origin targetPoint request.DirectionOffset
-                        events.Add(ShotFired(Some positioned.Id, origin, direction, weapon.Class.Name))
-                        let hitSoldiers, hitEvents =
-                            Ballistics.applyShotFiltered (fun candidate -> candidate.Team = Axis) origin direction request.Damage request.Penetration request.HeadshotMultiplier level combatSoldiers
-                        combatSoldiers <- hitSoldiers
-                        events.AddRange(hitEvents |> List.filter (function HitConfirmed _ -> false | _ -> true))
-                        if combatSoldiers[targetIndex].Health <= Units.health 0.0f then
-                            combatSoldiers[targetIndex] <- { combatSoldiers[targetIndex] with Behavior = Dying(Units.seconds 0.0f) }
         // Axis troops also engage the advancing friendly squad. This produces a
         // battlefield-wide firefight instead of every enemy waiting exclusively
         // for the player to enter its perception cone.
         for axisIndex in 0..combatSoldiers.Length - 1 do
             let axis = combatSoldiers[axisIndex]
             if axis.Team = Axis && axis.Health > Units.health 0.0f then
-                let candidates =
-                    combatSoldiers
-                    |> Array.mapi (fun index soldier -> index, soldier)
-                    |> Array.filter (fun (_, soldier) ->
-                        soldier.Team = Allies && soldier.Health > Units.health 0.0f
-                        && Vector3.DistanceSquared(axis.Position, soldier.Position) < 45.0f * 45.0f)
-                    |> Array.sortBy (fun (_, soldier) -> Vector3.DistanceSquared(axis.Position, soldier.Position))
-                    |> Array.truncate 5
-                let target =
-                    candidates
-                    |> Array.tryFind (fun (_, soldier) ->
-                        Ballistics.lineOfSight (axis.Position + Vector3(0.0f, 1.45f, 0.0f)) (soldier.Position + Vector3(0.0f, 1.05f, 0.0f)) level)
-                match target with
-                | None -> ()
-                | Some(targetIndex, friendly) ->
-                    let facing = MathF.Atan2(friendly.Position.X - axis.Position.X, -(friendly.Position.Z - axis.Position.Z))
-                    let aimed = { axis with Facing = facing; Contacts = Map.add friendly.Id (struct (friendly.Position, Units.seconds 0.0f)) axis.Contacts }
-                    let (EntityId axisId) = axis.Id
-                    if steppedWeapons.Contains axisId then
-                        // Already fired or cycled against the player this tick;
-                        // just turn to face the squad without advancing twice.
-                        combatSoldiers[axisIndex] <- aimed
-                    else
-                        let struct (weapon, requests) =
-                            Weapons.step dt 0.0f (wantsFire true aimed.Weapon) (shouldReload aimed.Weapon) 0.0f &localRng aimed.Weapon
-                        combatSoldiers[axisIndex] <- { aimed with Weapon = weapon }
-                        for request in requests do
-                            let origin = Ballistics.soldierMuzzleOrigin aimed
-                            let targetPoint = friendly.Position + Vector3(0.0f, 1.05f, 0.0f)
-                            let direction = aimDirection origin targetPoint request.DirectionOffset
-                            events.Add(ShotFired(Some aimed.Id, origin, direction, weapon.Class.Name))
-                            let hitSoldiers, hitEvents =
-                                Ballistics.applyShotFiltered (fun candidate -> candidate.Team = Allies) origin direction (request.Damage * Tuning.EnemyFriendlyDamageScale) request.Penetration request.HeadshotMultiplier level combatSoldiers
-                            combatSoldiers <- hitSoldiers
-                            events.AddRange(hitEvents |> List.filter (function HitConfirmed _ -> false | _ -> true))
-                            if combatSoldiers[targetIndex].Health <= Units.health 0.0f then
-                                combatSoldiers[targetIndex] <- { combatSoldiers[targetIndex] with Behavior = Dying(Units.seconds 0.0f) }
+                let position (self: Soldier) (friendly: Soldier) =
+                    let facing = MathF.Atan2(friendly.Position.X - self.Position.X, -(friendly.Position.Z - self.Position.Z))
+                    struct ({ self with Facing = facing; Contacts = Map.add friendly.Id (struct (friendly.Position, Units.seconds 0.0f)) self.Contacts }, true)
+                // Already fired or cycled against the player this tick; just
+                // turn to face the squad without stepping the weapon twice.
+                let guard (EntityId id) = steppedWeapons.Contains id
+                let updated, _ =
+                    engage dt level &localRng events Allies (45.0f * 45.0f) 5 Tuning.EnemyFriendlyDamageScale 0.0f guard position axisIndex combatSoldiers
+                combatSoldiers <- updated
         rng <- localRng
         updatedPlayer, combatSoldiers, List.ofSeq events

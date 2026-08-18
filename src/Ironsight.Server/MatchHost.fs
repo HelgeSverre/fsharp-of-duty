@@ -27,7 +27,6 @@ type MatchHost(mode: GameMode, ?matchLevel: Level) =
     let mutable disconnectedSince: Map<EntityId, DateTimeOffset> = Map.empty
 
     let clamp (minimum: float32) (maximum: float32) (value: float32) = Math.Clamp(value, minimum, maximum)
-    let hasButton button (buttons: InputButtons) = buttons.HasFlag button
     let selectedWeapon team weaponName =
         weaponName
         |> Option.bind Tuning.weaponByName
@@ -281,11 +280,11 @@ type MatchHost(mode: GameMode, ?matchLevel: Level) =
             let stepFrame id (player: NetworkPlayer) (input: InputFrame) (estimatedTick: int64) acknowledge =
                 let moved = Movement.step Tuning.TickDuration input level (toPlayer player)
                 let canEngage = lifecycleState.Phase = Playing
-                let fire = canEngage && hasButton InputButtons.Fire input.Buttons && not moved.Sprinting
-                let reload = hasButton InputButtons.Reload input.Buttons
+                let fire = canEngage && Input.hasButton InputButtons.Fire input.Buttons && not moved.Sprinting
+                let reload = Input.hasButton InputButtons.Reload input.Buttons
                 let moveSpeed = MathEx.horizontal moved.Velocity |> fun velocity -> velocity.Length()
                 let struct (weapon, requests) = Weapons.step Tuning.TickDuration moveSpeed fire reload moved.Ads &rng moved.Slots[0]
-                let grenadeHeld = canEngage && hasButton InputButtons.Grenade input.Buttons && not moved.Sprinting
+                let grenadeHeld = canEngage && Input.hasButton InputButtons.Grenade input.Buttons && not moved.Sprinting
                 let handPlayer, thrown = Grenades.stepHand Tuning.TickDuration grenadeHeld moved
                 thrown |> Option.iter thrownGrenades.Add
                 let horizontalSpeed = MathEx.horizontal handPlayer.Velocity |> fun velocity -> velocity.Length()

@@ -21,6 +21,13 @@ module MathEx =
 
     let yawRight yaw = Vector3(MathF.Cos yaw, 0.0f, MathF.Sin yaw)
 
+    /// Shortest-arc angle interpolation (radians): wraps through +/-pi so a
+    /// lerp from just under pi to just over -pi turns the short way, not the
+    /// long way around the circle.
+    let lerpAngle (from: float32) (``to``: float32) (amount: float32) =
+        let delta = MathF.IEEERemainder(``to`` - from, MathF.PI * 2.0f)
+        from + delta * amount
+
     let overlapsPoint (point: Vector3) (box: Aabb) =
         point.X >= box.Min.X && point.X <= box.Max.X
         && point.Y >= box.Min.Y && point.Y <= box.Max.Y

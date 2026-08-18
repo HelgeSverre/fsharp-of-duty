@@ -6,10 +6,16 @@ open Ironsight
 [<RequireQualifiedAccess>]
 module OnlineWorld =
     let eventToGameEvent (event: OnlineEvent) =
+        // Every Material case is matched explicitly (not just the common
+        // surfaces) so an unrecognised string is the only path to the Mud
+        // fallback, not a silently missing case.
         let material =
             match event.Text with
-            | "Brick" -> Brick | "Plaster" -> Plaster | "Wood" -> Wood | "Snow" -> Snow
-            | "Sandbag" -> Sandbag | "Metal" -> Metal | _ -> Mud
+            | "Brick" -> Brick | "Plaster" -> Plaster | "Wood" -> Wood | "Mud" -> Mud
+            | "Snow" -> Snow | "Sandbag" -> Sandbag | "Metal" -> Metal
+            | "UniformOlive" -> UniformOlive | "UniformFeldgrau" -> UniformFeldgrau
+            | "Skin" -> Skin | "Water" -> Water
+            | _ -> Mud
         match event.Kind with
         | "shot" -> Some(ShotFired((if event.EntityId = 0 then None else Some(EntityId event.EntityId)), event.Position, event.Direction, event.Text))
         | "impact" -> Some(Impact(event.Position, event.Direction, material))
@@ -61,6 +67,12 @@ module OnlineWorld =
           Suppression = 0.0f
           AnimPhase = float32 snapshot.Id }
 
+    let private toGrenade (grenade: OnlineGrenade) =
+        { Owner = EntityId grenade.OwnerId
+          Position = grenade.Position
+          Velocity = Vector3.Zero
+          Fuse = Units.seconds grenade.Fuse }
+
     let reconcile level pendingInputs localId (world: World) (snapshot: OnlineSnapshot) =
         match snapshot.Players |> Array.tryFind (fun player -> player.Id = localId) with
         | None -> world, pendingInputs
@@ -78,13 +90,7 @@ module OnlineWorld =
                 snapshot.Players
                 |> Array.filter (fun player -> player.Id <> localId)
                 |> Array.map remoteSoldier
-            let grenades =
-                snapshot.Grenades
-                |> Array.map (fun grenade ->
-                    { Owner = EntityId grenade.OwnerId
-                      Position = grenade.Position
-                      Velocity = Vector3.Zero
-                      Fuse = Units.seconds grenade.Fuse })
+            let grenades = snapshot.Grenades |> Array.map toGrenade
             { world with Tick = snapshot.Tick; Player = predicted; Soldiers = soldiers; Grenades = grenades; Squads = Map.empty }, pending
 
     let applyPrediction level input (world: World) =
@@ -105,11 +111,5 @@ module OnlineWorld =
                         Health = Units.health remote.Health
                         Behavior = if remote.Alive then soldier.Behavior else Dying(Units.seconds 0.7f) }
                 | _ -> soldier)
-        let grenades =
-            snapshot.Grenades
-            |> Array.map (fun grenade ->
-                { Owner = EntityId grenade.OwnerId
-                  Position = grenade.Position
-                  Velocity = Vector3.Zero
-                  Fuse = Units.seconds grenade.Fuse })
+        let grenades = snapshot.Grenades |> Array.map toGrenade
         { world with Soldiers = soldiers; Grenades = grenades }

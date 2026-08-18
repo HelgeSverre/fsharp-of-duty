@@ -2,8 +2,8 @@ namespace Ironsight.Shell
 
 open System
 open System.IO
-open System.Net.Http
 open System.Text.Json
+open System.Threading
 open System.Threading.Tasks
 open Ironsight
 
@@ -31,6 +31,13 @@ module ServerDirectory =
 
     [<Literal>]
     let MasterListUrl = "https://raw.githubusercontent.com/HelgeSverre/fsharp-of-duty/main/servers.json"
+
+    /// The server to connect to before the user picks one: IRONSIGHT_SERVER
+    /// env override, else the compiled-in default.
+    let defaultUri () =
+        match Environment.GetEnvironmentVariable "IRONSIGHT_SERVER" with
+        | value when not (String.IsNullOrWhiteSpace value) -> Uri value
+        | _ -> Uri DefaultServer
 
     /// Tolerant parse: junk entries are skipped, junk documents yield [].
     let parse (json: string) =
@@ -65,8 +72,8 @@ module ServerDirectory =
     /// The community list from the repo; cached so offline runs keep it.
     let private remoteEntries () =
         try
-            use http = new HttpClient(Timeout = TimeSpan.FromSeconds 3.0)
-            let json = http.GetStringAsync(Uri MasterListUrl).GetAwaiter().GetResult()
+            use timeout = new CancellationTokenSource(TimeSpan.FromSeconds 3.0)
+            let json = MapStore.http.GetStringAsync(Uri MasterListUrl, timeout.Token).GetAwaiter().GetResult()
             let entries = parse json
             if not entries.IsEmpty then
                 try
@@ -100,11 +107,10 @@ module ServerDirectory =
             let probeOne (server: ServerEntry) =
                 Task.Run(fun () ->
                     try
-                        let scheme = if server.Url.Scheme = "wss" then "https" else "http"
-                        let target = UriBuilder(server.Url, Scheme = scheme, Path = "/api/leaderboard").Uri
-                        use http = new HttpClient(Timeout = TimeSpan.FromSeconds 4.0)
+                        let target = MapStore.httpUri server.Url "/api/leaderboard"
+                        use timeout = new CancellationTokenSource(TimeSpan.FromSeconds 4.0)
                         let clock = Diagnostics.Stopwatch.StartNew()
-                        let json = http.GetStringAsync(target).GetAwaiter().GetResult()
+                        let json = MapStore.http.GetStringAsync(target, timeout.Token).GetAwaiter().GetResult()
                         let ping = int clock.ElapsedMilliseconds
                         use document = JsonDocument.Parse json
                         let root = document.RootElement

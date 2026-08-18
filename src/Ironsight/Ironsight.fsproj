@@ -27,6 +27,7 @@
     <Compile Include="Menu.fs" />
     <Compile Include="SettingsUi.fs" />
     <Compile Include="Input.fs" />
+    <Compile Include="GlUtil.fs" />
     <Compile Include="Shaders.fs" />
     <Compile Include="NetworkClient.fs" />
     <Compile Include="OnlineWorld.fs" />

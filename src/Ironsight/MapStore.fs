@@ -3,6 +3,7 @@ namespace Ironsight.Shell
 open System
 open System.IO
 open System.Net.Http
+open System.Threading
 open Ironsight
 open Ironsight.ProcGen
 
@@ -14,6 +15,21 @@ open Ironsight.ProcGen
 /// simply a different cache entry.
 [<RequireQualifiedAccess>]
 module MapStore =
+    /// Shared across every HTTP call this process makes (map downloads, the
+    /// server directory's master list and probes): one HttpClient per process
+    /// is the documented pattern, since a fresh instance per call exhausts
+    /// sockets under churn (ServerDirectory's probe alone fires once per
+    /// server every 5s). No Timeout here — each call supplies its own via a
+    /// CancellationTokenSource so one slow server can't cap every other call.
+    let http = new HttpClient()
+
+    /// The server's ws(s) URI translated to http(s) at the given path — the
+    /// game protocol runs on a WebSocket, but map sync and the directory
+    /// probe are plain HTTP requests to the same host.
+    let httpUri (serverUri: Uri) (path: string) : Uri =
+        let scheme = if serverUri.Scheme = "wss" then "https" else "http"
+        UriBuilder(serverUri, Scheme = scheme, Path = path).Uri
+
     /// Built-in maps by the hash of their encoded spec.
     let private builtins =
         lazy
@@ -50,11 +66,10 @@ module MapStore =
                 None
 
     let private download (serverUri: Uri) (hash: string) =
-        let scheme = if serverUri.Scheme = "wss" then "https" else "http"
-        let builder = UriBuilder(serverUri, Scheme = scheme, Path = $"/maps/{hash}")
+        let uri = httpUri serverUri $"/maps/{hash}"
         try
-            use client = new HttpClient(Timeout = TimeSpan.FromSeconds 15.0)
-            let bytes = client.GetByteArrayAsync(builder.Uri).GetAwaiter().GetResult()
+            use timeout = new CancellationTokenSource(TimeSpan.FromSeconds 15.0)
+            let bytes = http.GetByteArrayAsync(uri, timeout.Token).GetAwaiter().GetResult()
             if bytes.Length > MapFile.MaxBytes then Error "server sent an oversized map"
             else
                 match compileVerified hash bytes with

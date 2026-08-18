@@ -81,24 +81,20 @@
     <section id="leaderboard" class="war-room shell">
       <div class="section-heading">
         <div>
-          <div class="section-number">02 // LIVE SERVER</div>
-          <h2>Live leaderboard</h2>
-          <p>Players connected to the public server right now, read from actual
-            server state. Stats are in-memory and reset when the server redeploys.</p>
+          <div class="section-number">02 // LIVE SERVERS</div>
+          <h2>Server browser</h2>
+          <p>The same server list the in-game browser uses, probed live from your browser.
+            Select a room to see who's playing.</p>
         </div>
-        <div class="server-badge"><span class="live-dot"></span><b id="server-status">CONNECTING</b><small>ARN // FLY.IO</small></div>
-      </div>
-
-      <div class="room-tabs" role="tablist" aria-label="Game mode">
-        <button class="room-tab active" role="tab" aria-selected="true" data-room="TeamDeathmatch">Team Deathmatch</button>
-        <button class="room-tab" role="tab" aria-selected="false" data-room="FreeForAll">Free For All</button>
+        <div class="server-badge"><span class="live-dot"></span><b id="server-status">CONNECTING</b><small>COMMUNITY LIST</small></div>
       </div>
 
       <div class="leaderboard-frame">
-        <div class="match-strip">
-          <span>Phase <b id="match-phase">UNKNOWN</b></span>
-          <span class="tdm-score"><i>ALLIES</i> <b id="allies-score">0</b> — <b id="axis-score">0</b> <i>AXIS</i></span>
-          <span>Population <b id="population">0 / 16</b></span>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Server</th><th>Mode</th><th>Phase</th><th>Players</th><th>Ping</th></tr></thead>
+            <tbody id="server-body"></tbody>
+          </table>
         </div>
         <div class="table-wrap">
           <table>
@@ -110,7 +106,7 @@
             <span>Download the game and be the first one in.</span>
           </div>
         </div>
-        <footer><span id="persistence-note">Stats live in server memory only.</span><span id="last-updated">Awaiting first update</span></footer>
+        <footer><span>Stats are in-memory and reset on redeploy.</span><span id="last-updated">Awaiting first update</span></footer>
       </div>
     </section>
 

@@ -53,30 +53,7 @@ type Hud(gl: GL) =
     let buffer = gl.GenBuffer()
     let texture = gl.GenTexture()
 
-    let compile shaderType source =
-        let shader = gl.CreateShader(shaderType: ShaderType)
-        gl.ShaderSource(shader, source)
-        gl.CompileShader shader
-        let mutable status = 0
-        gl.GetShader(shader, ShaderParameterName.CompileStatus, &status)
-        if status <> int GLEnum.True then invalidOp (gl.GetShaderInfoLog shader)
-        shader
-
-    let createProgram () =
-        let vertex = compile ShaderType.VertexShader Shaders.hudVertex
-        let fragment = compile ShaderType.FragmentShader Shaders.hudFragment
-        let value = gl.CreateProgram()
-        gl.AttachShader(value, vertex)
-        gl.AttachShader(value, fragment)
-        gl.LinkProgram value
-        let mutable status = 0
-        gl.GetProgram(value, ProgramPropertyARB.LinkStatus, &status)
-        gl.DeleteShader vertex
-        gl.DeleteShader fragment
-        if status <> int GLEnum.True then invalidOp (gl.GetProgramInfoLog value)
-        value
-
-    let program = createProgram ()
+    let program = GlUtil.createProgram gl Shaders.hudVertex Shaders.hudFragment
 
     let addVertex x y u v (color: Vector4) =
         vertices.Add x; vertices.Add y; vertices.Add u; vertices.Add v
@@ -132,16 +109,28 @@ type Hud(gl: GL) =
         gl.BindTexture(TextureTarget.Texture2D, texture)
         use pixels = fixed font.Pixels
         gl.TexImage2D(TextureTarget.Texture2D, 0, InternalFormat.R8, uint32 font.Width, uint32 font.Height, 0, PixelFormat.Red, PixelType.UnsignedByte, NativePtr.toVoidPtr pixels)
-        gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMinFilter, int TextureMinFilter.Linear)
-        gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMagFilter, int TextureMagFilter.Linear)
-        gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapS, int TextureWrapMode.ClampToEdge)
-        gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapT, int TextureWrapMode.ClampToEdge)
+        GlUtil.clampLinearTexture gl TextureTarget.Texture2D
 
     member _.Render(width: int, height: int, world: World, info: HudInfo) =
         vertices.Clear()
         let white = Vector4(0.92f, 0.94f, 0.89f, 0.95f)
         let shadow = Vector4(0.0f, 0.0f, 0.0f, 0.7f)
         let centerX, centerY = float32 width * 0.5f, float32 height * 0.5f
+        // ---- Shared overlay-panel pieces: loadout, menu and settings all
+        // draw a backing rect + accent strip (optionally behind a fullscreen
+        // dim), a selected-row highlight bar, and an identical prompt footer.
+        let overlayPanel dim (accentAlpha: float32) (panelWidth: float32) (panelHeight: float32) =
+            let panelLeft = centerX - panelWidth * 0.5f
+            let panelTop = centerY - panelHeight * 0.5f
+            if dim then solid 0.0f 0.0f (float32 width) (float32 height) (Vector4(0.005f, 0.009f, 0.008f, 0.63f))
+            solid panelLeft panelTop panelWidth panelHeight (Vector4(0.025f, 0.040f, 0.034f, 0.94f))
+            solid panelLeft panelTop panelWidth 5.0f (Vector4(0.82f, 0.22f, 0.08f, accentAlpha))
+            panelLeft, panelTop
+        let rowHighlight (left: float32) (panelWidth: float32) (barTop: float32) (barHeight: float32) =
+            solid (left + 18.0f) barTop (panelWidth - 36.0f) barHeight (Vector4(0.47f, 0.17f, 0.07f, 0.88f))
+            solid (left + 18.0f) barTop 5.0f barHeight (Vector4(1.0f, 0.74f, 0.30f, 1.0f))
+        let panelPrompt (panelTop: float32) (panelHeight: float32) (text: string) =
+            addText (centerX - float32 text.Length * 3.6f) (panelTop + panelHeight - 30.0f) 0.9f (Vector4(0.64f, 0.67f, 0.61f, 1.0f)) text
         let weapon = world.Player.Slots[world.Player.Active]
         let scoped = weapon.Class.Kind = SniperRifle && world.Player.Ads >= 0.72f
         if scoped then
@@ -374,9 +363,9 @@ type Hud(gl: GL) =
         info.Menu
         |> Option.iter (fun menu ->
             let options = StartMenu.items menu
-            let rowHeight = 54.0f
-            let panelWidth = min 840.0f (float32 width - 48.0f)
-            let panelHeight = 156.0f + rowHeight * float32 options.Length
+            let rowHeight = MenuLayout.RowHeight
+            let panelWidth = MenuLayout.panelWidth width
+            let panelHeight = MenuLayout.panelHeight options.Length
             let panelLeft = centerX - panelWidth * 0.5f
             let panelTop = centerY - panelHeight * 0.5f
             solid 0.0f 0.0f (float32 width) (float32 height) (Vector4(0.005f, 0.009f, 0.008f, 0.63f))
@@ -386,7 +375,7 @@ type Hud(gl: GL) =
             addText (centerX - float32 title.Length * 12.0f) (panelTop + 24.0f) 3.0f white title
             let subtitle = StartMenu.subtitle menu
             addText (centerX - float32 subtitle.Length * 5.0f) (panelTop + 68.0f) 1.0f (Vector4(0.68f, 0.72f, 0.67f, 1.0f)) subtitle
-            let firstRow = panelTop + 106.0f
+            let firstRow = panelTop + MenuLayout.DrawFirstRowOffset
             options
             |> Array.iteri (fun index label ->
                 let y = firstRow + float32 index * rowHeight

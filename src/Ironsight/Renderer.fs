@@ -47,40 +47,13 @@ type Renderer(gl: GL) =
     let mutable deathWatching = false
     let mutable deathStarted = Stopwatch.GetTimestamp()
 
-    let compileShader (shaderType: ShaderType) (source: string) =
-        let shader = gl.CreateShader shaderType
-        gl.ShaderSource(shader, source)
-        gl.CompileShader shader
-        let mutable status = 0
-        gl.GetShader(shader, ShaderParameterName.CompileStatus, &status)
-        if status <> int GLEnum.True then
-            let message = gl.GetShaderInfoLog shader
-            gl.DeleteShader shader
-            invalidOp $"Shader compilation failed: {message}"
-        shader
-
-    let createLinkedProgram vertexSource fragmentSource =
-        let vertex = compileShader ShaderType.VertexShader vertexSource
-        let fragment = compileShader ShaderType.FragmentShader fragmentSource
-        let value = gl.CreateProgram()
-        gl.AttachShader(value, vertex)
-        gl.AttachShader(value, fragment)
-        gl.LinkProgram value
-        let mutable status = 0
-        gl.GetProgram(value, ProgramPropertyARB.LinkStatus, &status)
-        gl.DeleteShader vertex
-        gl.DeleteShader fragment
-        if status <> int GLEnum.True then invalidOp $"Shader linking failed: {gl.GetProgramInfoLog value}"
-        value
+    let createLinkedProgram = GlUtil.createProgram gl
 
     let createShadowMap () =
         shadowTexture <- gl.GenTexture()
         gl.BindTexture(TextureTarget.Texture2D, shadowTexture)
         gl.TexImage2D(TextureTarget.Texture2D, 0, InternalFormat.DepthComponent24, 2048u, 2048u, 0, PixelFormat.DepthComponent, PixelType.Float, NativePtr.nullPtr<byte> |> NativePtr.toVoidPtr)
-        gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMinFilter, int TextureMinFilter.Linear)
-        gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMagFilter, int TextureMagFilter.Linear)
-        gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapS, int TextureWrapMode.ClampToEdge)
-        gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapT, int TextureWrapMode.ClampToEdge)
+        GlUtil.clampLinearTexture gl TextureTarget.Texture2D
         shadowFramebuffer <- gl.GenFramebuffer()
         gl.BindFramebuffer(FramebufferTarget.Framebuffer, shadowFramebuffer)
         gl.FramebufferTexture2D(FramebufferTarget.Framebuffer, FramebufferAttachment.DepthAttachment, TextureTarget.Texture2D, shadowTexture, 0)
@@ -100,14 +73,11 @@ type Renderer(gl: GL) =
 
     let uploadLevel (level: Level) =
         deleteMesh ()
-        let vertices =
-            level.Vertices
-            |> Array.collect (fun vertex ->
-                [| vertex.Position.X; vertex.Position.Y; vertex.Position.Z
-                   vertex.Normal.X; vertex.Normal.Y; vertex.Normal.Z; float32 vertex.MaterialId |])
-        vao <- gl.GenVertexArray()
-        vertexBuffer <- gl.GenBuffer()
-        indexBuffer <- gl.GenBuffer()
+        let vertices = GlUtil.flattenVertices level.Vertices
+        let struct (v, vb, ib) = GlUtil.createMeshBuffers gl
+        vao <- v
+        vertexBuffer <- vb
+        indexBuffer <- ib
         gl.BindVertexArray vao
         gl.BindBuffer(BufferTargetARB.ArrayBuffer, vertexBuffer)
         use vertexPointer = fixed vertices
@@ -115,57 +85,14 @@ type Renderer(gl: GL) =
         gl.BindBuffer(BufferTargetARB.ElementArrayBuffer, indexBuffer)
         use indexPointer = fixed level.Indices
         gl.BufferData(BufferTargetARB.ElementArrayBuffer, unativeint (level.Indices.Length * sizeof<uint32>), NativePtr.toVoidPtr indexPointer, BufferUsageARB.StaticDraw)
-        let stride = uint32 (7 * sizeof<float32>)
-        gl.EnableVertexAttribArray 0u
-        gl.VertexAttribPointer(0u, 3, VertexAttribPointerType.Float, false, stride, nativeint 0)
-        gl.EnableVertexAttribArray 1u
-        gl.VertexAttribPointer(1u, 3, VertexAttribPointerType.Float, false, stride, nativeint (3 * sizeof<float32>))
-        gl.EnableVertexAttribArray 2u
-        gl.VertexAttribPointer(2u, 1, VertexAttribPointerType.Float, false, stride, nativeint (6 * sizeof<float32>))
         gl.BindVertexArray 0u
         indexCount <- uint32 level.Indices.Length
         loadedLevel <- level.Name
         loadedLevelRevision <- level.Revision
 
-    let createDynamicMesh () =
-        soldierVao <- gl.GenVertexArray()
-        soldierVertexBuffer <- gl.GenBuffer()
-        soldierIndexBuffer <- gl.GenBuffer()
-        gl.BindVertexArray soldierVao
-        gl.BindBuffer(BufferTargetARB.ArrayBuffer, soldierVertexBuffer)
-        gl.BindBuffer(BufferTargetARB.ElementArrayBuffer, soldierIndexBuffer)
-        let stride = uint32 (7 * sizeof<float32>)
-        gl.EnableVertexAttribArray 0u
-        gl.VertexAttribPointer(0u, 3, VertexAttribPointerType.Float, false, stride, nativeint 0)
-        gl.EnableVertexAttribArray 1u
-        gl.VertexAttribPointer(1u, 3, VertexAttribPointerType.Float, false, stride, nativeint (3 * sizeof<float32>))
-        gl.EnableVertexAttribArray 2u
-        gl.VertexAttribPointer(2u, 1, VertexAttribPointerType.Float, false, stride, nativeint (6 * sizeof<float32>))
-        gl.BindVertexArray 0u
-
-    let createGunMesh () =
-        gunVao <- gl.GenVertexArray()
-        gunVertexBuffer <- gl.GenBuffer()
-        gunIndexBuffer <- gl.GenBuffer()
-        gl.BindVertexArray gunVao
-        gl.BindBuffer(BufferTargetARB.ArrayBuffer, gunVertexBuffer)
-        gl.BindBuffer(BufferTargetARB.ElementArrayBuffer, gunIndexBuffer)
-        let stride = uint32 (7 * sizeof<float32>)
-        gl.EnableVertexAttribArray 0u
-        gl.VertexAttribPointer(0u, 3, VertexAttribPointerType.Float, false, stride, nativeint 0)
-        gl.EnableVertexAttribArray 1u
-        gl.VertexAttribPointer(1u, 3, VertexAttribPointerType.Float, false, stride, nativeint (3 * sizeof<float32>))
-        gl.EnableVertexAttribArray 2u
-        gl.VertexAttribPointer(2u, 1, VertexAttribPointerType.Float, false, stride, nativeint (6 * sizeof<float32>))
-        gl.BindVertexArray 0u
-
     let uploadGun name =
         let mesh = Guns.forWeapon name
-        let vertices =
-            mesh.Vertices
-            |> Array.collect (fun vertex ->
-                [| vertex.Position.X; vertex.Position.Y; vertex.Position.Z
-                   vertex.Normal.X; vertex.Normal.Y; vertex.Normal.Z; float32 vertex.MaterialId |])
+        let vertices = GlUtil.flattenVertices mesh.Vertices
         gl.BindVertexArray gunVao
         gl.BindBuffer(BufferTargetARB.ArrayBuffer, gunVertexBuffer)
         use vertexPointer = fixed vertices
@@ -194,11 +121,7 @@ type Renderer(gl: GL) =
         let meshIndices = Array.append soldierIndices (grenadeMesh.Indices |> Array.map ((+) grenadeOffset))
         soldierIndexCount <- uint32 meshIndices.Length
         if meshIndices.Length > 0 then
-            let vertices =
-                meshVertices
-                |> Array.collect (fun vertex ->
-                    [| vertex.Position.X; vertex.Position.Y; vertex.Position.Z
-                       vertex.Normal.X; vertex.Normal.Y; vertex.Normal.Z; float32 vertex.MaterialId |])
+            let vertices = GlUtil.flattenVertices meshVertices
             gl.BindVertexArray soldierVao
             gl.BindBuffer(BufferTargetARB.ArrayBuffer, soldierVertexBuffer)
             use vertexPointer = fixed vertices
@@ -234,12 +157,6 @@ type Renderer(gl: GL) =
         let projection = Matrix4x4.CreateOrthographic(92.0f, 92.0f, 1.0f, 150.0f)
         view * projection
 
-    let matrixArray (matrix: Matrix4x4) =
-        [| matrix.M11; matrix.M12; matrix.M13; matrix.M14
-           matrix.M21; matrix.M22; matrix.M23; matrix.M24
-           matrix.M31; matrix.M32; matrix.M33; matrix.M34
-           matrix.M41; matrix.M42; matrix.M43; matrix.M44 |]
-
     do
         gl.Enable EnableCap.DepthTest
         gl.Enable EnableCap.CullFace
@@ -248,8 +165,14 @@ type Renderer(gl: GL) =
         skyProgram <- createLinkedProgram Shaders.skyVertex Shaders.skyFragment
         shadowProgram <- createLinkedProgram Shaders.shadowVertex Shaders.shadowFragment
         createShadowMap ()
-        createDynamicMesh ()
-        createGunMesh ()
+        let struct (sv, svb, sib) = GlUtil.createMeshBuffers gl
+        soldierVao <- sv
+        soldierVertexBuffer <- svb
+        soldierIndexBuffer <- sib
+        let struct (gv, gvb, gib) = GlUtil.createMeshBuffers gl
+        gunVao <- gv
+        gunVertexBuffer <- gvb
+        gunIndexBuffer <- gib
 
     member _.Render(world: World, hudInfo: HudInfo) =
         // Re-upload when the script rebuilds the level (OpenPath) or the map changes.
@@ -269,8 +192,8 @@ type Renderer(gl: GL) =
         gl.ClearColor(0.54f, 0.61f, 0.64f, 1.0f)
         if indexCount > 0u then
             let eye, viewProjection, fieldOfView, cameraPitch = cameraMatrices world.Player deathFall
-            let matrix = matrixArray viewProjection
-            let light = matrixArray lightMatrix
+            let matrix = GlUtil.matrixArray viewProjection
+            let light = GlUtil.matrixArray lightMatrix
             uploadActors world
             let noOffset = NativePtr.nullPtr<byte> |> NativePtr.toVoidPtr
             gl.BindFramebuffer(FramebufferTarget.Framebuffer, shadowFramebuffer)
@@ -408,7 +331,7 @@ type Renderer(gl: GL) =
                     * Matrix4x4.CreateRotationZ(-0.035f * (1.0f - ads) + reloadPose * 0.32f + boltPose * 0.22f)
                     * Matrix4x4.CreateTranslation position
                 let projection = Matrix4x4.CreatePerspectiveFieldOfView(55.0f * MathF.PI / 180.0f, float32 width / float32 (max 1 height), 0.03f, 8.0f)
-                let gunMatrix = matrixArray (model * projection)
+                let gunMatrix = GlUtil.matrixArray (model * projection)
                 gl.Clear ClearBufferMask.DepthBufferBit
                 use gunMatrixPointer = fixed gunMatrix
                 gl.UniformMatrix4(gl.GetUniformLocation(program, "uViewProjection"), 1u, false, gunMatrixPointer)
@@ -433,7 +356,9 @@ type Renderer(gl: GL) =
                 | Impact(position, _, _) -> Some(Vector4(position, 0.16f))
                 | Explosion(position, _) -> Some(Vector4(position, 1.35f))
                 | _ -> None)
-        decals <- (added @ decals) |> List.truncate 32
+        // Only the first 16 are ever uploaded (see uImpacts in Render), so
+        // there is no point retaining more.
+        decals <- (added @ decals) |> List.truncate 16
     member _.StepEffects(dt: float32) = particles.Step dt
 
     member _.KickWeapon() = recoilVelocity <- min 2.4f (recoilVelocity + 1.6f)
@@ -451,17 +376,18 @@ type Renderer(gl: GL) =
 
     interface IDisposable with
         member _.Dispose() =
+            let del (delete: uint32 -> unit) handle = if handle <> 0u then delete handle
             deleteMesh ()
-            if soldierVao <> 0u then gl.DeleteVertexArray soldierVao
-            if soldierVertexBuffer <> 0u then gl.DeleteBuffer soldierVertexBuffer
-            if soldierIndexBuffer <> 0u then gl.DeleteBuffer soldierIndexBuffer
-            if gunVao <> 0u then gl.DeleteVertexArray gunVao
-            if gunVertexBuffer <> 0u then gl.DeleteBuffer gunVertexBuffer
-            if gunIndexBuffer <> 0u then gl.DeleteBuffer gunIndexBuffer
-            if shadowFramebuffer <> 0u then gl.DeleteFramebuffer shadowFramebuffer
-            if shadowTexture <> 0u then gl.DeleteTexture shadowTexture
-            if shadowProgram <> 0u then gl.DeleteProgram shadowProgram
-            if skyProgram <> 0u then gl.DeleteProgram skyProgram
-            if program <> 0u then gl.DeleteProgram program
+            del gl.DeleteVertexArray soldierVao
+            del gl.DeleteBuffer soldierVertexBuffer
+            del gl.DeleteBuffer soldierIndexBuffer
+            del gl.DeleteVertexArray gunVao
+            del gl.DeleteBuffer gunVertexBuffer
+            del gl.DeleteBuffer gunIndexBuffer
+            del gl.DeleteFramebuffer shadowFramebuffer
+            del gl.DeleteTexture shadowTexture
+            del gl.DeleteProgram shadowProgram
+            del gl.DeleteProgram skyProgram
+            del gl.DeleteProgram program
             (particles :> IDisposable).Dispose()
             (hud :> IDisposable).Dispose()

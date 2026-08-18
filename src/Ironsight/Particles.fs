@@ -37,15 +37,6 @@ type Particles(gl: GL) =
     let vao = gl.GenVertexArray()
     let buffer = gl.GenBuffer()
 
-    let compile shaderType source =
-        let shader = gl.CreateShader(shaderType: ShaderType)
-        gl.ShaderSource(shader, source)
-        gl.CompileShader shader
-        let mutable status = 0
-        gl.GetShader(shader, ShaderParameterName.CompileStatus, &status)
-        if status <> int GLEnum.True then invalidOp (gl.GetShaderInfoLog shader)
-        shader
-
     let vertexSource = """
 #version 410 core
 layout(location=0) in vec3 aPosition;
@@ -70,15 +61,7 @@ void main() {
     outColor = vec4(vColor.rgb, alpha);
 }
 """
-    let program =
-        let vertex, fragment = compile ShaderType.VertexShader vertexSource, compile ShaderType.FragmentShader fragmentSource
-        let value = gl.CreateProgram()
-        gl.AttachShader(value, vertex); gl.AttachShader(value, fragment); gl.LinkProgram value
-        gl.DeleteShader vertex; gl.DeleteShader fragment
-        let mutable status = 0
-        gl.GetProgram(value, ProgramPropertyARB.LinkStatus, &status)
-        if status <> int GLEnum.True then invalidOp (gl.GetProgramInfoLog value)
-        value
+    let program = GlUtil.createProgram gl vertexSource fragmentSource
 
     let addLine from' to' color lifetime =
         lines <- { From = from'; To = to'; Color = color; Remaining = lifetime; Lifetime = lifetime } :: lines
@@ -270,11 +253,7 @@ void main() {
                     let size = if landing then 22.0f else 4.0f + progress * 4.0f
                     [| point.X; point.Y; point.Z; color.X; color.Y; color.Z; color.W; size |])
                 |> Array.concat
-            let matrix =
-                [| viewProjection.M11; viewProjection.M12; viewProjection.M13; viewProjection.M14
-                   viewProjection.M21; viewProjection.M22; viewProjection.M23; viewProjection.M24
-                   viewProjection.M31; viewProjection.M32; viewProjection.M33; viewProjection.M34
-                   viewProjection.M41; viewProjection.M42; viewProjection.M43; viewProjection.M44 |]
+            let matrix = GlUtil.matrixArray viewProjection
             gl.UseProgram program
             use matrixPointer = fixed matrix
             gl.UniformMatrix4(gl.GetUniformLocation(program, "uViewProjection"), 1u, false, matrixPointer)

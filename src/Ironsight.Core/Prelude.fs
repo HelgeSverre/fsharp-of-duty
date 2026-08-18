@@ -33,3 +33,10 @@ module Units =
     let inline seconds (value: float32) = LanguagePrimitives.Float32WithMeasure<s> value
     let inline health (value: float32) = LanguagePrimitives.Float32WithMeasure<hp> value
     let inline raw (value: float32<'u>) = float32 value
+
+[<RequireQualifiedAccess>]
+module Input =
+    /// Generic over any `[<Flags>]` enum (InputButtons here) via SRTP, so this
+    /// can live in Prelude ahead of Domain.fs, where InputButtons is declared.
+    let inline hasButton (button: ^T) (buttons: ^T) : bool =
+        (^T: (member HasFlag: ^T -> bool) (buttons, button))

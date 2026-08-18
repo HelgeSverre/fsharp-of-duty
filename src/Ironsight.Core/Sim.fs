@@ -6,8 +6,6 @@ open Ironsight.ProcGen
 
 [<RequireQualifiedAccess>]
 module Sim =
-    let private hasButton button (buttons: InputButtons) = buttons.HasFlag button
-
     let private playerSlots () =
         [| Tuning.weaponSlot Tuning.kar98k 6
            Tuning.weaponSlot Tuning.m1Garand 5
@@ -32,6 +30,12 @@ module Sim =
 
     /// The paintball round loadout opens on the Thompson.
     let private thompsonSlot = 3
+
+    /// Staggered post-respawn cooldown for round-mode bots, so a whole squad
+    /// doesn't open fire on the exact same tick. Distinct from the MG-crew and
+    /// battlefield-infantry stagger constants below, which model a different
+    /// pace and must not be merged with this one.
+    let private staggeredReady index = Cooling(Units.seconds (0.18f + float32 index * 0.12f))
 
     let private resetRoundCombatants (world: World) round =
         let playerSpawn =
@@ -130,11 +134,11 @@ module Sim =
     let step (input: InputFrame) (world: World) =
         let moved = Movement.step Tuning.TickDuration input world.Level world.Player |> Damage.stepRegen Tuning.TickDuration
         let requestedCategory =
-            if hasButton InputButtons.Weapon1 input.Buttons then Some 0
-            elif hasButton InputButtons.Weapon2 input.Buttons then Some 1
-            elif hasButton InputButtons.Weapon3 input.Buttons then Some 2
-            elif hasButton InputButtons.Weapon4 input.Buttons then Some 3
-            elif hasButton InputButtons.Weapon5 input.Buttons then Some 4
+            if Input.hasButton InputButtons.Weapon1 input.Buttons then Some 0
+            elif Input.hasButton InputButtons.Weapon2 input.Buttons then Some 1
+            elif Input.hasButton InputButtons.Weapon3 input.Buttons then Some 2
+            elif Input.hasButton InputButtons.Weapon4 input.Buttons then Some 3
+            elif Input.hasButton InputButtons.Weapon5 input.Buttons then Some 4
             else None
         // A key selects its category; pressing it again cycles within the
         // category. Holding the key is rate-limited naturally by the 0.35 s
@@ -166,10 +170,10 @@ module Sim =
         let active = prepared.Slots[prepared.Active]
         let fire =
             prepared.Health > Units.health 0.0f
-            && hasButton InputButtons.Fire input.Buttons
+            && Input.hasButton InputButtons.Fire input.Buttons
             && not prepared.Sprinting
             && not weaponLocked
-        let reload = hasButton InputButtons.Reload input.Buttons
+        let reload = Input.hasButton InputButtons.Reload input.Buttons
         let mutable rng = world.Rng
         let moveSpeed = MathEx.horizontal prepared.Velocity |> fun velocity -> velocity.Length()
         let struct (weapon, shots) =
@@ -178,7 +182,7 @@ module Sim =
         let slots = Array.copy prepared.Slots
         slots[prepared.Active] <- weapon
         let armedPlayer = { prepared with Slots = slots }
-        let grenadeHeld = hasButton InputButtons.Grenade input.Buttons && not armedPlayer.Sprinting
+        let grenadeHeld = Input.hasButton InputButtons.Grenade input.Buttons && not armedPlayer.Sprinting
         let playerWithHand, thrown = Grenades.stepHand Tuning.TickDuration grenadeHeld armedPlayer
         let shotEvents = ResizeArray<GameEvent>()
         let mutable soldiers = world.Soldiers
