@@ -239,3 +239,23 @@ loads damage and handling statistics generated from the actual
 Leaderboard state is intentionally volatile. It records the active server
 process, not accounts or historical rankings, and resets whenever Fly deploys or
 restarts the Machine.
+
+## System requirements
+
+Everything is generated in code, so the game is small and light; the one hard
+gate is the GPU's OpenGL version. Figures below are measured, not guessed: the
+client was profiled in a live bot match (~180 MB RSS, about a third of one
+2023 laptop core at 1280x720), the server figures are the actual public
+deployment (172 MB RSS, under 2% of a shared vCPU with both rooms ticking),
+and the bandwidth numbers come from probing the production server (~10 KB/s
+down and ~6 KB/s up per client).
+
+|  | Client (minimum) | Dedicated server (minimum) |
+| --- | --- | --- |
+| OS | 64-bit Windows 10, macOS 13, or a mainstream glibc Linux | 64-bit Linux (Docker optional); anything that runs .NET 10 |
+| CPU | Dual-core x64 or arm64, ~2013 or newer | 1 shared vCPU (the public server's actual size) |
+| RAM | 1 GB free (~180 MB measured in game) | 256 MB (172 MB measured with both rooms live) |
+| GPU | OpenGL 4.1 core profile: NVIDIA 400 series, AMD HD 5000, Intel Haswell-era, or any Apple silicon | None - headless |
+| Disk | ~250 MB (80 MB executable plus caches) | ~200 MB |
+| Audio | OpenAL, optional - the game runs silently without it | None |
+| Network | Any broadband; ~10 KB/s each way, ping under ~100 ms recommended | Budget ~100 KB/s upstream per player in a full room; ~10-15 Mbps covers all 32 slots |
