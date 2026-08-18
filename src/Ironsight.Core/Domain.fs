@@ -162,6 +162,9 @@ type Level =
       Bounds: Aabb
       Brushes: Brush array
       BrushGrid: BrushGrid
+      /// Geometry that is not a box: ramps, terrain, oriented walls. Kept apart
+      /// from Brushes so a rebuild can re-merge it instead of dropping it.
+      Sloped: Tri array
       Collision: CollisionMesh
       Cover: CoverPoint array
       Spawns: struct (Team option * Vector3) array

@@ -156,8 +156,13 @@ module AiBrain =
         |> function [] -> None | hits -> Some(List.min hits)
 
     let private staticHitDistance origin direction (level: Level) =
-        LevelCompile.brushesAlongRay origin direction 200.0f level
-        |> Array.choose (fun brush -> MathEx.rayAabb origin direction brush.Bounds |> Option.map (fun struct (entry, _, _) -> entry))
+        // Triangles, so a soldier treats a slope or a bank as cover the same way
+        // the player's shots do. Boxes would have missed all of it.
+        LevelCompile.trianglesAlongRay origin direction 200.0f level
+        |> Array.choose (fun triangle ->
+            match MathEx.rayTriangle origin direction triangle.A triangle.B triangle.C with
+            | ValueSome entry -> Some entry
+            | ValueNone -> None)
         |> function [||] -> Single.PositiveInfinity | hits -> Array.min hits
 
     let step dt (rng: byref<Rng.State>) (level: Level) (blackboards: Map<int, SquadBlackboard>) (player: Player) (soldiers: Soldier array) =

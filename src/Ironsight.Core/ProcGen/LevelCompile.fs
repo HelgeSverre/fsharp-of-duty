@@ -110,6 +110,80 @@ module LevelCompile =
                   quad sA bsA bsB sB material    // lower end cap
                   quad fA fB bfB bfA material ]  // upper end cap
 
+    /// A terrain patch sampled from a height function. The top surface is a grid
+    /// of quads; a perimeter skirt and a flat underside close it into a solid so
+    /// bullets can still pair an entry face with an exit face.
+    let heightfieldTriangles (center: Vector3) (size: Vector2) (cells: int) (height: float32 -> float32 -> float32) material =
+        let cells = max 1 cells
+        let half = Vector2(size.X * 0.5f, size.Y * 0.5f)
+        let stepX, stepZ = size.X / float32 cells, size.Y / float32 cells
+        let cornerX index = center.X - half.X + float32 index * stepX
+        let cornerZ index = center.Z - half.Y + float32 index * stepZ
+        let sample x z = center.Y + height x z
+        let point ix iz =
+            let x, z = cornerX ix, cornerZ iz
+            Vector3(x, sample x z, z)
+        // Deep enough that the skirt always reaches whatever is underneath.
+        let floorY =
+            let mutable lowest = Single.PositiveInfinity
+            for iz in 0..cells do
+                for ix in 0..cells do
+                    lowest <- min lowest (point ix iz).Y
+            lowest - 2.0f
+        let triangles = ResizeArray<Tri>()
+        let addQuad p0 p1 p2 p3 =
+            // Terrain quads are not planar, so each half gets its own normal.
+            for struct (a, b, c) in [| struct (p0, p1, p2); struct (p0, p2, p3) |] do
+                let normal = Vector3.Cross(b - a, c - a) |> MathEx.normalizedOrZero
+                let outward = if normal.Y < 0.0f then -normal else normal
+                if outward.Y < 0.0f then triangles.Add { A = a; B = c; C = b; Normal = outward; Material = material }
+                else triangles.Add { A = a; B = b; C = c; Normal = outward; Material = material }
+        for iz in 0 .. cells - 1 do
+            for ix in 0 .. cells - 1 do
+                addQuad (point ix iz) (point ix (iz + 1)) (point (ix + 1) (iz + 1)) (point (ix + 1) iz)
+        // Skirt: drop each perimeter edge to the floor, then cap the bottom.
+        let drop (v: Vector3) = Vector3(v.X, floorY, v.Z)
+        let centreLow = Vector3(center.X, floorY, center.Z)
+        let quad = quadTriangles centreLow
+        for index in 0 .. cells - 1 do
+            let edges =
+                [| point index 0, point (index + 1) 0
+                   point index cells, point (index + 1) cells
+                   point 0 index, point 0 (index + 1)
+                   point cells index, point cells (index + 1) |]
+            for (a, b) in edges do
+                triangles.AddRange(quad a b (drop b) (drop a) material)
+        triangles.AddRange(quad (drop (point 0 0)) (drop (point cells 0)) (drop (point cells cells)) (drop (point 0 cells)) material)
+        triangles.ToArray()
+
+    /// A box aligned to the start-to-finish direction rather than to the world
+    /// axes. `lineBrush` took the AABB of its endpoints, so any diagonal wall,
+    /// fence or trench became one enormous solid spanning the whole diagonal —
+    /// which is why every shipped map was built axis-parallel.
+    let orientedBoxTriangles (startPoint: Vector3) (endPoint: Vector3) (height: float32) (width: float32) material =
+        let span = MathEx.horizontal (endPoint - startPoint)
+        let forward = if span.LengthSquared() < 0.000001f then Vector3.UnitX else Vector3.Normalize span
+        let side = Vector3.Cross(Vector3.UnitY, forward) * (width * 0.5f)
+        // Extend by half a width at each end so corners meet cleanly where
+        // several segments are chained into a run.
+        let cap = forward * (width * 0.5f)
+        let baseY = min startPoint.Y endPoint.Y
+        let lower (v: Vector3) = Vector3(v.X, baseY, v.Z)
+        let upper (v: Vector3) = Vector3(v.X, baseY + height, v.Z)
+        let sA, sB = startPoint - cap - side, startPoint - cap + side
+        let fA, fB = endPoint + cap - side, endPoint + cap + side
+        let lsA, lsB, lfA, lfB = lower sA, lower sB, lower fA, lower fB
+        let usA, usB, ufA, ufB = upper sA, upper sB, upper fA, upper fB
+        let inside = (lsA + lsB + lfA + lfB + usA + usB + ufA + ufB) / 8.0f
+        let quad = quadTriangles inside
+        Array.concat
+            [ quad usA usB ufB ufA material   // top
+              quad lsA lfA lfB lsB material   // bottom
+              quad lsA usA ufA lfA material   // one flank
+              quad lsB lfB ufB usB material   // the other flank
+              quad lsA lsB usB usA material   // start cap
+              quad lfA ufA ufB lfB material ] // end cap
+
     let private triangleBounds (triangle: Tri) =
         { Min = Vector3.Min(triangle.A, Vector3.Min(triangle.B, triangle.C))
           Max = Vector3.Max(triangle.A, Vector3.Max(triangle.B, triangle.C)) }
@@ -384,7 +458,40 @@ module LevelCompile =
         // Geometry that is not a box lives here and is merged into both the
         // collision mesh and the render mesh once the item loop is done.
         let sloped = ResizeArray<Tri>()
-        brushes.Add(brush (Vector3(-width, -0.25f, -length * 0.5f)) (Vector3(width, 0.0f, length * 0.5f)) surface)
+        // The ground is a grid rather than one slab so terrain can cut into it.
+        // A single solid slab meant nothing could ever sit below y = 0, which is
+        // why trenches used to be two parapets standing on flat ground.
+        let cut =
+            spec.Items
+            |> List.choose (function
+                | Heightfield(center, size, _, _, _) ->
+                    Some(fun (x: float32) (z: float32) ->
+                        abs (x - center.X) <= size.X * 0.5f && abs (z - center.Z) <= size.Y * 0.5f)
+                | Trench(startPoint, endPoint, trenchWidth) ->
+                    // Cut the channel plus its banks, so the spoil has somewhere to sit.
+                    let reach = trenchWidth * 0.5f + 0.95f
+                    Some(fun x z ->
+                        let point = Vector3(x, 0.0f, z)
+                        let segment = MathEx.horizontal (endPoint - startPoint)
+                        let lengthSquared = segment.LengthSquared()
+                        let t =
+                            if lengthSquared < 0.000001f then 0.0f
+                            else MathEx.clamp01 (Vector3.Dot(point - startPoint, segment) / lengthSquared)
+                        Vector3.Distance(MathEx.horizontal (startPoint + segment * t), point) <= reach)
+                | _ -> None)
+        let isCut x z = cut |> List.exists (fun test -> test x z)
+        let groundCell = 2.0f
+        let groundStepsX = max 1 (int (MathF.Ceiling(width * 2.0f / groundCell)))
+        let groundStepsZ = max 1 (int (MathF.Ceiling(length / groundCell)))
+        for iz in 0 .. groundStepsZ - 1 do
+            for ix in 0 .. groundStepsX - 1 do
+                let x0 = -width + float32 ix * groundCell
+                let z0 = -length * 0.5f + float32 iz * groundCell
+                let x1 = min width (x0 + groundCell)
+                let z1 = min (length * 0.5f) (z0 + groundCell)
+                if not (isCut ((x0 + x1) * 0.5f) ((z0 + z1) * 0.5f)) then
+                    sloped.AddRange(
+                        boxTriangles { Min = Vector3(x0, -0.25f, z0); Max = Vector3(x1, 0.0f, z1) } surface)
         let covers = ResizeArray<CoverPoint>()
         let spawns = ResizeArray<struct (Team option * Vector3)>()
         let mountedGuns = ResizeArray<MountedGun>()
@@ -414,9 +521,10 @@ module LevelCompile =
                         let reach = Vector3(size.X * 0.5f + 0.6f, 0.0f, size.Z * 0.5f + 0.6f) * facing
                         covers.Add { Pos = Vector3(center.X, 0.0f, center.Z) + reach; PeekDir = facing; Crouch = true; Owner = None }
             | Ramp(startPoint, endPoint, width, material) -> sloped.AddRange(rampTriangles startPoint endPoint width material)
+            | Heightfield(center, size, cells, height, material) -> sloped.AddRange(heightfieldTriangles center size cells height material)
             | Ruin(center, size, height, facade, condition) -> brushes.AddRange(ruinBrushes center size height facade condition)
             | SandbagLine(startPoint, endPoint, owner) ->
-                brushes.Add(lineBrush startPoint endPoint 1.15f 0.55f Sandbag)
+                sloped.AddRange(orientedBoxTriangles startPoint endPoint 1.15f 0.55f Sandbag)
                 let direction = MathEx.normalizedOrZero (endPoint - startPoint)
                 let lineNormal = Vector3(-direction.Z, 0.0f, direction.X)
                 let midpoint = (startPoint + endPoint) * 0.5f
@@ -439,13 +547,32 @@ module LevelCompile =
                 for index in 0..postCount do
                     let position = Vector3.Lerp(startPoint, endPoint, float32 index / float32 postCount)
                     brushes.Add(brush (position - Vector3(0.07f, 0.0f, 0.07f)) (position + Vector3(0.07f, 1.15f, 0.07f)) Wood)
-                brushes.Add(lineBrush (startPoint + Vector3.UnitY * 0.36f) (endPoint + Vector3.UnitY * 0.36f) 0.10f 0.10f Wood)
-                brushes.Add(lineBrush (startPoint + Vector3.UnitY * 0.83f) (endPoint + Vector3.UnitY * 0.83f) 0.10f 0.10f Wood)
+                sloped.AddRange(orientedBoxTriangles (startPoint + Vector3.UnitY * 0.36f) (endPoint + Vector3.UnitY * 0.36f) 0.10f 0.10f Wood)
+                sloped.AddRange(orientedBoxTriangles (startPoint + Vector3.UnitY * 0.83f) (endPoint + Vector3.UnitY * 0.83f) 0.10f 0.10f Wood)
             | Trench(startPoint, endPoint, trenchWidth) ->
-                let direction = MathEx.normalizedOrZero (endPoint - startPoint)
-                let side = Vector3(-direction.Z, 0.0f, direction.X) * (trenchWidth * 0.5f + 0.25f)
-                brushes.Add(lineBrush (startPoint + side) (endPoint + side) 0.8f 0.5f Mud)
-                brushes.Add(lineBrush (startPoint - side) (endPoint - side) 0.8f 0.5f Mud)
+                // A real cut now that the world is no longer floored at y = 0:
+                // the channel floor drops below the authored line and the spoil
+                // is banked either side. Previously this emitted two parapets
+                // standing on flat ground and excavated nothing.
+                let depth = 1.5f
+                let floorStart = startPoint - Vector3.UnitY * depth
+                let floorEnd = endPoint - Vector3.UnitY * depth
+                sloped.AddRange(orientedBoxTriangles (floorStart - Vector3.UnitY * 0.3f) (floorEnd - Vector3.UnitY * 0.3f) 0.3f trenchWidth Mud)
+                // Walls run from the floor up to the lip, and the spoil bank
+                // above that gives a crouching soldier something to fire over.
+                let direction = MathEx.normalizedOrZero (MathEx.horizontal (endPoint - startPoint))
+                let side = Vector3.Cross(Vector3.UnitY, direction) * (trenchWidth * 0.5f + 0.3f)
+                for offset in [| side; -side |] do
+                    sloped.AddRange(orientedBoxTriangles (floorStart + offset) (floorEnd + offset) (depth + 0.7f) 0.6f Mud)
+                    // Stand inside the channel facing out over the bank, so the
+                    // ground probe settles it on the trench floor rather than on
+                    // top of the spoil.
+                    let inside = (startPoint + endPoint) * 0.5f + offset * 0.45f
+                    covers.Add
+                        { Pos = inside
+                          PeekDir = MathEx.normalizedOrZero offset
+                          Crouch = true
+                          Owner = None }
             | Mg42(position, facing, owner) ->
                 let forward = MathEx.yawForward facing
                 let side = MathEx.yawRight facing
@@ -453,10 +580,10 @@ module LevelCompile =
                 // Receiver, long barrel, shield, and splayed tripod are emitted
                 // as ordinary brushes so render, collision and shadowing agree.
                 brushes.Add(brush (pivot - Vector3(0.20f, 0.13f, 0.24f)) (pivot + Vector3(0.20f, 0.13f, 0.24f)) Metal)
-                brushes.Add(lineBrush (pivot + forward * 0.15f) (pivot + forward * 1.48f) 0.09f 0.10f Metal)
-                brushes.Add(lineBrush (pivot - forward * 0.08f - side * 0.58f) (pivot - forward * 0.08f + side * 0.58f) 0.52f 0.10f Metal)
+                sloped.AddRange(orientedBoxTriangles (pivot + forward * 0.15f) (pivot + forward * 1.48f) 0.09f 0.10f Metal)
+                sloped.AddRange(orientedBoxTriangles (pivot - forward * 0.08f - side * 0.58f) (pivot - forward * 0.08f + side * 0.58f) 0.52f 0.10f Metal)
                 for foot in [ position - forward * 0.52f - side * 0.48f; position - forward * 0.52f + side * 0.48f; position + forward * 0.42f ] do
-                    brushes.Add(lineBrush (pivot - Vector3.UnitY * 0.12f) foot 0.08f 0.09f Metal)
+                    sloped.AddRange(orientedBoxTriangles (pivot - Vector3.UnitY * 0.12f) foot 0.08f 0.09f Metal)
                 covers.Add { Pos = position - forward * 0.45f; PeekDir = forward; Crouch = true; Owner = Some owner }
                 mountedGuns.Add { Position = position - forward * 0.45f; Facing = facing; Team = owner }
             | SpawnSquad(team, count, center) ->
@@ -497,6 +624,7 @@ module LevelCompile =
           Bounds = worldBounds
           Brushes = brushArray
           BrushGrid = brushGrid
+          Sloped = slopedArray
           Collision = collision
           // Spawns and cover both ride on the ground probe, so all three of
           // them, nav included, agree about where the floor is. Cover used to
@@ -525,8 +653,14 @@ module LevelCompile =
 
     let rebuild brushes (level: Level) =
         let brushGrid = compileBrushGrid brushes
-        let rebuiltCollision = brushes |> Array.collect (fun item -> boxTriangles item.Bounds item.Material) |> compileCollision
-        let vertices, indices = compileMesh brushes
+        // Sloped geometry survives a rebuild; deriving collision from brushes
+        // alone would delete every ramp and terrain patch in the level.
+        let rebuiltCollision =
+            Array.append (brushes |> Array.collect (fun item -> boxTriangles item.Bounds item.Material)) level.Sloped
+            |> compileCollision
+        let vertices, indices =
+            let boxVertices, boxIndices = compileMesh brushes
+            appendTriangleMesh boxVertices boxIndices level.Sloped
         // Bump the revision so renderers holding cached geometry re-upload.
         { level with
             Revision = level.Revision + 1

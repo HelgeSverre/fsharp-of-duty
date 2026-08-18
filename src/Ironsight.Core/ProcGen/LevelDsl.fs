@@ -16,6 +16,10 @@ type LevelItem =
     /// A genuinely sloped surface between two heights, solid down to the ground
     /// beneath it. Walkable if the grade is inside the slope limit.
     | Ramp of startPoint: Vector3 * endPoint: Vector3 * width: float32 * material: Material
+    /// Organic terrain sampled from a height function over an XZ rectangle.
+    /// `cells` is the sample count per side; the surface is closed by a skirt so
+    /// it behaves as a solid for penetration.
+    | Heightfield of center: Vector3 * size: Vector2 * cells: int * height: (float32 -> float32 -> float32) * material: Material
     | SpawnSquad of team: Team * count: int * center: Vector3
     | Objective of text: string
     | MissionRule of condition: TriggerCondition * action: ScriptAction
@@ -35,6 +39,7 @@ module LevelDsl =
     let mg42 position facing owner = Mg42(position, facing, owner)
     let block center size material = Block(center, size, material)
     let ramp startPoint endPoint width material = Ramp(startPoint, endPoint, width, material)
+    let heightfield center size cells height material = Heightfield(center, size, cells, height, material)
     let spawnSquad team count center = SpawnSquad(team, count, center)
     let objective text = Objective text
     let trigger condition action = MissionRule(condition, action)

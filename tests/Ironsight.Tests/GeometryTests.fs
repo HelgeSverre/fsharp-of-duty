@@ -305,3 +305,89 @@ module GeometryTests =
                     | ValueSome(struct (_, normal)) ->
                         Assert.True(Movement.walkableNormal normal, $"draw at x={sign * 18.5f} z={z} is too steep to climb")
                     | ValueNone -> failwith $"no surface in the draw at x={sign * 18.5f} z={z}"
+
+    /// Oriented geometry, real trenches and heightfields — the pieces that let a
+    /// level stop being axis-aligned boxes on a flat plane.
+    module Terrain =
+        let private compile items = LevelDsl.level "Terrain" (LevelDsl.street 80.0f 40.0f Mud :: items) |> LevelCompile.compile
+
+        [<Fact>]
+        let ``a diagonal sandbag line no longer fills its whole bounding box`` () =
+            // The old lineBrush took the AABB of the endpoints, so this wall
+            // became one solid 28 m square and sealed off the map.
+            let level = compile [ LevelDsl.sandbags (Vector3(-14.0f, 0.0f, -14.0f)) (Vector3(14.0f, 0.0f, 14.0f)) None ]
+            let heightAt x z =
+                match LevelCompile.surfaceColumn level.Collision x z with
+                | ValueSome(struct (height, _)) -> height
+                | ValueNone -> Single.NaN
+            // Off the diagonal is open ground; the old AABB filled this corner.
+            Assert.True(heightAt -12.0f 12.0f < 0.2f, "sandbags are filling space away from the line they were drawn on")
+            Assert.True(heightAt 12.0f -12.0f < 0.2f, "sandbags are filling the opposite corner too")
+            // On the line they are still solid.
+            Assert.True(heightAt 0.0f 0.0f > 1.0f, "the sandbag line is missing where it was drawn")
+
+        [<Fact>]
+        let ``a diagonal wall blocks sight across it but not beside it`` () =
+            let level = compile [ LevelDsl.sandbags (Vector3(-14.0f, 0.0f, -14.0f)) (Vector3(14.0f, 0.0f, 14.0f)) None ]
+            // Across the diagonal, at sandbag height.
+            Assert.False(Ballistics.lineOfSight (Vector3(-6.0f, 0.5f, 0.0f)) (Vector3(6.0f, 0.5f, 0.0f)) level)
+            // Parallel to it and well clear.
+            Assert.True(Ballistics.lineOfSight (Vector3(-16.0f, 0.5f, 8.0f)) (Vector3(-8.0f, 0.5f, 16.0f)) level)
+
+        [<Fact>]
+        let ``a trench is cut below the ground and is walkable along its floor`` () =
+            let level = compile [ LevelDsl.trench (Vector3(0.0f, 0.0f, -12.0f)) (Vector3(0.0f, 0.0f, 12.0f)) 3.0f ]
+            match LevelCompile.surfaceColumn level.Collision 0.0f 0.0f with
+            | ValueSome(struct (height, normal)) ->
+                Assert.True(height < -1.0f, $"trench floor sits at {height}, expected it dug below ground")
+                Assert.True(Movement.walkableNormal normal, "trench floor is not walkable")
+            | ValueNone -> failwith "no surface inside the trench"
+            // The spoil bank beside it must stand above ground.
+            match LevelCompile.surfaceColumn level.Collision 1.8f 0.0f with
+            | ValueSome(struct (height, _)) -> Assert.True(height > 0.2f, $"spoil bank at {height} is not raised")
+            | ValueNone -> failwith "no surface on the trench bank"
+
+        [<Fact>]
+        let ``a trench gives cover to shelter in`` () =
+            let level = compile [ LevelDsl.trench (Vector3(0.0f, 0.0f, -12.0f)) (Vector3(0.0f, 0.0f, 12.0f)) 3.0f ]
+            Assert.NotEmpty(level.Cover |> Array.filter (fun point -> point.Pos.Y < 0.0f))
+
+        [<Fact>]
+        let ``a heightfield follows its height function and is solid`` () =
+            // A simple ridge along X, so expected heights are known exactly.
+            let ridge (x: float32) (_: float32) = 3.0f - abs x * 0.25f |> max 0.0f
+            let level = compile [ LevelDsl.heightfield (Vector3(0.0f, 0.0f, 0.0f)) (Vector2(24.0f, 24.0f)) 24 ridge Mud ]
+            let at x z =
+                match LevelCompile.surfaceColumn level.Collision x z with
+                | ValueSome(struct (height, _)) -> height
+                | ValueNone -> Single.NaN
+            Assert.Equal(3.0f, at 0.0f 0.0f, 1)
+            Assert.Equal(2.0f, at 4.0f 0.0f, 1)
+            Assert.Equal(2.0f, at -4.0f 0.0f, 1)
+            // Solid: a shot through the ridge crest must be stopped.
+            Assert.False(Ballistics.lineOfSight (Vector3(-15.0f, 1.0f, 0.0f)) (Vector3(15.0f, 1.0f, 0.0f)) level)
+
+        [<Fact>]
+        let ``a gentle heightfield is navigable and a sharp one is not`` () =
+            let gentle = compile [ LevelDsl.heightfield Vector3.Zero (Vector2(24.0f, 24.0f)) 12 (fun x _ -> max 0.0f (3.0f - abs x * 0.25f)) Mud ]
+            let elevated = gentle.Nav |> Array.filter (fun node -> node.Position.Y > 1.0f && node.Neighbours.Length > 0)
+            Assert.NotEmpty elevated
+            // A near-vertical spike has no standable ground on its flanks.
+            let sharp = compile [ LevelDsl.heightfield Vector3.Zero (Vector2(24.0f, 24.0f)) 12 (fun x _ -> max 0.0f (12.0f - abs x * 4.0f)) Mud ]
+            match LevelCompile.surfaceColumn sharp.Collision 2.0f 0.0f with
+            | ValueSome(struct (_, normal)) -> Assert.False(Movement.walkableNormal normal, "a 4:1 slope should not be walkable")
+            | ValueNone -> ()
+
+        [<Fact>]
+        let ``rebuilding a level keeps its sloped geometry`` () =
+            // OpenPath removes a brush and rebuilds; ramps must survive that.
+            let level =
+                compile
+                    [ LevelDsl.ramp (Vector3(0.0f, 0.0f, -8.0f)) (Vector3(0.0f, 4.0f, 8.0f)) 10.0f Mud
+                      LevelDsl.block (Vector3(20.0f, 1.0f, 20.0f)) (Vector3(2.0f, 2.0f, 2.0f)) Wood ]
+            let before = LevelCompile.surfaceColumn level.Collision 0.0f 6.0f
+            let rebuilt = LevelCompile.rebuild (Array.sub level.Brushes 0 (level.Brushes.Length - 1)) level
+            let after = LevelCompile.surfaceColumn rebuilt.Collision 0.0f 6.0f
+            match before, after with
+            | ValueSome(struct (a, _)), ValueSome(struct (b, _)) -> Assert.Equal(float a, float b, 3)
+            | _ -> failwith "the ramp did not survive the rebuild"
