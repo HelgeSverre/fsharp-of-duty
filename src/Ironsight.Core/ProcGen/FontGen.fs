@@ -68,6 +68,8 @@ module FontGen =
         | '(' -> [| "...#."; "..#.."; ".#..."; ".#..."; ".#..."; "..#.."; "...#." |]
         | ')' -> [| ".#..."; "..#.."; "...#."; "...#."; "...#."; "..#.."; ".#..." |]
         | '+' -> [| "....."; "..#.."; "..#.."; "#####"; "..#.."; "..#.."; "....." |]
+        | '<' -> [| "...#."; "..#.."; ".#..."; "#...."; ".#..."; "..#.."; "...#." |]
+        | '>' -> [| ".#..."; "..#.."; "...#."; "....#"; "...#."; "..#.."; ".#..." |]
         | _ -> Array.create 7 "....."
 
     let create () =
@@ -88,6 +90,9 @@ module FontGen =
                         for offsetY in 0..1 do
                             for offsetX in 0..1 do
                                 pixels[(originY + y * 2 + offsetY) * width + originX + x * 2 + offsetX] <- 255uy))
-        // The HUD's solid rectangles sample this known opaque atlas texel.
-        pixels[0] <- 255uy
+        // The HUD's solid rectangles sample this known opaque atlas texel. It
+        // lives in the bottom-right corner of the DEL cell — a blank glyph no
+        // text ever draws. Texel (0,0) would sit inside the space character's
+        // cell, giving every padding space a visible tick.
+        pixels[width * height - 1] <- 255uy
         { Width = width; Height = height; CellWidth = cellWidth; CellHeight = cellHeight; Pixels = pixels }
