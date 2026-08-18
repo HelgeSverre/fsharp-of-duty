@@ -166,7 +166,7 @@ module Program =
                     return struct (generation, None)
             }
 
-        let returnToMenu (inputSampler: InputSampler) =
+        let disconnectOnline () =
             connectionGeneration <- connectionGeneration + 1
             onlineRequested <- false
             onlineClient |> Option.iter closeClient
@@ -176,6 +176,9 @@ module Program =
             pendingInputs.Clear()
             reconciledTick <- -1L
             predictedFireHeld <- false
+
+        let returnToMenu (inputSampler: InputSampler) =
+            disconnectOnline ()
             settingsScreen <- None
             loadoutScreen <- None
             menu <- Some(StartMenu.create playerName)
@@ -282,13 +285,21 @@ module Program =
                                     applySettings ()
                                     Settings.save settings |> ignore
                         | None ->
-                            let struct (nextMenu, action) = StartMenu.update window.Size.X window.Size.Y (inputSampler.ConsumeMenuInput()) state
+                            let menuInput = inputSampler.ConsumeMenuInput()
+                            let sessionLive = onlineClient |> Option.exists (fun c -> c.Connected)
+                            if sessionLive && menuInput.Back && state.Page = Main then
+                                // Esc on the root page of the pause menu: back to
+                                // the match. Deeper pages still step back a page.
+                                menu <- None
+                                inputSampler.SetMenuActive false
+                            else
+                            let struct (nextMenu, action) = StartMenu.update window.Size.X window.Size.Y menuInput state
                             menu <- Some nextMenu
                             playerName <- nextMenu.PlayerName
                             action
                             |> Option.iter (function
                                 | StartOffline map ->
-                                    onlineRequested <- false
+                                    disconnectOnline ()
                                     initialWorld <- createOfflineWorld map
                                     previous <- initialWorld
                                     current <- initialWorld
@@ -296,7 +307,7 @@ module Program =
                                     inputSampler.SetMenuActive false
                                     window.Title <- $"IRONSIGHT — {current.Level.Name}"
                                 | StartOnline(weaponName, mode) ->
-                                    connectionGeneration <- connectionGeneration + 1
+                                    disconnectOnline ()
                                     onlineRequested <- true
                                     selectedOnlineWeapon <- weaponName
                                     selectedOnlineMode <- mode
@@ -334,7 +345,14 @@ module Program =
                                             current <- { current with Player = { current.Player with Active = index; Ads = 0.0f } }
                                             previous <- current)
                         | None -> ()
-                        if inputSampler.ConsumeEscape() then returnToMenu inputSampler
+                        if inputSampler.ConsumeEscape() then
+                            if onlineClient |> Option.exists (fun c -> c.Connected) then
+                                // Pause menu over a live match: the session stays
+                                // up and the server coasts us like a stalled
+                                // stream. Esc again closes it.
+                                menu <- Some(StartMenu.create playerName)
+                                inputSampler.SetMenuActive true
+                            else returnToMenu inputSampler
                         let sampledFrame = inputSampler.Sample()
                         // While the loadout picker is open the world keeps
                         // simulating, but the player stands idle (CS buy-menu
