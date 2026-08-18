@@ -329,10 +329,7 @@ type Hud(gl: GL) =
             let rowHeight = 30.0f
             let panelWidth = min 640.0f (float32 width - 48.0f)
             let panelHeight = 150.0f + rowHeight * float32 weapons.Length
-            let panelLeft = centerX - panelWidth * 0.5f
-            let panelTop = centerY - panelHeight * 0.5f
-            solid panelLeft panelTop panelWidth panelHeight (Vector4(0.025f, 0.040f, 0.034f, 0.94f))
-            solid panelLeft panelTop panelWidth 5.0f accent
+            let panelLeft, panelTop = overlayPanel false accent.W panelWidth panelHeight
             addText (panelLeft + 26.0f) (panelTop + 20.0f) 2.0f white "LOADOUT"
             let hint = if info.Online.IsSome then "ARMS ON YOUR NEXT SPAWN" else "SWAPS IMMEDIATELY"
             addText (panelLeft + panelWidth - 26.0f - float32 hint.Length * 8.0f) (panelTop + 30.0f) 1.0f label hint
@@ -345,9 +342,7 @@ type Hud(gl: GL) =
                 let y = panelTop + 88.0f + float32 index * rowHeight
                 let isSelected = index = selected
                 let isCurrent = weaponClass.Name = weapon.Class.Name
-                if isSelected then
-                    solid (panelLeft + 18.0f) (y - 6.0f) (panelWidth - 36.0f) 26.0f (Vector4(0.47f, 0.17f, 0.07f, 0.88f))
-                    solid (panelLeft + 18.0f) (y - 6.0f) 5.0f 26.0f (Vector4(1.0f, 0.74f, 0.30f, 1.0f))
+                if isSelected then rowHighlight panelLeft panelWidth (y - 6.0f) 26.0f
                 let color =
                     if isSelected then Vector4(1.0f, 0.91f, 0.64f, 1.0f)
                     elif isCurrent then Vector4(1.0f, 0.86f, 0.30f, 0.95f)
@@ -358,19 +353,14 @@ type Hud(gl: GL) =
                 addText (panelLeft + 400.0f) y 1.0f color $"{int weaponClass.RoundsPerMin}"
                 addText (panelLeft + 480.0f) y 1.0f color $"{weaponClass.MagSize}"
                 if isCurrent then addText (panelLeft + 540.0f) y 1.0f color "<")
-            let prompt = "UP/DOWN SELECT   ENTER EQUIP   ESC CLOSE"
-            addText (centerX - float32 prompt.Length * 3.6f) (panelTop + panelHeight - 30.0f) 0.9f (Vector4(0.64f, 0.67f, 0.61f, 1.0f)) prompt)
+            panelPrompt panelTop panelHeight "UP/DOWN SELECT   ENTER EQUIP   ESC CLOSE")
         info.Menu
         |> Option.iter (fun menu ->
             let options = StartMenu.items menu
             let rowHeight = MenuLayout.RowHeight
             let panelWidth = MenuLayout.panelWidth width
             let panelHeight = MenuLayout.panelHeight options.Length
-            let panelLeft = centerX - panelWidth * 0.5f
-            let panelTop = centerY - panelHeight * 0.5f
-            solid 0.0f 0.0f (float32 width) (float32 height) (Vector4(0.005f, 0.009f, 0.008f, 0.63f))
-            solid panelLeft panelTop panelWidth panelHeight (Vector4(0.025f, 0.040f, 0.034f, 0.94f))
-            solid panelLeft panelTop panelWidth 5.0f (Vector4(0.82f, 0.22f, 0.08f, 1.0f))
+            let panelLeft, panelTop = overlayPanel true 1.0f panelWidth panelHeight
             let title = "IRONSIGHT"
             addText (centerX - float32 title.Length * 12.0f) (panelTop + 24.0f) 3.0f white title
             let subtitle = StartMenu.subtitle menu
@@ -380,32 +370,23 @@ type Hud(gl: GL) =
             |> Array.iteri (fun index label ->
                 let y = firstRow + float32 index * rowHeight
                 let selected = index = menu.Selected
-                if selected then
-                    solid (panelLeft + 18.0f) (y - 7.0f) (panelWidth - 36.0f) 39.0f (Vector4(0.47f, 0.17f, 0.07f, 0.88f))
-                    solid (panelLeft + 18.0f) (y - 7.0f) 5.0f 39.0f (Vector4(1.0f, 0.74f, 0.30f, 1.0f))
+                if selected then rowHighlight panelLeft panelWidth (y - 7.0f) 39.0f
                 let color = if selected then Vector4(1.0f, 0.91f, 0.64f, 1.0f) else white
                 addText (panelLeft + 42.0f) y 1.3f color label)
-            let prompt = "UP/DOWN OR MOUSE   ENTER/CLICK TO SELECT   ESC TO BACK"
-            addText (centerX - float32 prompt.Length * 3.6f) (panelTop + panelHeight - 30.0f) 0.9f (Vector4(0.64f, 0.67f, 0.61f, 1.0f)) prompt)
+            panelPrompt panelTop panelHeight "UP/DOWN OR MOUSE   ENTER/CLICK TO SELECT   ESC TO BACK")
         info.SettingsScreen
         |> Option.iter (fun screen ->
             let rowHeight = 40.0f
             let rows = SettingsUi.visibleRows screen
             let panelWidth = min 860.0f (float32 width - 48.0f)
             let panelHeight = 150.0f + rowHeight * float32 rows.Length
-            let panelLeft = centerX - panelWidth * 0.5f
-            let panelTop = centerY - panelHeight * 0.5f
-            solid 0.0f 0.0f (float32 width) (float32 height) (Vector4(0.005f, 0.009f, 0.008f, 0.63f))
-            solid panelLeft panelTop panelWidth panelHeight (Vector4(0.025f, 0.040f, 0.034f, 0.94f))
-            solid panelLeft panelTop panelWidth 5.0f (Vector4(0.82f, 0.22f, 0.08f, 1.0f))
+            let panelLeft, panelTop = overlayPanel true 1.0f panelWidth panelHeight
             let title = "SETTINGS"
             addText (centerX - float32 title.Length * 12.0f) (panelTop + 26.0f) 2.4f white title
             rows
             |> List.iteri (fun index row ->
                 let y = panelTop + 92.0f + float32 index * rowHeight
-                if row.Selected then
-                    solid (panelLeft + 18.0f) (y - 7.0f) (panelWidth - 36.0f) 31.0f (Vector4(0.47f, 0.17f, 0.07f, 0.88f))
-                    solid (panelLeft + 18.0f) (y - 7.0f) 5.0f 31.0f (Vector4(1.0f, 0.74f, 0.30f, 1.0f))
+                if row.Selected then rowHighlight panelLeft panelWidth (y - 7.0f) 31.0f
                 let labelColor =
                     if row.Header then Vector4(0.62f, 0.67f, 0.60f, 0.85f)
                     elif row.Selected then Vector4(1.0f, 0.91f, 0.64f, 1.0f)
@@ -417,8 +398,7 @@ type Hud(gl: GL) =
                     else row.Value
                 if value <> "" then
                     addText (panelLeft + panelWidth - 70.0f - float32 value.Length * 8.0f) y 1.25f labelColor value)
-            let prompt = "UP/DOWN SELECT   LEFT/RIGHT ADJUST   ENTER CONFIRM   ESC BACK"
-            addText (centerX - float32 prompt.Length * 3.6f) (panelTop + panelHeight - 30.0f) 0.9f (Vector4(0.64f, 0.67f, 0.61f, 1.0f)) prompt)
+            panelPrompt panelTop panelHeight "UP/DOWN SELECT   LEFT/RIGHT ADJUST   ENTER CONFIRM   ESC BACK")
         let data = vertices.ToArray()
         if data.Length > 0 then
             gl.Disable EnableCap.DepthTest

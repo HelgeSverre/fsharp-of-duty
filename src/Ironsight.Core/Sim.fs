@@ -56,7 +56,7 @@ module Sim =
                     Behavior = Idle
                     Weapon =
                         { Tuning.weaponSlot soldier.Weapon.Class 4 with
-                            State = Cooling(Units.seconds (0.18f + float32 index * 0.12f)) }
+                            State = staggeredReady index }
                     Contacts = Map.empty
                     Suppression = 0.0f
                     AnimPhase = 0.0f })
@@ -131,8 +131,59 @@ module Sim =
             | [||] -> Mud
             | hits -> hits |> Array.maxBy (fun struct (height, _) -> height) |> fun struct (_, material) -> material
 
+    /// Result of `stepLocomotion`: the mechanically-identical core shared by
+    /// the campaign sim tick and the multiplayer match host tick.
+    type LocomotionResult =
+        { Player: Player
+          Weapon: WeaponSlot
+          /// Eye origin, aim direction, and the shot itself, one per pellet.
+          Shots: struct (Vector3 * Vector3 * ShotRequest) list
+          Thrown: Grenade option
+          FootStep: GameEvent option }
+
+    /// Movement -> weapon cycling -> grenade hand -> footstep -> shot rays,
+    /// shared by Sim.step (campaign/round bots) and MatchHost.stepFrame
+    /// (multiplayer). `stepWeapon = false` freezes the active slot entirely —
+    /// used by Sim while a weapon switch is in flight, when even the
+    /// cooldown/reload clock must not advance. `canFire`/`canThrowGrenade` are
+    /// separate because the two callers disagree on what blocks each: the
+    /// campaign player can still cook a grenade at 0 HP (existing behaviour,
+    /// unrelated to these findings) while multiplayer gates both on match
+    /// phase alone.
+    let stepLocomotion
+        (dt: float32<s>)
+        (level: Level)
+        (tick: int64)
+        (input: InputFrame)
+        (stepWeapon: bool)
+        (canFire: bool)
+        (canThrowGrenade: bool)
+        (player: Player)
+        (rng: byref<Rng.State>)
+        : LocomotionResult =
+        let moved = Movement.step dt input level player
+        let active = moved.Slots[moved.Active]
+        let fire = stepWeapon && canFire && Input.hasButton InputButtons.Fire input.Buttons && not moved.Sprinting
+        let reload = Input.hasButton InputButtons.Reload input.Buttons
+        let moveSpeed = MathEx.horizontal moved.Velocity |> fun velocity -> velocity.Length()
+        let weapon, shots =
+            if stepWeapon then
+                let struct (weapon, shots) = Weapons.step dt moveSpeed fire reload moved.Ads &rng active
+                weapon, shots
+            else active, []
+        let grenadeHeld = canThrowGrenade && Input.hasButton InputButtons.Grenade input.Buttons && not moved.Sprinting
+        let handPlayer, thrown = Grenades.stepHand dt grenadeHeld moved
+        let footstep =
+            let speed = MathEx.horizontal handPlayer.Velocity |> fun velocity -> velocity.Length()
+            let interval = if handPlayer.Sprinting then 18L else 26L
+            if speed > 1.0f && Movement.grounded level handPlayer.Position && tick % interval = 0L then
+                Some(FootStep(handPlayer.Position, surfaceBelow level handPlayer.Position))
+            else None
+        let rays = shots |> List.map (fun shot -> struct (Ballistics.playerEyeOrigin handPlayer, shotDirection handPlayer shot, shot))
+        { Player = handPlayer; Weapon = weapon; Shots = rays; Thrown = thrown; FootStep = footstep }
+
     let step (input: InputFrame) (world: World) =
-        let moved = Movement.step Tuning.TickDuration input world.Level world.Player |> Damage.stepRegen Tuning.TickDuration
+        let regenerated = Damage.stepRegen Tuning.TickDuration world.Player
         let requestedCategory =
             if Input.hasButton InputButtons.Weapon1 input.Buttons then Some 0
             elif Input.hasButton InputButtons.Weapon2 input.Buttons then Some 1
@@ -147,53 +198,40 @@ module Sim =
             requestedCategory
             |> Option.map (fun category ->
                 let members = weaponCategories[category]
-                match Array.tryFindIndex ((=) moved.Active) members with
+                match Array.tryFindIndex ((=) regenerated.Active) members with
                 | Some position -> members[(position + 1) % members.Length]
                 | None -> members[0])
         let prepared, weaponLocked =
-            match moved.Slots[moved.Active].State with
+            match regenerated.Slots[regenerated.Active].State with
             | Switching(incoming, remaining) when remaining <= Tuning.TickDuration ->
-                let slots = Array.copy moved.Slots
-                slots[moved.Active] <- { slots[moved.Active] with State = Ready }
-                { moved with Active = incoming; Slots = slots; Ads = 0.0f }, false
+                let slots = Array.copy regenerated.Slots
+                slots[regenerated.Active] <- { slots[regenerated.Active] with State = Ready }
+                { regenerated with Active = incoming; Slots = slots; Ads = 0.0f }, false
             | Switching(incoming, remaining) ->
-                let slots = Array.copy moved.Slots
-                slots[moved.Active] <- { slots[moved.Active] with State = Switching(incoming, remaining - Tuning.TickDuration) }
-                { moved with Slots = slots; Ads = 0.0f }, true
+                let slots = Array.copy regenerated.Slots
+                slots[regenerated.Active] <- { slots[regenerated.Active] with State = Switching(incoming, remaining - Tuning.TickDuration) }
+                { regenerated with Slots = slots; Ads = 0.0f }, true
             | _ ->
                 match requestedWeapon with
-                | Some incoming when incoming >= 0 && incoming < moved.Slots.Length && incoming <> moved.Active ->
-                    let slots = Array.copy moved.Slots
-                    slots[moved.Active] <- { slots[moved.Active] with State = Switching(incoming, Units.seconds 0.35f) }
-                    { moved with Slots = slots; Ads = 0.0f }, true
-                | _ -> moved, false
-        let active = prepared.Slots[prepared.Active]
-        let fire =
-            prepared.Health > Units.health 0.0f
-            && Input.hasButton InputButtons.Fire input.Buttons
-            && not prepared.Sprinting
-            && not weaponLocked
-        let reload = Input.hasButton InputButtons.Reload input.Buttons
+                | Some incoming when incoming >= 0 && incoming < regenerated.Slots.Length && incoming <> regenerated.Active ->
+                    let slots = Array.copy regenerated.Slots
+                    slots[regenerated.Active] <- { slots[regenerated.Active] with State = Switching(incoming, Units.seconds 0.35f) }
+                    { regenerated with Slots = slots; Ads = 0.0f }, true
+                | _ -> regenerated, false
         let mutable rng = world.Rng
-        let moveSpeed = MathEx.horizontal prepared.Velocity |> fun velocity -> velocity.Length()
-        let struct (weapon, shots) =
-            if weaponLocked then struct (active, [])
-            else Weapons.step Tuning.TickDuration moveSpeed fire reload prepared.Ads &rng active
-        let slots = Array.copy prepared.Slots
-        slots[prepared.Active] <- weapon
-        let armedPlayer = { prepared with Slots = slots }
-        let grenadeHeld = Input.hasButton InputButtons.Grenade input.Buttons && not armedPlayer.Sprinting
-        let playerWithHand, thrown = Grenades.stepHand Tuning.TickDuration grenadeHeld armedPlayer
+        let canFire = prepared.Health > Units.health 0.0f
+        let result = stepLocomotion Tuning.TickDuration world.Level world.Tick input (not weaponLocked) canFire true prepared &rng
+        let slots = Array.copy result.Player.Slots
+        slots[result.Player.Active] <- result.Weapon
+        let armedPlayer = { result.Player with Slots = slots }
         let shotEvents = ResizeArray<GameEvent>()
         let mutable soldiers = world.Soldiers
-        if not shots.IsEmpty then
+        if not result.Shots.IsEmpty then
             // Tracer starts at the muzzle; the hit trace below leaves the eye.
-            let origin = Ballistics.playerMuzzleOrigin playerWithHand weapon.Class
-            let direction = shotDirection playerWithHand shots.Head
-            shotEvents.Add(ShotFired(Some playerWithHand.Id, origin, direction, weapon.Class.Name))
-        for shot in shots do
-            let origin = Ballistics.playerEyeOrigin playerWithHand
-            let direction = shotDirection playerWithHand shot
+            let origin = Ballistics.playerMuzzleOrigin armedPlayer result.Weapon.Class
+            let struct (_, direction, _) = List.head result.Shots
+            shotEvents.Add(ShotFired(Some armedPlayer.Id, origin, direction, result.Weapon.Class.Name))
+        for struct (origin, direction, shot) in result.Shots do
             let hitSoldiers, hitEvents =
                 Ballistics.applyShotFiltered (fun soldier -> soldier.Team = Axis) origin direction shot.Damage shot.Penetration shot.HeadshotMultiplier world.Level soldiers
             let hitIds =
@@ -212,7 +250,7 @@ module Sim =
                         { soldier with
                             Suppression = suppression
                             Behavior = if suppression >= 2.0f then Suppressed(Units.seconds 1.5f) else soldier.Behavior
-                            Contacts = if heard then Map.add playerWithHand.Id (struct (playerWithHand.Position, Units.seconds 0.0f)) soldier.Contacts else soldier.Contacts }
+                            Contacts = if heard then Map.add armedPlayer.Id (struct (armedPlayer.Position, Units.seconds 0.0f)) soldier.Contacts else soldier.Contacts }
                     elif soldier.Team = Axis && soldier.Health > Units.health 0.0f then
                         // Direct hits flinch and duck living soldiers. A lethal
                         // hit already carries its Dying/DyingHeadshot behaviour;
@@ -221,20 +259,15 @@ module Sim =
                         { soldier with
                             Suppression = 3.0f
                             Behavior = Suppressed(Units.seconds 1.5f)
-                            Contacts = Map.add playerWithHand.Id (struct (playerWithHand.Position, Units.seconds 0.0f)) soldier.Contacts }
+                            Contacts = Map.add armedPlayer.Id (struct (armedPlayer.Position, Units.seconds 0.0f)) soldier.Contacts }
                     else soldier)
             shotEvents.AddRange hitEvents
-        let grenades = match thrown with Some grenade -> Array.append world.Grenades [| grenade |] | None -> world.Grenades
+        let grenades = match result.Thrown with Some grenade -> Array.append world.Grenades [| grenade |] | None -> world.Grenades
         let activeGrenades, explosions = Grenades.stepProjectiles Tuning.TickDuration world.Level grenades
         let explodedSoldiers, explosionEvents = Grenades.applyExplosions world.Level explosions soldiers
-        let player, playerExplosionEvents = Grenades.applyExplosionsToPlayer world.Level explosions playerWithHand
+        let player, playerExplosionEvents = Grenades.applyExplosionsToPlayer world.Level explosions armedPlayer
         let aiPlayer, aiSoldiers, aiEvents = AiBrain.step Tuning.TickDuration &rng world.Level world.Squads player explodedSoldiers
-        let footstepEvents =
-            let speed = MathEx.horizontal aiPlayer.Velocity |> fun velocity -> velocity.Length()
-            let interval = if aiPlayer.Sprinting then 18L else 26L
-            if speed > 1.0f && Movement.grounded world.Level aiPlayer.Position && world.Tick % interval = 0L then
-                [ FootStep(aiPlayer.Position, surfaceBelow world.Level aiPlayer.Position) ]
-            else []
+        let footstepEvents = result.FootStep |> Option.toList
         let objectives, objectiveEvents =
             if world.Round.IsNone && world.Objectives.Length > 0 && not world.Objectives[0].Done
                && (aiSoldiers |> Array.filter (fun soldier -> soldier.Team = Axis) |> Array.forall (fun soldier -> soldier.Health <= Units.health 0.0f)) then
@@ -370,7 +403,7 @@ module Sim =
                 { soldier with
                     Weapon =
                         { Tuning.weaponSlot weaponClass 4 with
-                            State = Cooling(Units.seconds (0.18f + float32 index * 0.12f)) } })
+                            State = staggeredReady index } })
         { world with
             Player = { world.Player with Active = thompsonSlot }
             Soldiers = soldiers

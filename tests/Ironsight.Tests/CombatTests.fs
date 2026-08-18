@@ -6,21 +6,9 @@ open Ironsight.ProcGen
 open Xunit
 
 module CombatTests =
-    let private soldier position =
-        { Id = EntityId 9
-          Team = Axis
-          Position = position
-          Facing = 0.0f
-          Stance = Standing
-          Health = Units.health 100.0f
-          Behavior = Idle
-          Weapon = Tuning.weaponSlot Tuning.kar98k 2
-          Squad = 1
-          Contacts = Map.empty
-          Suppression = 0.0f
-          AnimPhase = 0.0f }
+    let private soldier position = TestKit.soldier 9 position
 
-    let private soldierAt id position = { soldier position with Id = EntityId id }
+    let private soldierAt id position = TestKit.soldier id position
 
     let private openLevel =
         LevelDsl.level "Range" [ LevelDsl.street 30.0f 10.0f Mud ] |> LevelCompile.compile

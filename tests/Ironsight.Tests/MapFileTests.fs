@@ -7,9 +7,6 @@ open Ironsight
 open Ironsight.ProcGen
 open Ironsight.Server
 open Ironsight.Shell
-open Microsoft.AspNetCore.Hosting.Server
-open Microsoft.AspNetCore.Hosting.Server.Features
-open Microsoft.Extensions.DependencyInjection
 open Xunit
 
 module MapFileTests =
@@ -99,14 +96,7 @@ module MapFileTests =
         | Error message -> Assert.Fail message
         | Ok decoded -> Assert.Equal(2, decoded.Items.Length)
 
-    let private startServer () =
-        let app = Program.build [||] 0
-        app.StartAsync().GetAwaiter().GetResult()
-        let address =
-            app.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>().Addresses
-            |> Seq.head
-        let port = Uri(address).Port
-        app, Uri $"ws://127.0.0.1:%d{port}/play"
+    let private startServer = TestKit.startServer
 
     [<Fact>]
     [<Trait("Category", "Integration")>]

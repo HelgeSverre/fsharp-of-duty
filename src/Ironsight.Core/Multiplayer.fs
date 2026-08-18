@@ -85,11 +85,14 @@ module Multiplayer =
         | TeamDeathmatch -> first.Team <> second.Team
         | Campaign -> false
 
-    let recordKill killerId victimId state =
-        match Map.tryFind killerId state.Players, Map.tryFind victimId state.Players with
-        | Some killer, Some victim when killerId <> victimId && areHostile state.Mode killer victim ->
-            let updatedKiller = { killer with Kills = killer.Kills + 1 }
-            let updatedVictim =
+    /// Kills the given player: zeroes health, starts the respawn timer, and
+    /// clears spawn protection so a suicide respawn can't inherit stale
+    /// protection from before the death. The one place a player is marked
+    /// dead, shared by a normal kill and a self-inflicted (e.g. grenade) one.
+    let markDead (id: EntityId) (state: MatchState) =
+        match Map.tryFind id state.Players with
+        | Some victim ->
+            let dead =
                 { victim with
                     Health = Units.health 0.0f
                     Alive = false
@@ -97,13 +100,21 @@ module Multiplayer =
                     RespawnIn = Units.seconds 5.0f
                     SpawnProtection = Units.seconds 0.0f
                     Velocity = Vector3.Zero }
+            { state with Players = Map.add id dead state.Players }
+        | None -> state
+
+    let recordKill killerId victimId state =
+        match Map.tryFind killerId state.Players, Map.tryFind victimId state.Players with
+        | Some killer, Some victim when killerId <> victimId && areHostile state.Mode killer victim ->
+            let updatedKiller = { killer with Kills = killer.Kills + 1 }
+            let deadState = markDead victimId state
             let allies, axis =
                 match state.Mode, killer.Team with
                 | TeamDeathmatch, Allies -> state.AlliesScore + 1, state.AxisScore
                 | TeamDeathmatch, Axis -> state.AlliesScore, state.AxisScore + 1
                 | _ -> state.AlliesScore, state.AxisScore
-            { state with
-                Players = state.Players |> Map.add killerId updatedKiller |> Map.add victimId updatedVictim
+            { deadState with
+                Players = deadState.Players |> Map.add killerId updatedKiller
                 AlliesScore = allies
                 AxisScore = axis }
         | _ -> state

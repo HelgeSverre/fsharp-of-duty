@@ -270,6 +270,16 @@ type Renderer(gl: GL) =
                             if clear then Vector4(0.20f, 1.0f, 0.30f, 0.85f)
                             else Vector4(1.0f, 0.16f, 0.10f, 0.45f)
                         particles.SubmitDebugLine(soldierEye, playerEye, color)
+                        // Aim ray: where the soldier is actually pointing,
+                        // drawn out to the horizon so sightlines read at range.
+                        let aim = Ballistics.directionFromAngles soldier.Facing 0.0f Vector2.Zero
+                        particles.SubmitDebugLine(soldierEye, soldierEye + aim * 200.0f, Vector4(0.35f, 0.75f, 1.0f, 0.6f))
+                        // Orientation gizmo at the feet: X red, Y green, Z blue
+                        // in the soldier's local frame (Z = facing).
+                        let feet = soldier.Position
+                        particles.SubmitDebugLine(feet, feet + MathEx.yawRight soldier.Facing * 0.6f, Vector4(1.0f, 0.15f, 0.15f, 0.95f))
+                        particles.SubmitDebugLine(feet, feet + Vector3.UnitY * 0.6f, Vector4(0.15f, 1.0f, 0.15f, 0.95f))
+                        particles.SubmitDebugLine(feet, feet + MathEx.yawForward soldier.Facing * 0.6f, Vector4(0.25f, 0.4f, 1.0f, 0.95f))
             // Re-predicted every frame so the arc tracks the crosshair. Two
             // seconds of ticks covers any throw the player can make before the
             // grenade settles.

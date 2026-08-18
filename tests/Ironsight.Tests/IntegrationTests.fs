@@ -5,9 +5,6 @@ open System.Numerics
 open Ironsight
 open Ironsight.Server
 open Ironsight.Shell
-open Microsoft.AspNetCore.Hosting.Server
-open Microsoft.AspNetCore.Hosting.Server.Features
-open Microsoft.Extensions.DependencyInjection
 open Xunit
 
 /// End-to-end tests over a real WebSocket. Everything below the socket —
@@ -21,17 +18,7 @@ module IntegrationTests =
     [<Literal>]
     let private Integration = "Integration"
 
-    /// Boots the real application on an ephemeral port and returns its ws:// play
-    /// endpoint. Each test gets a fresh host: both rooms tick from process start,
-    /// so a shared one would leak players and scores between tests.
-    let private startServer () =
-        let app = Program.build [||] 0
-        app.StartAsync().GetAwaiter().GetResult()
-        let address =
-            app.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>().Addresses
-            |> Seq.head
-        let port = Uri(address).Port
-        app, Uri $"ws://127.0.0.1:%d{port}/play"
+    let private startServer = TestKit.startServer
 
     let private remoteServer () =
         match Environment.GetEnvironmentVariable "IRONSIGHT_SMOKE_SERVER" with

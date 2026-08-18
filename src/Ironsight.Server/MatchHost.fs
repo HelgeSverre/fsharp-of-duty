@@ -278,29 +278,21 @@ type MatchHost(mode: GameMode, ?matchLevel: Level) =
                         if remaining <= Units.seconds 0.0f then freshSpawn lifecycleState.Tick id player
                         else { player with RespawnIn = remaining })
             let stepFrame id (player: NetworkPlayer) (input: InputFrame) (estimatedTick: int64) acknowledge =
-                let moved = Movement.step Tuning.TickDuration input level (toPlayer player)
                 let canEngage = lifecycleState.Phase = Playing
-                let fire = canEngage && Input.hasButton InputButtons.Fire input.Buttons && not moved.Sprinting
-                let reload = Input.hasButton InputButtons.Reload input.Buttons
-                let moveSpeed = MathEx.horizontal moved.Velocity |> fun velocity -> velocity.Length()
-                let struct (weapon, requests) = Weapons.step Tuning.TickDuration moveSpeed fire reload moved.Ads &rng moved.Slots[0]
-                let grenadeHeld = canEngage && Input.hasButton InputButtons.Grenade input.Buttons && not moved.Sprinting
-                let handPlayer, thrown = Grenades.stepHand Tuning.TickDuration grenadeHeld moved
-                thrown |> Option.iter thrownGrenades.Add
-                let horizontalSpeed = MathEx.horizontal handPlayer.Velocity |> fun velocity -> velocity.Length()
-                let footstepInterval = if handPlayer.Sprinting then 18L else 26L
-                if horizontalSpeed > 1.0f && Movement.grounded level handPlayer.Position && lifecycleState.Tick % footstepInterval = 0L then
-                    emit (FootStep(handPlayer.Position, Mud))
-                if not requests.IsEmpty then
+                // Shared with Sim.step's campaign/round-bot tick: movement,
+                // weapon cycling, grenade hand, footstep material, shot rays.
+                let result = Sim.stepLocomotion Tuning.TickDuration level lifecycleState.Tick input true canEngage canEngage (toPlayer player) &rng
+                result.Thrown |> Option.iter thrownGrenades.Add
+                result.FootStep |> Option.iter emit
+                if not result.Shots.IsEmpty then
                     // Eye trace, muzzle visuals: the authoritative ray leaves the
                     // camera so anything the player can see over, the bullet
                     // clears; the tracer event still starts at the barrel.
-                    let muzzle = Ballistics.playerMuzzleOrigin handPlayer weapon.Class
-                    emit (ShotFired(Some id, muzzle, Ballistics.directionFromAngles moved.Yaw moved.Pitch Vector2.Zero, weapon.Class.Name))
-                    let eye = Ballistics.playerEyeOrigin handPlayer
-                    for request in requests do
-                        let direction = Ballistics.directionFromAngles moved.Yaw moved.Pitch request.DirectionOffset
-                        shots.Add(id, eye, direction, request.Damage, request.Penetration, request.HeadshotMultiplier, estimatedTick)
+                    let muzzle = Ballistics.playerMuzzleOrigin result.Player result.Weapon.Class
+                    emit (ShotFired(Some id, muzzle, Ballistics.directionFromAngles result.Player.Yaw result.Player.Pitch Vector2.Zero, result.Weapon.Class.Name))
+                    for struct (origin, direction, request) in result.Shots do
+                        shots.Add(id, origin, direction, request.Damage, request.Penetration, request.HeadshotMultiplier, estimatedTick)
+                let handPlayer = result.Player
                 { player with
                     Position = handPlayer.Position
                     Velocity = handPlayer.Velocity
@@ -309,9 +301,9 @@ type MatchHost(mode: GameMode, ?matchLevel: Level) =
                     Stance = handPlayer.Stance
                     Sprinting = handPlayer.Sprinting
                     Ads = handPlayer.Ads
-                    Weapon = weapon
+                    Weapon = result.Weapon
                     Grenade = handPlayer.Grenade
-                    SpawnProtection = if requests.IsEmpty && thrown.IsNone then player.SpawnProtection else Units.seconds 0.0f
+                    SpawnProtection = if result.Shots.IsEmpty && result.Thrown.IsNone then player.SpawnProtection else Units.seconds 0.0f
                     LastInputSequence = if acknowledge then input.Sequence else player.LastInputSequence }
             let mutable leftoverInputs: Map<EntityId, struct (InputFrame * int64) list> = Map.empty
             let mutable nextCredits: Map<EntityId, int> = Map.empty
@@ -405,18 +397,7 @@ type MatchHost(mode: GameMode, ?matchLevel: Level) =
                                 Players = Map.add targetId { target with Health = health; RegenIn = Tuning.RegenDelay } combatState.Players }
                         if health <= Units.health 0.0f then
                             if ownerId <> targetId then combatState <- Multiplayer.recordKill ownerId targetId combatState
-                            else
-                                let victim = combatState.Players[targetId]
-                                combatState <-
-                                    { combatState with
-                                        Players =
-                                            Map.add targetId
-                                                { victim with
-                                                    Alive = false
-                                                    Deaths = victim.Deaths + 1
-                                                    RespawnIn = Units.seconds 5.0f
-                                                    Velocity = Vector3.Zero }
-                                                combatState.Players }
+                            else combatState <- Multiplayer.markDead targetId combatState
                     | None -> ()
             let finalState =
                 if combatState.Phase = Playing && Multiplayer.hasWinner combatState then

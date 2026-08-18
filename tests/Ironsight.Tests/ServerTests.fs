@@ -2,19 +2,14 @@ namespace Ironsight.Tests
 
 open System
 open System.Numerics
-open System.Text.Json
 open Ironsight
 open Ironsight.ProcGen
 open Ironsight.Server
 open Xunit
 
 module ServerTests =
-    let private applyCustom sequence moveY lookX buttons (host: MatchHost) id =
-        use document =
-            JsonDocument.Parse(FormattableString.Invariant($"""{{"type":"input","sequence":{sequence},"moveX":0,"moveY":{moveY},"lookX":{lookX},"lookY":0,"buttons":{buttons}}}"""))
-        host.ApplyInput(id, document.RootElement)
-
-    let private applyInput sequence host id = applyCustom sequence 1.0f 0.0f 4 host id
+    let private applyCustom = TestKit.applyCustom
+    let private applyInput = TestKit.applyInput
 
     [<Fact>]
     let ``burst inputs are buffered and applied at the server tick rate`` () =
@@ -70,13 +65,11 @@ module ServerTests =
 
     [<Fact>]
     let ``disconnected reserved player is not a hittable ghost`` () =
-        let arena = LevelDsl.level "Ghost range" [ LevelDsl.street 50.0f 20.0f Mud ] |> LevelCompile.compile
+        let arena = TestKit.streetArena "Ghost range"
         let host = MatchHost(FreeForAll, arena)
         let thrower, _ = host.TryAddPlayer("Thrower").Value
         let ghost, _ = host.TryAddPlayer("Ghost").Value
-        host.SetReady thrower
-        host.SetReady ghost
-        for _ in 1..721 do host.AdvanceTick()
+        TestKit.readyUp host [ thrower; ghost ]
         Assert.Equal(Playing, host.Snapshot().Phase)
         // Both spawned at the arena origin. Disconnect the ghost, then cook a
         // grenade until it pops in hand right next to the reserved body.
@@ -118,18 +111,11 @@ module ServerTests =
 
     [<Fact>]
     let ``authoritative rifle hit awards team score and starts victim respawn`` () =
-        let arena =
-            LevelDsl.level "Server range"
-                [ LevelDsl.street 50.0f 20.0f Mud
-                  LevelDsl.spawnSquad Allies 1 (Vector3(0.0f, 0.0f, 12.0f))
-                  LevelDsl.spawnSquad Axis 1 (Vector3(0.0f, 0.0f, -12.0f)) ]
-            |> LevelCompile.compile
+        let arena = TestKit.streetArenaWithSpawns "Server range"
         let host = MatchHost(TeamDeathmatch, arena)
         let allyId, _ = host.TryAddPlayer("Ally").Value
         let axisId, _ = host.TryAddPlayer("Axis").Value
-        host.SetReady allyId
-        host.SetReady axisId
-        for _ in 1..721 do host.AdvanceTick()
+        TestKit.readyUp host [ allyId; axisId ]
         Assert.Equal(Playing, host.Snapshot().Phase)
         let initial = host.Snapshot()
         let shooter = initial.Players[axisId]
@@ -163,18 +149,11 @@ module ServerTests =
 
     [<Fact>]
     let ``player can move again after dying and respawning`` () =
-        let arena =
-            LevelDsl.level "Respawn range"
-                [ LevelDsl.street 50.0f 20.0f Mud
-                  LevelDsl.spawnSquad Allies 1 (Vector3(0.0f, 0.0f, 12.0f))
-                  LevelDsl.spawnSquad Axis 1 (Vector3(0.0f, 0.0f, -12.0f)) ]
-            |> LevelCompile.compile
+        let arena = TestKit.streetArenaWithSpawns "Respawn range"
         let host = MatchHost(TeamDeathmatch, arena)
         let allyId, _ = host.TryAddPlayer("Ally").Value
         let axisId, _ = host.TryAddPlayer("Axis").Value
-        host.SetReady allyId
-        host.SetReady axisId
-        for _ in 1..721 do host.AdvanceTick()
+        TestKit.readyUp host [ allyId; axisId ]
         Assert.Equal(Playing, host.Snapshot().Phase)
         // The axis rifleman already faces the ally (spawn yaw = PI). ADS, then
         // fire a few Kar98k shots until the ally is dead.
@@ -233,13 +212,11 @@ module ServerTests =
 
     [<Fact>]
     let ``authoritative grenade is cooked thrown and included in snapshots`` () =
-        let arena = LevelDsl.level "Grenade range" [ LevelDsl.street 50.0f 20.0f Mud ] |> LevelCompile.compile
+        let arena = TestKit.streetArena "Grenade range"
         let host = MatchHost(FreeForAll, arena)
         let first, _ = host.TryAddPlayer("Thrower").Value
         let second, _ = host.TryAddPlayer("Witness").Value
-        host.SetReady first
-        host.SetReady second
-        for _ in 1..721 do host.AdvanceTick()
+        TestKit.readyUp host [ first; second ]
         applyCustom 1L 0.0f 0.0f (int InputButtons.Grenade) host first
         host.AdvanceTick()
         applyCustom 2L 0.0f 0.0f 0 host first
@@ -262,9 +239,7 @@ module ServerTests =
         host.SetLoadout(playerId, "Raygun")
         Assert.Equal("STG-44", host.Snapshot().Players[playerId].Weapon.Class.Name)
         let otherId, _ = host.TryAddPlayer("Other").Value
-        host.SetReady playerId
-        host.SetReady otherId
-        for _ in 1..721 do host.AdvanceTick()
+        TestKit.readyUp host [ playerId; otherId ]
         Assert.Equal(Playing, host.Snapshot().Phase)
         // Live round: the request must not re-roll the weapon in hand.
         host.SetLoadout(playerId, "BAR")
@@ -272,13 +247,11 @@ module ServerTests =
 
     [<Fact>]
     let ``mid-round loadout request arms on the next spawn`` () =
-        let arena = LevelDsl.level "Loadout range" [ LevelDsl.street 50.0f 20.0f Mud ] |> LevelCompile.compile
+        let arena = TestKit.streetArena "Loadout range"
         let host = MatchHost(FreeForAll, arena)
         let subject, _ = host.TryAddPlayer("Subject").Value
         let witness, _ = host.TryAddPlayer("Witness").Value
-        host.SetReady subject
-        host.SetReady witness
-        for _ in 1..721 do host.AdvanceTick()
+        TestKit.readyUp host [ subject; witness ]
         host.SetLoadout(subject, "BAR")
         let mutable sequence = 1L
         // Two grenades cooked to detonation in hand kill the subject.

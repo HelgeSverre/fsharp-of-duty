@@ -162,19 +162,7 @@ module ClientTests =
 
     [<Fact>]
     let ``soldier model faces its movement direction at every yaw`` () =
-        let soldierAt yaw =
-            { Id = EntityId 1
-              Team = Axis
-              Position = Vector3.Zero
-              Facing = yaw
-              Stance = Standing
-              Health = Units.health 100.0f
-              Behavior = Idle
-              Weapon = Tuning.weaponSlot Tuning.kar98k 2
-              Squad = 1
-              Contacts = Map.empty
-              Suppression = 0.0f
-              AnimPhase = 0.0f }
+        let soldierAt yaw = { TestKit.soldier 1 Vector3.Zero with Facing = yaw }
         for yaw in [ 0.0f; MathF.PI / 2.0f; MathF.PI; -MathF.PI / 2.0f ] do
             let posed = Humanoid.pose (soldierAt yaw)
             let forward = MathEx.yawForward yaw
@@ -224,19 +212,7 @@ module ClientTests =
         // surface, upward-facing (outward-wound, not culled), and closed. This
         // fails independently on the upside-down rotation, the missing lathe
         // caps, and any winding flip.
-        let soldier =
-            { Id = EntityId 1
-              Team = Axis
-              Position = Vector3.Zero
-              Facing = 0.7f
-              Stance = Standing
-              Health = Units.health 100.0f
-              Behavior = Idle
-              Weapon = Tuning.weaponSlot Tuning.kar98k 2
-              Squad = 1
-              Contacts = Map.empty
-              Suppression = 0.0f
-              AnimPhase = 0.3f }
+        let soldier = { TestKit.soldier 1 Vector3.Zero with Facing = 0.7f; AnimPhase = 0.3f }
         let vertices, indices = Humanoid.mesh [| soldier |]
         let highest = vertices |> Array.maxBy (fun vertex -> vertex.Position.Y)
         // The top of the model is helmet, not bare head poking through a hole.

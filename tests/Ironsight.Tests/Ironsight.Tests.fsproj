@@ -15,6 +15,7 @@
     </PackageReference>
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="TestKit.fs" />
     <Compile Include="CoreTests.fs" />
     <Compile Include="GeometryTests.fs" />
     <Compile Include="CombatTests.fs" />
