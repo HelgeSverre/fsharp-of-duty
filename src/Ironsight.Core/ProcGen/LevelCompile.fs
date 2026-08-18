@@ -54,6 +54,110 @@ module LevelCompile =
         |> Array.distinct
         |> Array.map (fun index -> level.Brushes[index])
 
+    /// The twelve triangles of a box, wound counter-clockwise seen from outside
+    /// so the stored normal and the winding agree.
+    let boxTriangles (bounds: Aabb) (material: Material) =
+        let lo, hi = bounds.Min, bounds.Max
+        let corner x y z = Vector3((if x = 0 then lo.X else hi.X), (if y = 0 then lo.Y else hi.Y), (if z = 0 then lo.Z else hi.Z))
+        // Each face as four corners in winding order, paired with its outward normal.
+        let quads =
+            [| -Vector3.UnitZ, [| corner 1 0 0; corner 0 0 0; corner 0 1 0; corner 1 1 0 |]
+               Vector3.UnitZ, [| corner 0 0 1; corner 1 0 1; corner 1 1 1; corner 0 1 1 |]
+               -Vector3.UnitX, [| corner 0 0 0; corner 0 0 1; corner 0 1 1; corner 0 1 0 |]
+               Vector3.UnitX, [| corner 1 0 1; corner 1 0 0; corner 1 1 0; corner 1 1 1 |]
+               Vector3.UnitY, [| corner 0 1 1; corner 1 1 1; corner 1 1 0; corner 0 1 0 |]
+               -Vector3.UnitY, [| corner 0 0 0; corner 1 0 0; corner 1 0 1; corner 0 0 1 |] |]
+        quads
+        |> Array.collect (fun (normal, points) ->
+            [| { A = points[0]; B = points[1]; C = points[2]; Normal = normal; Material = material }
+               { A = points[0]; B = points[2]; C = points[3]; Normal = normal; Material = material } |])
+
+    let private triangleBounds (triangle: Tri) =
+        { Min = Vector3.Min(triangle.A, Vector3.Min(triangle.B, triangle.C))
+          Max = Vector3.Max(triangle.A, Vector3.Max(triangle.B, triangle.C)) }
+
+    let compileCollision (triangles: Tri array) =
+        let cells = Dictionary<struct (int * int), ResizeArray<int>>()
+        triangles
+        |> Array.iteri (fun index triangle ->
+            let bounds = triangleBounds triangle
+            let minX, maxX = cellCoordinate bounds.Min.X, cellCoordinate bounds.Max.X
+            let minZ, maxZ = cellCoordinate bounds.Min.Z, cellCoordinate bounds.Max.Z
+            for z in minZ..maxZ do
+                for x in minX..maxX do
+                    let key = struct (x, z)
+                    match cells.TryGetValue key with
+                    | true, entries -> entries.Add index
+                    | _ ->
+                        let entries = ResizeArray<int>()
+                        entries.Add index
+                        cells[key] <- entries)
+        { Triangles = triangles
+          CellSize = gridCellSize
+          Cells = cells |> Seq.map (fun pair -> pair.Key, pair.Value.ToArray()) |> Map.ofSeq }
+
+    let trianglesNear (position: Vector3) radius (level: Level) =
+        let mesh = level.Collision
+        let cell value = int (MathF.Floor(value / mesh.CellSize))
+        let minX, maxX = cell (position.X - radius), cell (position.X + radius)
+        let minZ, maxZ = cell (position.Z - radius), cell (position.Z + radius)
+        [| for z in minZ..maxZ do
+               for x in minX..maxX do
+                   match Map.tryFind (struct (x, z)) mesh.Cells with
+                   | Some indices -> yield! indices
+                   | None -> () |]
+        |> Array.distinct
+        |> Array.map (fun index -> mesh.Triangles[index])
+
+    /// Amanatides-Woo 2D traversal. The brush version point-samples every 1.8 m
+    /// and can skip a cell the ray only clips, which matters more as maps gain
+    /// elevation and long diagonal shots.
+    let trianglesAlongRay (origin: Vector3) (direction: Vector3) distance (level: Level) =
+        let mesh = level.Collision
+        let size = mesh.CellSize
+        let cell value = int (MathF.Floor(value / size))
+        let visited = HashSet<struct (int * int)>()
+        let collected = ResizeArray<int>()
+        let mutable x = cell origin.X
+        let mutable z = cell origin.Z
+        let stepX = if direction.X > 0.0f then 1 elif direction.X < 0.0f then -1 else 0
+        let stepZ = if direction.Z > 0.0f then 1 elif direction.Z < 0.0f then -1 else 0
+        let inverse value = if MathF.Abs value < 0.000001f then Single.PositiveInfinity else size / MathF.Abs value
+        let deltaX = inverse direction.X
+        let deltaZ = inverse direction.Z
+        let boundary current step axisOrigin axisDirection =
+            if step = 0 then Single.PositiveInfinity
+            else
+                let edge = float32 (if step > 0 then current + 1 else current) * size
+                (edge - axisOrigin) / axisDirection
+        let mutable nextX = boundary x stepX origin.X direction.X
+        let mutable nextZ = boundary z stepZ origin.Z direction.Z
+        let mutable travelled = 0.0f
+        let mutable guard = 0
+        let take () =
+            let key = struct (x, z)
+            if visited.Add key then
+                match Map.tryFind key mesh.Cells with
+                | Some indices -> collected.AddRange indices
+                | None -> ()
+        take ()
+        // The guard bounds a ray that runs exactly along a cell boundary.
+        while travelled <= distance && guard < 4096 do
+            guard <- guard + 1
+            if nextX < nextZ then
+                travelled <- nextX
+                x <- x + stepX
+                nextX <- nextX + deltaX
+            else
+                travelled <- nextZ
+                z <- z + stepZ
+                nextZ <- nextZ + deltaZ
+            if travelled <= distance then take ()
+        collected
+        |> Seq.distinct
+        |> Seq.map (fun index -> mesh.Triangles[index])
+        |> Seq.toArray
+
     let private brush (minimum: Vector3) (maximum: Vector3) (material: Material) : Brush =
         { Bounds = { Min = minimum; Max = maximum }; Material = material }
 
@@ -272,11 +376,13 @@ module LevelCompile =
         let brushArray = brushes.ToArray()
         let brushGrid = compileBrushGrid brushArray
         let vertices, indices = compileMesh brushArray
+        let collision = brushArray |> Array.collect (fun item -> boxTriangles item.Bounds item.Material) |> compileCollision
         { Name = spec.Name
           Revision = 0
           Bounds = bounds
           Brushes = brushArray
           BrushGrid = brushGrid
+          Collision = collision
           Cover = covers.ToArray()
           Spawns = spawns.ToArray()
           MountedGuns = mountedGuns.ToArray()
@@ -296,6 +402,7 @@ module LevelCompile =
             Revision = level.Revision + 1
             Brushes = brushes
             BrushGrid = brushGrid
+            Collision = brushes |> Array.collect (fun item -> boxTriangles item.Bounds item.Material) |> compileCollision
             Nav = compileNav level.Bounds brushes brushGrid
             Vertices = vertices
             Indices = indices }

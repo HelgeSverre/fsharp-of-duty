@@ -30,6 +30,9 @@ coverage/
 *.local
 *.log
 
+# Generated level previews
+map-preview.svg
+
 # Operating systems
 .DS_Store
 Thumbs.db

@@ -134,6 +134,12 @@ test-release: _sdk
 [group('test')]
 check: lint build test smoke
 
+# Draw a level's plan and elevation to map-preview.svg.
+[group('tools')]
+map-preview level="paintball": _sdk
+    {{ dotnet }} build src/Ironsight.Core/Ironsight.Core.fsproj --nologo -v quiet
+    {{ dotnet }} fsi tools/map-preview.fsx "{{ level }}"
+
 # Build the Fly-compatible dedicated-server image.
 [group('container')]
 docker-build:

@@ -71,6 +71,130 @@ module MathEx =
         |> List.choose id
         |> function [] -> None | values -> Some(List.min values)
 
+    /// Möller-Trumbore. Returns the distance along `direction` at which the ray
+    /// crosses the triangle, hitting either face — back faces matter because
+    /// penetration needs the exit surface as well as the entry one.
+    let rayTriangle (origin: Vector3) (direction: Vector3) (a: Vector3) (b: Vector3) (c: Vector3) =
+        let edge1 = b - a
+        let edge2 = c - a
+        let pointVector = Vector3.Cross(direction, edge2)
+        let determinant = Vector3.Dot(edge1, pointVector)
+        // Near-zero determinant means the ray runs parallel to the triangle.
+        if MathF.Abs determinant < 0.000001f then ValueNone
+        else
+            let inverse = 1.0f / determinant
+            let toOrigin = origin - a
+            let u = Vector3.Dot(toOrigin, pointVector) * inverse
+            if u < -0.000001f || u > 1.000001f then ValueNone
+            else
+                let qVector = Vector3.Cross(toOrigin, edge1)
+                let v = Vector3.Dot(direction, qVector) * inverse
+                if v < -0.000001f || u + v > 1.000001f then ValueNone
+                else
+                    let distance = Vector3.Dot(edge2, qVector) * inverse
+                    if distance >= 0.0f then ValueSome distance else ValueNone
+
+    /// Closest point to `point` within triangle abc, by Voronoi region — the
+    /// standard Ericson construction, covering the three vertices, three edges
+    /// and the face interior.
+    let closestPointOnTriangle (point: Vector3) (a: Vector3) (b: Vector3) (c: Vector3) =
+        let ab = b - a
+        let ac = c - a
+        let ap = point - a
+        let d1 = Vector3.Dot(ab, ap)
+        let d2 = Vector3.Dot(ac, ap)
+        if d1 <= 0.0f && d2 <= 0.0f then a
+        else
+            let bp = point - b
+            let d3 = Vector3.Dot(ab, bp)
+            let d4 = Vector3.Dot(ac, bp)
+            if d3 >= 0.0f && d4 <= d3 then b
+            else
+                let vc = d1 * d4 - d3 * d2
+                if vc <= 0.0f && d1 >= 0.0f && d3 <= 0.0f then a + ab * (d1 / (d1 - d3))
+                else
+                    let cp = point - c
+                    let d5 = Vector3.Dot(ab, cp)
+                    let d6 = Vector3.Dot(ac, cp)
+                    if d6 >= 0.0f && d5 <= d6 then c
+                    else
+                        let vb = d5 * d2 - d1 * d6
+                        if vb <= 0.0f && d2 >= 0.0f && d6 <= 0.0f then a + ac * (d2 / (d2 - d6))
+                        else
+                            let va = d3 * d6 - d5 * d4
+                            if va <= 0.0f && (d4 - d3) >= 0.0f && (d5 - d6) >= 0.0f then
+                                b + (c - b) * ((d4 - d3) / ((d4 - d3) + (d5 - d6)))
+                            else
+                                let denominator = 1.0f / (va + vb + vc)
+                                a + ab * (vb * denominator) + ac * (vc * denominator)
+
+    /// Squared distance between two segments, and the closest point on the first.
+    let private closestBetweenSegments (p1: Vector3) (q1: Vector3) (p2: Vector3) (q2: Vector3) =
+        let d1 = q1 - p1
+        let d2 = q2 - p2
+        let r = p1 - p2
+        let a = Vector3.Dot(d1, d1)
+        let e = Vector3.Dot(d2, d2)
+        let f = Vector3.Dot(d2, r)
+        let mutable s = 0.0f
+        let mutable t = 0.0f
+        if a <= 0.000001f && e <= 0.000001f then ()
+        elif a <= 0.000001f then t <- clamp01 (f / e)
+        else
+            let c = Vector3.Dot(d1, r)
+            if e <= 0.000001f then s <- clamp01 (-c / a)
+            else
+                let b = Vector3.Dot(d1, d2)
+                let denominator = a * e - b * b
+                s <- if denominator <> 0.0f then clamp01 ((b * f - c * e) / denominator) else 0.0f
+                t <- (b * s + f) / e
+                if t < 0.0f then
+                    t <- 0.0f
+                    s <- clamp01 (-c / a)
+                elif t > 1.0f then
+                    t <- 1.0f
+                    s <- clamp01 ((b - c) / a)
+        let closest1 = p1 + d1 * s
+        let closest2 = p2 + d2 * t
+        struct (Vector3.DistanceSquared(closest1, closest2), closest1)
+
+    /// Whether a vertical capsule standing at `feet` overlaps triangle abc, and
+    /// if so the triangle point it is closest to. Replaces the AABB capsule test
+    /// once geometry stops being boxes.
+    let capsuleIntersectsTriangle radius height (feet: Vector3) (a: Vector3) (b: Vector3) (c: Vector3) =
+        // The capsule's core segment runs between the sphere centres, so the
+        // caps account for the first and last `radius` of its height.
+        let lower = feet + Vector3(0.0f, min radius (height * 0.5f), 0.0f)
+        let upper = feet + Vector3(0.0f, max (height - radius) (height * 0.5f), 0.0f)
+        // A segment passing clean through the face registers no edge or endpoint
+        // proximity, so test the crossing separately.
+        let through =
+            let direction = upper - lower
+            let length = direction.Length()
+            if length < 0.000001f then ValueNone
+            else
+                match rayTriangle lower (direction / length) a b c with
+                | ValueSome distance when distance <= length -> ValueSome(lower + direction / length * distance)
+                | _ -> ValueNone
+        match through with
+        | ValueSome point -> ValueSome point
+        | ValueNone ->
+            let mutable bestDistance = Single.PositiveInfinity
+            let mutable bestPoint = Vector3.Zero
+            let consider (distanceSquared: float32) (point: Vector3) =
+                if distanceSquared < bestDistance then
+                    bestDistance <- distanceSquared
+                    bestPoint <- point
+            for struct (edgeStart, edgeEnd) in [| struct (a, b); struct (b, c); struct (c, a) |] do
+                let struct (distanceSquared, _) = closestBetweenSegments lower upper edgeStart edgeEnd
+                // Recover the triangle-side point for the caller.
+                let struct (_, onEdge) = closestBetweenSegments edgeStart edgeEnd lower upper
+                consider distanceSquared onEdge
+            for endpoint in [| lower; upper |] do
+                let onFace = closestPointOnTriangle endpoint a b c
+                consider (Vector3.DistanceSquared(endpoint, onFace)) onFace
+            if bestDistance < radius * radius then ValueSome bestPoint else ValueNone
+
     let rayAabb (origin: Vector3) (direction: Vector3) (box: Aabb) =
         let mutable entry = 0.0f
         let mutable exit = Single.PositiveInfinity

@@ -116,6 +116,23 @@ type BrushGrid =
     { CellSize: float32
       Cells: Map<struct (int * int), int array> }
 
+/// A single collidable face. Boxes compile down to twelve of these, and sloped
+/// terrain emits them directly, so every collision query has one shape to
+/// handle instead of a special case per primitive.
+[<Struct>]
+type Tri =
+    { A: Vector3
+      B: Vector3
+      C: Vector3
+      Normal: Vector3
+      Material: Material }
+
+/// The world as triangles, with the same flat XZ hash the brush grid uses.
+type CollisionMesh =
+    { Triangles: Tri array
+      CellSize: float32
+      Cells: Map<struct (int * int), int array> }
+
 type TriggerCondition =
     | EnterVolume of Aabb
     | SquadDead of squad: int
@@ -145,6 +162,7 @@ type Level =
       Bounds: Aabb
       Brushes: Brush array
       BrushGrid: BrushGrid
+      Collision: CollisionMesh
       Cover: CoverPoint array
       Spawns: struct (Team option * Vector3) array
       MountedGuns: MountedGun array

@@ -7,7 +7,7 @@ open Ironsight.ProcGen
 type CharacterRegion = Head | Torso | Legs
 
 type TraceHit =
-    | SurfaceHit of distance: float32 * exitDistance: float32 * normal: Vector3 * brush: Brush
+    | SurfaceHit of distance: float32 * exitDistance: float32 * normal: Vector3 * material: Material
     | SoldierHit of distance: float32 * soldierIndex: int * region: CharacterRegion
 
 [<RequireQualifiedAccess>]
@@ -92,11 +92,31 @@ module Ballistics =
                 Some(SoldierHit(distance, index, region))
 
     let traceFilteredExcluding canHit excludeIndexes origin direction (level: Level) (soldiers: Soldier array) =
+        // Triangle soup has no notion of "a solid", so thickness is recovered by
+        // pairing the nearest front face with the next back face along the ray.
+        // A front face with no matching exit — an open terrain surface — is
+        // treated as unpenetrable rather than infinitely thin.
         let surfaceHits =
-            LevelCompile.brushesAlongRay origin direction 200.0f level
-            |> Array.choose (fun item ->
-                MathEx.rayAabb origin direction item.Bounds
-                |> Option.map (fun struct (entry, exit, normal) -> SurfaceHit(entry, exit, normal, item)))
+            let ordered =
+                LevelCompile.trianglesAlongRay origin direction 200.0f level
+                |> Array.choose (fun triangle ->
+                    match MathEx.rayTriangle origin direction triangle.A triangle.B triangle.C with
+                    | ValueSome distance when distance <= 200.0f -> Some(struct (distance, triangle))
+                    | _ -> None)
+                |> Array.sortBy (fun struct (distance, _) -> distance)
+            let entry =
+                ordered |> Array.tryFind (fun struct (_, triangle) -> Vector3.Dot(triangle.Normal, direction) < 0.0f)
+            match entry with
+            | None -> [||]
+            | Some(struct (entryDistance, entryTriangle)) ->
+                let exitDistance =
+                    ordered
+                    |> Array.tryFind (fun struct (distance, triangle) ->
+                        distance > entryDistance + 0.0001f && Vector3.Dot(triangle.Normal, direction) > 0.0f)
+                    |> function
+                        | Some(struct (distance, _)) -> distance
+                        | None -> Single.PositiveInfinity
+                [| SurfaceHit(entryDistance, exitDistance, entryTriangle.Normal, entryTriangle.Material) |]
         let soldierHits =
             soldiers
             |> Array.mapi (fun index soldier ->
@@ -145,12 +165,12 @@ module Ballistics =
                     penetrations <- penetrations + 1
                     passedThrough <- Set.add index passedThrough
                 else tracing <- false
-            | Some(SurfaceHit(distance, exitDistance, normal, item)) when distance <= remainingRange ->
+            | Some(SurfaceHit(distance, exitDistance, normal, material)) when distance <= remainingRange ->
                 let impactPosition = currentOrigin + direction * distance
-                events.Add(Impact(impactPosition, normal, item.Material))
+                events.Add(Impact(impactPosition, normal, material))
                 let thicknessCentimetres = max 0.1f ((exitDistance - distance) * 100.0f)
-                let cost = thicknessCentimetres * materialResistance item.Material
-                if budget >= cost && exitDistance > distance then
+                let cost = thicknessCentimetres * materialResistance material
+                if budget >= cost && exitDistance > distance && Single.IsFinite exitDistance then
                     budget <- budget - cost
                     currentDamage <- currentDamage * 0.72f
                     let advance = exitDistance + 0.002f
@@ -170,8 +190,8 @@ module Ballistics =
         if distance < 0.0001f then true
         else
             let direction = offset / distance
-            LevelCompile.brushesAlongRay origin direction distance level
-            |> Array.forall (fun item ->
-                match MathEx.rayAabb origin direction item.Bounds with
-                | Some(struct (entry, _, _)) when entry < distance -> false
+            LevelCompile.trianglesAlongRay origin direction distance level
+            |> Array.forall (fun triangle ->
+                match MathEx.rayTriangle origin direction triangle.A triangle.B triangle.C with
+                | ValueSome entry when entry < distance -> false
                 | _ -> true)
