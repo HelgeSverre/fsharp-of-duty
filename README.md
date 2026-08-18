@@ -8,6 +8,8 @@ offline game and an authoritative multiplayer server.
 [![CI](https://github.com/HelgeSverre/fsharp-of-duty/actions/workflows/ci.yml/badge.svg)](https://github.com/HelgeSverre/fsharp-of-duty/actions/workflows/ci.yml)
 [![Release](https://github.com/HelgeSverre/fsharp-of-duty/actions/workflows/release.yml/badge.svg)](https://github.com/HelgeSverre/fsharp-of-duty/releases/latest)
 
+![Screenshot](screenshot.png)
+
 The project is a playable prototype rather than a finished commercial game. It
 is intentionally small, direct, and engine-free: Silk.NET provides the window,
 input, OpenGL, and OpenAL layers while ordinary F# records and discriminated
