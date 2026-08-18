@@ -110,8 +110,6 @@ td:first-child { color: var(--signal); font-family: var(--display); font-size: 1
 .feature-grid small { color: var(--olive); }
 .cta { margin-bottom: 110px; padding: 90px 30px; border-block: 1px solid var(--line); text-align: center; background: radial-gradient(circle, rgba(228,82,37,.2), transparent 60%); }
 .cta h2 { margin: 16px 0 36px; font-size: clamp(60px, 9vw, 116px); }
-.cta code { display: block; width: max-content; max-width: 100%; margin: 35px auto 0; padding: 10px 14px; color: var(--muted); border: 1px solid var(--line); overflow: auto; text-align: left; white-space: pre; cursor: copy; position: relative; }
-.cta code.copied::after { content: "COPIED"; position: absolute; inset: 0; display: grid; place-items: center; background: var(--ink); color: var(--signal); }
 .cta .fine-print { margin: 14px auto 0; text-align: center; }
 .site-footer { min-height: 120px; display: flex; justify-content: space-between; align-items: center; gap: 25px; color: var(--muted); border-top: 1px solid var(--line); font-size: 10px; text-transform: uppercase; letter-spacing: .1em; }
 
