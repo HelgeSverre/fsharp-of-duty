@@ -69,9 +69,7 @@ module Program =
             renderer |> Option.iter (fun value -> value.SetSettings settings)
         let createOfflineWorld map =
             match map with
-            | "stalingrad" -> Sim.createStalingradWorld 0x1A0B3CUL
             | "training" -> Sim.createTrainingWorld 0x1A0B3CUL
-            | "battlefield" -> Sim.createBattlefieldWorld 0x1A0B3CUL
             | "depot" -> Sim.createScrapDepotWorld 0x1A0B3CUL
             | "canal" -> Sim.createCanalYardWorld 0x1A0B3CUL
             | "omaha" -> Sim.createOmahaWorld 0x1A0B3CUL

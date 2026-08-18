@@ -21,6 +21,8 @@ type NetworkPlayer =
       Health: float32<hp>
       RegenIn: float32<s>
       Weapon: WeaponSlot
+      /// Loadout change requested mid-life; equipped on the next fresh spawn.
+      RequestedWeapon: WeaponClass option
       Grenade: GrenadeHand
       Connected: bool
       Ready: bool
