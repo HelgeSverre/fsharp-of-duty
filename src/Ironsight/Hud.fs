@@ -19,6 +19,11 @@ type HudInfo =
       HitMarker: float32
       HitMarkerLethal: bool
       Subtitle: string option
+      /// Whether the local player is holding a grenade ready to throw, which
+      /// drives the trajectory preview. Decided by the caller rather than read
+      /// from World.Player.Grenade: online the client never advances the hand
+      /// state, so the world would always report idle.
+      GrenadeCooking: bool
       Menu: StartMenuState option
       Settings: GameSettings
       SettingsScreen: SettingsUi.State option }

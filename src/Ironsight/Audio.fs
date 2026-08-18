@@ -64,7 +64,11 @@ type AudioSystem() =
             | ShotFired(_, position, _, weapon) ->
                 let automatic = weapon = "Thompson" || weapon = "MG42"
                 play (if automatic then smg else rifle) position 0.88f (0.97f + float32 sourceIndex * 0.004f)
-            | Explosion(position, _) -> play blast position 1.0f 1.0f
+            | Explosion(position, _) ->
+                play blast position 1.0f 1.0f
+                // A second, lower and quieter copy reads as the blast rolling off
+                // the surroundings rather than one flat pop.
+                play blast position 0.55f 0.62f
             | FootStep(position, _) -> play step position 0.38f 1.0f
             | Subtitle _ -> play radio Vector3.Zero 0.28f 1.0f
             | _ -> ()

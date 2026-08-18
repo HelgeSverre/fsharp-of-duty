@@ -20,6 +20,8 @@ type private EffectPuff =
       Velocity: Vector3
       Color: Vector4
       Size: float32
+      /// Pixels per second added to Size. Smoke billows, embers stay tight.
+      Growth: float32
       Gravity: float32
       Remaining: float32
       Lifetime: float32 }
@@ -27,6 +29,9 @@ type private EffectPuff =
 type Particles(gl: GL) =
     let mutable lines: EffectLine list = []
     let mutable puffs: EffectPuff list = []
+    /// Transient aiming geometry, replaced wholesale every frame rather than
+    /// aged like particles. Currently the grenade trajectory preview.
+    let mutable preview: Vector3 array = [||]
     let vao = gl.GenVertexArray()
     let buffer = gl.GenBuffer()
 
@@ -76,16 +81,22 @@ void main() {
     let addLine from' to' color lifetime =
         lines <- { From = from'; To = to'; Color = color; Remaining = lifetime; Lifetime = lifetime } :: lines
 
-    let addPuff position velocity color size lifetime gravity =
+    let addGrowingPuff position velocity color size lifetime gravity growth =
         puffs <-
             { Position = position
               Velocity = velocity
               Color = color
               Size = size
+              Growth = growth
               Gravity = gravity
               Remaining = lifetime
               Lifetime = lifetime }
             :: puffs
+
+    /// The long-standing default growth rate, kept for every effect that was
+    /// tuned against it.
+    let addPuff position velocity color size lifetime gravity =
+        addGrowingPuff position velocity color size lifetime gravity 12.0f
 
     do
         gl.Enable EnableCap.ProgramPointSize
@@ -154,21 +165,57 @@ void main() {
                     let color = if index % 2 = 0 then dark else light
                     addPuff position velocity color (22.0f + float32 (index % 3) * 6.0f) 0.85f -8.5f
             | Explosion(position, radius) ->
-                let size = min 1.8f (radius * 0.22f)
+                // Four layers, front to back in time: a shockwave star, a fast
+                // white-hot core, embers thrown outward under gravity, and a
+                // smoke column that outlives all of it.
+                let size = min 2.4f (radius * 0.3f)
                 for axis in [| Vector3.UnitX; Vector3.UnitY; Vector3.UnitZ |] do
-                    addLine (position - axis * size) (position + axis * size) (Vector4(1.0f, 0.34f, 0.05f, 0.95f)) 0.35f
-                for index in 0..15 do
+                    addLine (position - axis * size) (position + axis * size) (Vector4(1.0f, 0.52f, 0.12f, 0.95f)) 0.22f
+                    addLine (position - axis * size * 0.6f) (position + axis * size * 0.6f) (Vector4(1.0f, 0.90f, 0.55f, 0.9f)) 0.14f
+                // Fireball: bright, brief, and expanding hard so the first frames
+                // read as a flash rather than a cluster of dots.
+                for index in 0..9 do
                     let angle = float32 index * 2.39996f
-                    let rise = 0.35f + float32 (index % 5) * 0.16f
+                    let rise = 0.3f + float32 (index % 4) * 0.2f
                     let direction = Vector3(MathF.Cos angle, rise, MathF.Sin angle) |> MathEx.normalizedOrZero
-                    let color = if index < 5 then Vector4(1.0f, 0.30f, 0.04f, 0.84f) else Vector4(0.20f, 0.19f, 0.17f, 0.58f)
-                    addPuff position (direction * (1.4f + float32 (index % 4) * 0.35f)) color (26.0f + float32 (index % 4) * 8.0f) (if index < 5 then 0.38f else 1.15f) 0.28f
+                    let heat = if index % 3 = 0 then Vector4(1.0f, 0.86f, 0.52f, 0.92f) else Vector4(1.0f, 0.42f, 0.06f, 0.88f)
+                    addGrowingPuff position (direction * (2.2f + float32 (index % 4) * 0.6f)) heat (30.0f + float32 (index % 3) * 10.0f) (0.26f + float32 (index % 3) * 0.07f) 0.6f 130.0f
+                // Embers: small, fast, and falling, to give the blast a sense of
+                // throwing material rather than just glowing.
+                for index in 0..11 do
+                    let angle = float32 index * 2.39996f + 1.1f
+                    let rise = 0.55f + float32 (index % 5) * 0.3f
+                    let direction = Vector3(MathF.Cos angle, rise, MathF.Sin angle) |> MathEx.normalizedOrZero
+                    addGrowingPuff position (direction * (4.5f + float32 (index % 5) * 1.6f)) (Vector4(1.0f, 0.62f, 0.20f, 0.85f)) (7.0f + float32 (index % 3) * 3.0f) (0.5f + float32 (index % 4) * 0.18f) -6.5f 0.0f
+                // Smoke: slow, wide, and long-lived. This is the layer that makes
+                // a blast still visible a few seconds later.
+                for index in 0..23 do
+                    let angle = float32 index * 2.39996f + 0.5f
+                    let rise = 0.2f + float32 (index % 6) * 0.13f
+                    let direction = Vector3(MathF.Cos angle, rise, MathF.Sin angle) |> MathEx.normalizedOrZero
+                    let shade = 0.16f + float32 (index % 4) * 0.05f
+                    addGrowingPuff
+                        (position + direction * 0.3f)
+                        (direction * (0.9f + float32 (index % 4) * 0.45f))
+                        (Vector4(shade, shade * 0.96f, shade * 0.9f, 0.42f))
+                        (24.0f + float32 (index % 5) * 9.0f)
+                        (2.6f + float32 (index % 4) * 0.3f)
+                        0.42f
+                        26.0f
             | _ -> ()
         // A synchronized firefight can emit hundreds of cosmetic events in one
         // tick. Keep presentation bounded; simulation and hit results are not
         // affected by dropping the oldest tracers and smoke puffs.
         lines <- lines |> List.truncate 256
-        puffs <- puffs |> List.truncate 512
+        // Smoke lives for seconds rather than fractions of one, so the budget has
+        // to cover several overlapping blasts. The truncate keeps the newest, so
+        // too low a cap silently eats tracers and blood mid-firefight.
+        puffs <- puffs |> List.truncate 1024
+
+    /// Sets the grenade trajectory preview for this frame. Pass an empty array
+    /// to clear it. Drawn as points rather than a line strip because macOS core
+    /// profile clamps glLineWidth to 1.0, which would leave a hairline arc.
+    member _.SetPreview(points: Vector3 array) = preview <- points
 
     member _.Step(dt: float32) =
         lines <- lines |> List.choose (fun line -> let remaining = line.Remaining - dt in if remaining > 0.0f then Some { line with Remaining = remaining } else None)
@@ -179,10 +226,10 @@ void main() {
                 if remaining <= 0.0f then None
                 else
                     let velocity = puff.Velocity + Vector3(0.0f, puff.Gravity * dt, 0.0f)
-                    Some { puff with Position = puff.Position + velocity * dt; Velocity = velocity; Remaining = remaining; Size = puff.Size + dt * 12.0f })
+                    Some { puff with Position = puff.Position + velocity * dt; Velocity = velocity; Remaining = remaining; Size = puff.Size + dt * puff.Growth })
 
     member _.Render(viewProjection: Matrix4x4) =
-        if not lines.IsEmpty || not puffs.IsEmpty then
+        if not lines.IsEmpty || not puffs.IsEmpty || preview.Length > 0 then
             let lineData =
                 lines
                 |> List.collect (fun line ->
@@ -197,6 +244,17 @@ void main() {
                     let alpha = puff.Color.W * MathEx.clamp01 (puff.Remaining / puff.Lifetime)
                     [ puff.Position.X; puff.Position.Y; puff.Position.Z; puff.Color.X; puff.Color.Y; puff.Color.Z; alpha; puff.Size ])
                 |> List.toArray
+            // The arc tapers away from the hand and ends in a bright landing
+            // marker, so the eye is drawn to where the grenade actually stops.
+            let previewData =
+                preview
+                |> Array.mapi (fun index point ->
+                    let progress = if preview.Length < 2 then 1.0f else float32 index / float32 (preview.Length - 1)
+                    let landing = index = preview.Length - 1
+                    let color = if landing then Vector4(1.0f, 0.85f, 0.45f, 0.95f) else Vector4(0.95f, 0.72f, 0.30f, 0.30f + progress * 0.45f)
+                    let size = if landing then 22.0f else 4.0f + progress * 4.0f
+                    [| point.X; point.Y; point.Z; color.X; color.Y; color.Z; color.W; size |])
+                |> Array.concat
             let matrix =
                 [| viewProjection.M11; viewProjection.M12; viewProjection.M13; viewProjection.M14
                    viewProjection.M21; viewProjection.M22; viewProjection.M23; viewProjection.M24
@@ -215,12 +273,22 @@ void main() {
                 gl.Uniform1(gl.GetUniformLocation(program, "uPointPass"), 0)
                 gl.LineWidth 2.0f
                 gl.DrawArrays(PrimitiveType.Lines, 0, uint32 (lineData.Length / 8))
-            if puffData.Length > 0 then
+            if puffData.Length > 0 || previewData.Length > 0 then
                 gl.BlendFunc(BlendingFactor.SrcAlpha, BlendingFactor.OneMinusSrcAlpha)
-                use puffPointer = fixed puffData
-                gl.BufferData(BufferTargetARB.ArrayBuffer, unativeint (puffData.Length * sizeof<float32>), NativePtr.toVoidPtr puffPointer, BufferUsageARB.DynamicDraw)
                 gl.Uniform1(gl.GetUniformLocation(program, "uPointPass"), 1)
-                gl.DrawArrays(PrimitiveType.Points, 0, uint32 (puffData.Length / 8))
+                // Overlapping soft particles must not write depth, or each puff
+                // punches a hole in the ones drawn after it. Barely visible with
+                // brief sparks; obvious once smoke is large and long-lived.
+                gl.DepthMask false
+                if puffData.Length > 0 then
+                    use puffPointer = fixed puffData
+                    gl.BufferData(BufferTargetARB.ArrayBuffer, unativeint (puffData.Length * sizeof<float32>), NativePtr.toVoidPtr puffPointer, BufferUsageARB.DynamicDraw)
+                    gl.DrawArrays(PrimitiveType.Points, 0, uint32 (puffData.Length / 8))
+                if previewData.Length > 0 then
+                    use previewPointer = fixed previewData
+                    gl.BufferData(BufferTargetARB.ArrayBuffer, unativeint (previewData.Length * sizeof<float32>), NativePtr.toVoidPtr previewPointer, BufferUsageARB.DynamicDraw)
+                    gl.DrawArrays(PrimitiveType.Points, 0, uint32 (previewData.Length / 8))
+                gl.DepthMask true
             gl.Disable EnableCap.Blend
             gl.BindVertexArray 0u
 

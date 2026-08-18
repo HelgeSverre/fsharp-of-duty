@@ -321,6 +321,13 @@ type Renderer(gl: GL) =
                 gl.BindVertexArray soldierVao
                 gl.DrawElements(PrimitiveType.Triangles, soldierIndexCount, DrawElementsType.UnsignedInt, noOffset)
             gl.BindVertexArray 0u
+            // Re-predicted every frame so the arc tracks the crosshair. Two
+            // seconds of ticks covers any throw the player can make before the
+            // grenade settles.
+            particles.SetPreview(
+                if hudInfo.GrenadeCooking && world.Player.Health > Units.health 0.0f then
+                    Grenades.predictPath world.Level (Tuning.TickRate * 2) world.Player
+                else [||])
             particles.Render viewProjection
             let activeClass = world.Player.Slots[world.Player.Active].Class
             let weaponName = activeClass.Name

@@ -21,6 +21,18 @@ module Grenades =
             Some(Units.health (110.0f * (1.0f - distance / BlastRadius) ** 1.5f))
         else None
 
+    /// The grenade a player would release right now. Shared by the throw itself
+    /// and the aiming preview so the two can never disagree about where a
+    /// grenade goes.
+    let throwFrom (fuse: float32<s>) (player: Player) =
+        let direction = throwDirection player
+        { Owner = player.Id
+          Position = player.Position + Vector3(0.0f, 1.45f, 0.0f) + direction * 0.35f
+          // Horizontal launch speed sets the range; the vertical component
+          // stays put so the arc height (and flight time) is unchanged.
+          Velocity = direction * 18.0f + Vector3.UnitY * 4.5f + player.Velocity * 0.35f
+          Fuse = fuse }
+
     let stepHand dt held (player: Player) =
         match player.Grenade, held with
         | GrenadeIdle count, true when count > 0 -> { player with Grenade = Cooking(Units.seconds 4.0f, count) }, None
@@ -31,15 +43,7 @@ module Grenades =
                 Some { Owner = player.Id; Position = player.Position + Vector3(0.0f, 1.4f, 0.0f); Velocity = Vector3.Zero; Fuse = Units.seconds 0.0f }
             else { player with Grenade = Cooking(nextFuse, count) }, None
         | Cooking(fuse, count), false ->
-            let direction = throwDirection player
-            let grenade =
-                { Owner = player.Id
-                  Position = player.Position + Vector3(0.0f, 1.45f, 0.0f) + direction * 0.35f
-                  // Horizontal launch speed sets the range; the vertical component
-                  // stays put so the arc height (and flight time) is unchanged.
-                  Velocity = direction * 18.0f + Vector3.UnitY * 4.5f + player.Velocity * 0.35f
-                  Fuse = fuse }
-            { player with Grenade = GrenadeIdle(count - 1) }, Some grenade
+            { player with Grenade = GrenadeIdle(count - 1) }, Some(throwFrom fuse player)
         | _ -> player, None
 
     let private collisionNormal (point: Vector3) (bounds: Aabb) =
@@ -84,6 +88,32 @@ module Grenades =
     let stepProjectiles dt level grenades =
         let active, exploded = stepProjectilesOwned dt level grenades
         active, exploded |> Array.map (fun struct (_, position) -> position)
+
+    /// Where a grenade thrown right now would travel, as successive tick
+    /// positions. Runs the real projectile integrator rather than re-deriving
+    /// the ballistics, so bounces match and the preview cannot drift from the
+    /// simulation when the tuning changes.
+    /// ponytail: fixed tick horizon rather than simulating to rest; raise
+    /// `steps` if long lobs ever need a longer preview.
+    let predictPath (level: Level) (steps: int) (player: Player) =
+        let points = ResizeArray<Vector3>()
+        // A fuse far longer than the horizon keeps the preview from detonating
+        // mid-flight, which would truncate the path for no visible reason.
+        let mutable active = [| throwFrom (Units.seconds 600.0f) player |]
+        let mutable step = 0
+        let mutable resting = false
+        while step < steps && not resting && active.Length > 0 do
+            let next, _ = stepProjectilesOwned Tuning.TickDuration level active
+            active <- next
+            if next.Length > 0 then
+                let grenade = next[0]
+                points.Add grenade.Position
+                // Once it has settled on the ground the rest of the horizon is
+                // just the same point repeated, so stop and let the last entry
+                // stand as the landing spot.
+                if grenade.Velocity.Length() < 0.6f && grenade.Position.Y <= 0.12f then resting <- true
+            step <- step + 1
+        points.ToArray()
 
     let applyExplosions (level: Level) (positions: Vector3 array) (soldiers: Soldier array) =
         let mutable updated = Array.copy soldiers

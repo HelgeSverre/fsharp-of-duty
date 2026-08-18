@@ -52,6 +52,8 @@ module Program =
         let mutable onlineSnapshot: OnlineSnapshot option = None
         let mutable predictedFireCooldown = 0.0f
         let mutable predictedFireHeld = false
+        // Sampled during update, read when the HUD info is built for render.
+        let mutable grenadeButtonHeld = false
         let mutable subtitle: struct (string * float32<s>) option = None
         let mutable damageDirection: struct (System.Numerics.Vector3 * float32<s>) option = None
         let mutable hitMarkerRemaining = Units.seconds 0.0f
@@ -222,6 +224,7 @@ module Program =
                     | None ->
                         if inputSampler.ConsumeEscape() then returnToMenu inputSampler
                         let inputFrame = inputSampler.Sample()
+                        grenadeButtonHeld <- inputFrame.Buttons.HasFlag InputButtons.Grenade
                         previous <- current
                         match onlineClient with
                         | Some client when client.Connected ->
@@ -360,6 +363,13 @@ module Program =
                   HitMarker = MathEx.clamp01 (hitMarkerRemaining / hitMarkerDuration hitMarkerLethal)
                   HitMarkerLethal = hitMarkerLethal
                   Subtitle = subtitleText
+                  GrenadeCooking =
+                    (match current.Player.Grenade with Cooking _ -> true | _ -> false)
+                    // Online the hand state is never advanced locally, so fall back
+                    // to the button. Sprinting is excluded to match the rule the
+                    // simulation uses, otherwise the arc promises a throw that
+                    // never happens.
+                    || (onlineClient.IsSome && grenadeButtonHeld && not current.Player.Sprinting && current.Player.Health > Units.health 0.0f)
                   Menu = if settingsScreen.IsSome then None else menu
                   Settings = settings
                   SettingsScreen = settingsScreen }

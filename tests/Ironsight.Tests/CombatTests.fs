@@ -188,3 +188,36 @@ module CombatTests =
         let updated, events = Grenades.applyExplosions openLevel [| grenade.Position |] [| closeTarget |]
         Assert.True(updated[0].Health < Units.health 100.0f)
         Assert.Contains(events, function Explosion(_, radius) when radius = 6.0f -> true | _ -> false)
+
+    [<Fact>]
+    let ``the previewed grenade path matches where the simulation actually throws it`` () =
+        // The aiming preview is only useful if it is the same ballistics the sim
+        // runs. Aim into a wall so the comparison covers a bounce, not just a
+        // free-flight parabola.
+        let level =
+            LevelDsl.level "Bounce" [ LevelDsl.street 30.0f 10.0f Mud; LevelDsl.block (Vector3(0.0f, 1.5f, -8.0f)) (Vector3(8.0f, 3.0f, 0.6f)) Brick ]
+            |> LevelCompile.compile
+        let world = Sim.createTrainingWorld 7UL
+        let player = { world.Player with Position = Vector3(0.0f, 0.0f, 0.0f); Yaw = 0.0f; Pitch = 0.1f; Velocity = Vector3(1.0f, 0.0f, -2.0f) }
+        let steps = 120
+        let predicted = Grenades.predictPath level steps player
+
+        let _, thrown = Grenades.stepHand Tuning.TickDuration false { player with Grenade = Cooking(Units.seconds 4.0f, 3) }
+        let simulated =
+            let positions = ResizeArray<Vector3>()
+            let mutable active = [| thrown.Value |]
+            for _ in 1..steps do
+                let next, _ = Grenades.stepProjectilesOwned Tuning.TickDuration level active
+                active <- next
+                if next.Length > 0 then positions.Add next[0].Position
+            positions
+
+        Assert.NotEmpty predicted
+        // The preview stops once the grenade settles, so it is a prefix of the run.
+        Assert.True(predicted.Length <= simulated.Count)
+        for index in 0 .. predicted.Length - 1 do
+            Assert.Equal(simulated[index], predicted[index])
+        // A pure parabola only ever travels further along -Z; the path must turn
+        // back on itself somewhere, which only a bounce can do.
+        let reverses = Seq.pairwise predicted |> Seq.exists (fun (before, after) -> after.Z > before.Z + 0.01f)
+        Assert.True(reverses, "the predicted path never bounced back off the wall")
