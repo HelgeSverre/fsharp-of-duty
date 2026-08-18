@@ -5,27 +5,29 @@ open System.Numerics
 open Ironsight
 
 /// Shared geometry for the start-menu panel, used both to draw it (Hud) and
-/// to hit-test mouse hover against it (here). The two offsets below are not
-/// currently equal (106 vs 99), which is a pre-existing few-pixel mismatch
-/// between the drawn rows and the hover hitbox; kept as-is rather than
-/// "fixed" as part of a behavior-preserving refactor.
+/// to hit-test mouse hover against it (here). A row is a RowHeight-tall slot
+/// measured from FirstRowTop; the highlight bar, the text, and the hover
+/// hitbox all derive from the same slot so they can never drift apart.
 [<RequireQualifiedAccess>]
 module MenuLayout =
     let RowHeight = 54.0f
     let panelWidth (width: int) = min 840.0f (float32 width - 48.0f)
     let panelHeight (rowCount: int) = 156.0f + RowHeight * float32 rowCount
-    /// Offset from panel-vertical-center to the first row's y, as used when
-    /// hit-testing mouse hover in hoveredIndex below.
-    let HitTestFirstRowOffset = 99.0f
-    /// Offset from panel-vertical-center to the first row's y, as used when
-    /// drawing the menu in Hud.fs.
-    let DrawFirstRowOffset = 106.0f
+    /// Top of the first row slot, measured from the panel top.
+    let FirstRowTop = 99.0f
+    /// Text y that vertically centers a glyph line of `scale` (12 logical
+    /// pixels tall at scale 1) in a row slot, so cells drawn at different
+    /// scales share the slot's midline.
+    let rowTextY (slotTop: float32) (slotHeight: float32) (scale: float32) =
+        slotTop + (slotHeight - 12.0f * scale) * 0.5f
 
 type MenuPage = Main | NameEntry | OfflineMaps | ServerList | OnlineLoadout
 
 type StartMenuState =
     { Page: MenuPage
       Selected: int
+      /// First row of the scroll window when a page has more rows than fit.
+      FirstVisible: int
       PlayerName: string
       /// Room chosen on the server list; the mode sent in the online hello.
       OnlineMode: GameMode
@@ -78,6 +80,7 @@ module StartMenu =
         let sanitized = Multiplayer.sanitizeName playerName
         { Page = Main
           Selected = 0
+          FirstVisible = 0
           PlayerName = if System.String.IsNullOrWhiteSpace sanitized then "Soldier" else sanitized
           OnlineMode = TeamDeathmatch
           OnlineServer = Uri ServerDirectory.DefaultServer
@@ -91,23 +94,38 @@ module StartMenu =
         | NameEntry -> [| $"> {state.PlayerName}_" |]
         | OfflineMaps -> [| "PAINTBALL KILLHOUSE"; "SCRAP DEPOT"; "CANAL YARD"; "OMAHA DRAW"; "BACK" |]
         | ServerList ->
-            // Half-Life-style table: one row per room, the server as a column.
+            // Half-Life-style table: one row per room. The labels here only
+            // drive selection count and keyboard flow; the HUD draws server
+            // rows from serverCells below.
             match state.ServerRows with
-            | Some rows ->
-                let formatted =
-                    rows
-                    |> Array.map (fun row ->
-                        let host =
-                            let value = row.Server.Url.Host
-                            if value.Length > 26 then value.Substring(0, 26) else value
-                        if row.Online then
-                            let mode = if row.Mode = FreeForAll then "FREE FOR ALL" else "TEAM DEATHMATCH"
-                            sprintf "%-26s  %-15s  %5s  %-7s  %4dMS" host mode $"{row.Players}/{row.Capacity}" (row.Phase.ToUpperInvariant()) row.PingMs
-                        else sprintf "%-26s  OFFLINE" host)
-                Array.append formatted [| "BACK" |]
+            | Some rows -> Array.append (rows |> Array.map (fun row -> row.Server.Url.Host.ToUpperInvariant())) [| "BACK" |]
             | None -> [| "CONTACTING SERVERS..."; "BACK" |]
         | OnlineLoadout ->
             Array.append (Tuning.onlineWeapons |> Array.map (fun weapon -> weapon.Name.ToUpperInvariant())) [| "BACK" |]
+
+    /// Column x-offsets from the row's left edge, shared by the header and rows.
+    let serverColumns = [| 0.0f, "SERVER"; 300.0f, "MODE"; 500.0f, "PLAYERS"; 590.0f, "PHASE"; 700.0f, "PING" |]
+
+    /// Server-table rows as (xOffset, text) cells drawn at fixed columns by
+    /// the HUD; None on pages that draw plain labels. The trailing BACK row is
+    /// not included — the HUD falls back to its label.
+    let serverCells state =
+        match state.Page, state.ServerRows with
+        | ServerList, Some rows ->
+            rows
+            |> Array.map (fun row ->
+                let host =
+                    let value = row.Server.Url.Host
+                    if value.Length > 26 then value.Substring(0, 26) else value
+                if row.Online then
+                    [| 0.0f, host
+                       300.0f, (if row.Mode = FreeForAll then "FREE FOR ALL" else "TEAM DEATHMATCH")
+                       500.0f, $"{row.Players}/{row.Capacity}"
+                       590.0f, row.Phase.ToUpperInvariant()
+                       700.0f, $"{row.PingMs}MS" |]
+                else [| 0.0f, host; 300.0f, "OFFLINE" |])
+            |> Some
+        | _ -> None
 
     let subtitle state =
         match state.Page with
@@ -118,15 +136,29 @@ module StartMenu =
             match state.ServerRows with
             | Some rows ->
                 let servers = rows |> Array.distinctBy (fun row -> row.Server.Url) |> Array.length
-                $"SERVER  /  MODE  /  PLAYERS  /  PHASE  /  PING   -   {servers} SERVERS"
+                $"{servers} SERVERS"
             | None -> "SERVER LIST"
         | OnlineLoadout -> "SELECT ONLINE LOADOUT"
+
+    /// Rows that fit before the panel scrolls; a settings-style window keeps
+    /// the selected row in view (SettingsUi.scroll is the same shape).
+    let MaxVisibleRows = 10
+
+    let private scrollOffset total selected firstVisible =
+        if total <= MaxVisibleRows then 0
+        else Math.Clamp(Math.Clamp(firstVisible, selected - MaxVisibleRows + 1, selected), 0, total - MaxVisibleRows)
+
+    /// First visible row index and visible row count for the current page,
+    /// clamped on the fly so the HUD can never draw a stale window.
+    let visibleRange state =
+        let total = (items state).Length
+        scrollOffset total state.Selected state.FirstVisible, min MaxVisibleRows total
 
     let private hoveredIndex (width: int) (height: int) (count: int) (pointer: Vector2) =
         let rowHeight = MenuLayout.RowHeight
         let panelWidth = MenuLayout.panelWidth width
         let left = float32 width * 0.5f - panelWidth * 0.5f
-        let top = float32 height * 0.5f - MenuLayout.panelHeight count * 0.5f + MenuLayout.HitTestFirstRowOffset
+        let top = float32 height * 0.5f - MenuLayout.panelHeight count * 0.5f + MenuLayout.FirstRowTop
         if pointer.X >= left + 18.0f && pointer.X <= left + panelWidth - 18.0f && pointer.Y >= top && pointer.Y < top + rowHeight * float32 count then
             Some(int ((pointer.Y - top) / rowHeight))
         else None
@@ -143,14 +175,19 @@ module StartMenu =
                 |> Seq.fold (fun name character -> if name.Length < 24 then name + string character else name) afterBackspace
         let state = { state with PlayerName = editedName }
         let options = items state
-        let fromPointer = input.Pointer |> Option.bind (hoveredIndex width height options.Length)
+        // Hover hits the drawn window, so a hit maps back through FirstVisible.
+        let firstVisible, visibleCount = visibleRange state
+        let fromPointer =
+            input.Pointer
+            |> Option.bind (hoveredIndex width height visibleCount)
+            |> Option.map (fun slot -> min (firstVisible + slot) (options.Length - 1))
         let selected =
             match fromPointer with
             | Some index -> index
             | None when input.Up -> (state.Selected + options.Length - 1) % options.Length
             | None when input.Down -> (state.Selected + 1) % options.Length
             | None -> min state.Selected (options.Length - 1)
-        let next = { state with Selected = selected }
+        let next = { state with Selected = selected; FirstVisible = scrollOffset options.Length selected firstVisible }
         let activate = input.Activate || (input.Clicked && fromPointer.IsSome)
         if input.Back then
             match state.Page with

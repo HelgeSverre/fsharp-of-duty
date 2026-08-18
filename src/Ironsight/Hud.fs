@@ -68,13 +68,13 @@ type Hud(gl: GL) =
         addVertex x (y + height) u0 v1 color
 
     let solid x y width height color =
-        let u = 0.5f / float32 font.Width
-        let v = 0.5f / float32 font.Height
+        let u = (float32 font.Width - 0.5f) / float32 font.Width
+        let v = (float32 font.Height - 0.5f) / float32 font.Height
         addQuad x y width height u v u v color
 
     let gradientQuad x y width height (topLeft: Vector4) (topRight: Vector4) (bottomRight: Vector4) (bottomLeft: Vector4) =
-        let u = 0.5f / float32 font.Width
-        let v = 0.5f / float32 font.Height
+        let u = (float32 font.Width - 0.5f) / float32 font.Width
+        let v = (float32 font.Height - 0.5f) / float32 font.Height
         addVertex x y u v topLeft
         addVertex (x + width) y u v topRight
         addVertex (x + width) (y + height) u v bottomRight
@@ -95,6 +95,11 @@ type Hud(gl: GL) =
             let v1 = float32 ((row + 1) * font.CellHeight) / float32 font.Height
             addQuad cursor y (logicalWidth * scale) (logicalHeight * scale) u0 v0 u1 v1 color
             cursor <- cursor + logicalWidth * scale
+
+    /// Monospace advance: every glyph is 8 logical pixels wide at scale 1.
+    let textWidth scale (text: string) = 8.0f * scale * float32 text.Length
+    let addTextCentered centerX y scale color text = addText (centerX - textWidth scale text * 0.5f) y scale color text
+    let addTextRight rightX y scale color text = addText (rightX - textWidth scale text) y scale color text
 
     do
         gl.BindVertexArray vao
@@ -130,7 +135,7 @@ type Hud(gl: GL) =
             solid (left + 18.0f) barTop (panelWidth - 36.0f) barHeight (Vector4(0.47f, 0.17f, 0.07f, 0.88f))
             solid (left + 18.0f) barTop 5.0f barHeight (Vector4(1.0f, 0.74f, 0.30f, 1.0f))
         let panelPrompt (panelTop: float32) (panelHeight: float32) (text: string) =
-            addText (centerX - float32 text.Length * 3.6f) (panelTop + panelHeight - 30.0f) 0.9f (Vector4(0.64f, 0.67f, 0.61f, 1.0f)) text
+            addTextCentered centerX (panelTop + panelHeight - 30.0f) 0.9f (Vector4(0.64f, 0.67f, 0.61f, 1.0f)) text
         let weapon = world.Player.Slots[world.Player.Active]
         let scoped = weapon.Class.Kind = SniperRifle && world.Player.Ads >= 0.72f
         if scoped then
@@ -193,7 +198,7 @@ type Hud(gl: GL) =
         addText (weaponPanelX + 14.0f) (weaponPanelY + 10.0f) 1.0f label weaponName
         let magText = $"{weapon.InMag}"
         addText (weaponPanelX + 14.0f) (weaponPanelY + 28.0f) 2.2f white magText
-        addText (weaponPanelX + 18.0f + float32 magText.Length * 17.6f) (weaponPanelY + 40.0f) 1.1f label $"/ {weapon.Reserve}"
+        addText (weaponPanelX + 18.0f + textWidth 2.2f magText) (weaponPanelY + 40.0f) 1.1f label $"/ {weapon.Reserve}"
         let grenadeCount = match world.Player.Grenade with GrenadeIdle count -> count | Cooking(_, count) -> count
         addText (weaponPanelX + weaponPanelWidth - 74.0f) (weaponPanelY + 40.0f) 1.1f label $"GREN {grenadeCount}"
         // Half-Life-style category list, shown briefly after switch activity.
@@ -207,8 +212,8 @@ type Hud(gl: GL) =
                 let extras = if members.Length > 1 then " " + String.replicate (members.Length - 1) "." else ""
                 let row = $"{category + 1}  {world.Player.Slots[shown].Class.Name.ToUpperInvariant()}{extras}"
                 let y = float32 height - 224.0f + float32 category * 20.0f
-                let x = float32 width - float32 row.Length * 8.0f - 28.0f
-                solid (x - 6.0f) (y - 3.0f) (float32 row.Length * 8.0f + 12.0f) 18.0f (Vector4(0.0f, 0.0f, 0.0f, if active then 0.55f else 0.34f))
+                let x = float32 width - textWidth 1.0f row - 28.0f
+                solid (x - 6.0f) (y - 3.0f) (textWidth 1.0f row + 12.0f) 18.0f (Vector4(0.0f, 0.0f, 0.0f, if active then 0.55f else 0.34f))
                 addText x y 1.0f (if active then highlight else dim) row)
         match weapon.State with
         | Reloading remaining ->
@@ -220,7 +225,7 @@ type Hud(gl: GL) =
             solid (barLeft - 2.0f) (barTop - 2.0f) (barWidth + 4.0f) 12.0f (Vector4(0.0f, 0.0f, 0.0f, 0.72f))
             solid barLeft barTop barWidth 8.0f (Vector4(0.16f, 0.18f, 0.16f, 0.92f))
             solid barLeft barTop (barWidth * progress) 8.0f (Vector4(0.92f, 0.55f, 0.14f, 1.0f))
-            addText (barLeft - float32 reloadText.Length * 8.0f - 14.0f) (barTop - 3.0f) 1.0f white reloadText
+            addTextRight (barLeft - 14.0f) (barTop - 3.0f) 1.0f white reloadText
         | _ -> ()
         // ---- Bottom-left health panel with a color-shifting bar ----
         let healthPanelWidth, healthPanelHeight = 196.0f, 48.0f
@@ -230,7 +235,7 @@ type Hud(gl: GL) =
         let healthRatio = MathEx.clamp01 (Units.raw world.Player.Health / 100.0f)
         let healthFill = Vector4(0.85f - 0.42f * healthRatio, 0.16f + 0.52f * healthRatio, 0.12f + 0.20f * healthRatio, 0.95f)
         addText (healthPanelX + 14.0f) (healthPanelY + 10.0f) 1.0f label "HEALTH"
-        addText (healthPanelX + healthPanelWidth - 14.0f - float32 ($"{int (Units.raw world.Player.Health)}").Length * 11.2f) (healthPanelY + 8.0f) 1.4f white $"{int (Units.raw world.Player.Health)}"
+        addTextRight (healthPanelX + healthPanelWidth - 14.0f) (healthPanelY + 8.0f) 1.4f white $"{int (Units.raw world.Player.Health)}"
         solid (healthPanelX + 14.0f) (healthPanelY + 30.0f) (healthPanelWidth - 28.0f) 9.0f (Vector4(0.10f, 0.12f, 0.10f, 0.9f))
         solid (healthPanelX + 14.0f) (healthPanelY + 30.0f) ((healthPanelWidth - 28.0f) * healthRatio) 9.0f healthFill
         if info.DebugView then
@@ -240,15 +245,15 @@ type Hud(gl: GL) =
         let direction = directions[(int (MathF.Round(heading / 45.0f))) % directions.Length]
         let compass = sprintf "%s  %03d" direction (int heading)
         let compassY = if info.Online.IsSome || world.Round.IsSome then 48.0f else 8.0f
-        addText (centerX - float32 compass.Length * 4.0f) compassY 0.9f white compass
+        addTextCentered centerX compassY 0.9f white compass
         if info.Online.IsNone then
             match world.Round with
             | Some round ->
                 let score = $"YOU {round.PlayerScore}   BOTS {round.EnemyScore}   ROUND {round.Number}"
                 solid (centerX - 162.0f) 10.0f 324.0f 29.0f (Vector4(0.0f, 0.0f, 0.0f, 0.42f))
-                addText (centerX - float32 score.Length * 5.0f) 18.0f 1.25f white score
+                addTextCentered centerX 18.0f 1.25f white score
                 round.LastResult
-                |> Option.iter (fun result -> addText (centerX - float32 result.Length * 8.0f) 70.0f 2.0f white result)
+                |> Option.iter (fun result -> addTextCentered centerX 70.0f 2.0f white result)
             | None ->
                 world.Objectives
                 |> Array.tryFind (fun objective -> not objective.Done)
@@ -264,7 +269,7 @@ type Hud(gl: GL) =
                     let leading = leader |> Option.map (fun player -> $"LEADER {player.Name} {player.Kills}") |> Option.defaultValue "LEADER --"
                     $"{own}   {online.Phase}   {leading}"
                 | _ -> $"ALLIES {online.AlliesScore}   {online.Phase}   AXIS {online.AxisScore}"
-            addText (centerX - float32 score.Length * 5.0f) 22.0f 1.25f white score
+            addTextCentered centerX 22.0f 1.25f white score
         | None when world.Script.Ended -> addText (centerX - 110.0f) 70.0f 1.6f white "MISSION COMPLETE"
         | None -> ()
         match info.Online with
@@ -299,7 +304,7 @@ type Hud(gl: GL) =
         info.Subtitle
         |> Option.iter (fun subtitle ->
             solid 0.0f (float32 height - 118.0f) (float32 width) 46.0f (Vector4(0.0f,0.0f,0.0f,0.55f))
-            addText (centerX - float32 subtitle.Length * 5.0f) (float32 height - 106.0f) 1.25f white subtitle)
+            addTextCentered centerX (float32 height - 106.0f) 1.25f white subtitle)
         let hurt = MathEx.clamp01 (1.0f - Units.raw world.Player.Health / 100.0f)
         if hurt > 0.01f then
             let blood = Settings.bloodRgb info.Settings.BloodColor
@@ -322,7 +327,7 @@ type Hud(gl: GL) =
             solid (centerX - 250.0f) (centerY - 45.0f) 500.0f 90.0f (Vector4(0.0f, 0.0f, 0.0f, 0.72f))
             addText (centerX - 92.0f) (centerY - 24.0f) 1.6f white "YOU WERE KILLED"
             let restart = if world.Round.IsSome then "NEXT ROUND..." else "PRESS R TO RESTART"
-            addText (centerX - float32 restart.Length * 5.0f) (centerY + 10.0f) 1.0f white restart
+            addTextCentered centerX (centerY + 10.0f) 1.0f white restart
         info.LoadoutScreen
         |> Option.iter (fun selected ->
             let weapons = Tuning.onlineWeapons
@@ -332,47 +337,64 @@ type Hud(gl: GL) =
             let panelLeft, panelTop = overlayPanel false accent.W panelWidth panelHeight
             addText (panelLeft + 26.0f) (panelTop + 20.0f) 2.0f white "LOADOUT"
             let hint = if info.Online.IsSome then "ARMS ON YOUR NEXT SPAWN" else "SWAPS IMMEDIATELY"
-            addText (panelLeft + panelWidth - 26.0f - float32 hint.Length * 8.0f) (panelTop + 30.0f) 1.0f label hint
+            addTextRight (panelLeft + panelWidth - 26.0f) (panelTop + 30.0f) 1.0f label hint
             addText (panelLeft + 40.0f) (panelTop + 62.0f) 0.95f label "WEAPON"
             addText (panelLeft + 320.0f) (panelTop + 62.0f) 0.95f label "DMG"
             addText (panelLeft + 400.0f) (panelTop + 62.0f) 0.95f label "RPM"
             addText (panelLeft + 480.0f) (panelTop + 62.0f) 0.95f label "MAG"
             weapons
             |> Array.iteri (fun index weaponClass ->
-                let y = panelTop + 88.0f + float32 index * rowHeight
+                let slotTop = panelTop + 82.0f + float32 index * rowHeight
+                let nameY = MenuLayout.rowTextY slotTop rowHeight 1.15f
+                let statY = MenuLayout.rowTextY slotTop rowHeight 1.0f
                 let isSelected = index = selected
                 let isCurrent = weaponClass.Name = weapon.Class.Name
-                if isSelected then rowHighlight panelLeft panelWidth (y - 6.0f) 26.0f
+                if isSelected then rowHighlight panelLeft panelWidth (slotTop + 2.0f) (rowHeight - 4.0f)
                 let color =
                     if isSelected then Vector4(1.0f, 0.91f, 0.64f, 1.0f)
                     elif isCurrent then Vector4(1.0f, 0.86f, 0.30f, 0.95f)
                     else white
-                addText (panelLeft + 40.0f) y 1.15f color (weaponClass.Name.ToUpperInvariant())
+                addText (panelLeft + 40.0f) nameY 1.15f color (weaponClass.Name.ToUpperInvariant())
                 let pellets = if weaponClass.Pellets > 1 then $"x{weaponClass.Pellets}" else ""
-                addText (panelLeft + 320.0f) y 1.0f color $"{int (Units.raw weaponClass.Damage)}{pellets}"
-                addText (panelLeft + 400.0f) y 1.0f color $"{int weaponClass.RoundsPerMin}"
-                addText (panelLeft + 480.0f) y 1.0f color $"{weaponClass.MagSize}"
-                if isCurrent then addText (panelLeft + 540.0f) y 1.0f color "<")
+                addText (panelLeft + 320.0f) statY 1.0f color $"{int (Units.raw weaponClass.Damage)}{pellets}"
+                addText (panelLeft + 400.0f) statY 1.0f color $"{int weaponClass.RoundsPerMin}"
+                addText (panelLeft + 480.0f) statY 1.0f color $"{weaponClass.MagSize}"
+                if isCurrent then addText (panelLeft + 540.0f) statY 1.0f color "<")
             panelPrompt panelTop panelHeight "UP/DOWN SELECT   ENTER EQUIP   ESC CLOSE")
         info.Menu
         |> Option.iter (fun menu ->
             let options = StartMenu.items menu
+            let firstVisible, visibleCount = StartMenu.visibleRange menu
             let rowHeight = MenuLayout.RowHeight
             let panelWidth = MenuLayout.panelWidth width
-            let panelHeight = MenuLayout.panelHeight options.Length
+            let panelHeight = MenuLayout.panelHeight visibleCount
             let panelLeft, panelTop = overlayPanel true 1.0f panelWidth panelHeight
-            let title = "IRONSIGHT"
-            addText (centerX - float32 title.Length * 12.0f) (panelTop + 24.0f) 3.0f white title
-            let subtitle = StartMenu.subtitle menu
-            addText (centerX - float32 subtitle.Length * 5.0f) (panelTop + 68.0f) 1.0f (Vector4(0.68f, 0.72f, 0.67f, 1.0f)) subtitle
-            let firstRow = panelTop + MenuLayout.DrawFirstRowOffset
-            options
-            |> Array.iteri (fun index label ->
-                let y = firstRow + float32 index * rowHeight
+            addTextCentered centerX (panelTop + 24.0f) 3.0f white "IRONSIGHT"
+            let subtitleColor = Vector4(0.68f, 0.72f, 0.67f, 1.0f)
+            let cells = StartMenu.serverCells menu
+            match cells with
+            | Some _ ->
+                // The server table gets column headers aligned with the rows;
+                // the room count sits where the subtitle would be.
+                for offset, label in StartMenu.serverColumns do
+                    addText (panelLeft + 42.0f + offset) (panelTop + 68.0f) 1.0f subtitleColor label
+                addTextRight (panelLeft + panelWidth - 42.0f) (panelTop + 68.0f) 1.0f subtitleColor (StartMenu.subtitle menu)
+            | None -> addTextCentered centerX (panelTop + 68.0f) 1.0f subtitleColor (StartMenu.subtitle menu)
+            if options.Length > visibleCount then
+                addTextRight (panelLeft + panelWidth - 42.0f) (panelTop + 46.0f) 0.9f subtitleColor
+                    $"{firstVisible + 1}-{firstVisible + visibleCount} OF {options.Length}"
+            for slot in 0 .. visibleCount - 1 do
+                let index = firstVisible + slot
+                let slotTop = panelTop + MenuLayout.FirstRowTop + float32 slot * rowHeight
+                let y = MenuLayout.rowTextY slotTop rowHeight 1.3f
                 let selected = index = menu.Selected
-                if selected then rowHighlight panelLeft panelWidth (y - 7.0f) 39.0f
+                if selected then rowHighlight panelLeft panelWidth (slotTop + 6.0f) (rowHeight - 12.0f)
                 let color = if selected then Vector4(1.0f, 0.91f, 0.64f, 1.0f) else white
-                addText (panelLeft + 42.0f) y 1.3f color label)
+                match cells with
+                | Some rows when index < rows.Length ->
+                    for offset, text in rows[index] do
+                        addText (panelLeft + 42.0f + offset) y 1.3f color text
+                | _ -> addText (panelLeft + 42.0f) y 1.3f color options[index]
             panelPrompt panelTop panelHeight "UP/DOWN OR MOUSE   ENTER/CLICK TO SELECT   ESC TO BACK")
         info.SettingsScreen
         |> Option.iter (fun screen ->
@@ -382,11 +404,12 @@ type Hud(gl: GL) =
             let panelHeight = 150.0f + rowHeight * float32 rows.Length
             let panelLeft, panelTop = overlayPanel true 1.0f panelWidth panelHeight
             let title = "SETTINGS"
-            addText (centerX - float32 title.Length * 12.0f) (panelTop + 26.0f) 2.4f white title
+            addTextCentered centerX (panelTop + 26.0f) 2.4f white title
             rows
             |> List.iteri (fun index row ->
-                let y = panelTop + 92.0f + float32 index * rowHeight
-                if row.Selected then rowHighlight panelLeft panelWidth (y - 7.0f) 31.0f
+                let slotTop = panelTop + 85.0f + float32 index * rowHeight
+                let y = MenuLayout.rowTextY slotTop rowHeight 1.25f
+                if row.Selected then rowHighlight panelLeft panelWidth (slotTop + 4.0f) (rowHeight - 8.0f)
                 let labelColor =
                     if row.Header then Vector4(0.62f, 0.67f, 0.60f, 0.85f)
                     elif row.Selected then Vector4(1.0f, 0.91f, 0.64f, 1.0f)
@@ -397,7 +420,7 @@ type Hud(gl: GL) =
                     elif row.Value = "" then ""
                     else row.Value
                 if value <> "" then
-                    addText (panelLeft + panelWidth - 70.0f - float32 value.Length * 8.0f) y 1.25f labelColor value)
+                    addTextRight (panelLeft + panelWidth - 70.0f) y 1.25f labelColor value)
             panelPrompt panelTop panelHeight "UP/DOWN SELECT   LEFT/RIGHT ADJUST   ENTER CONFIRM   ESC BACK")
         let data = vertices.ToArray()
         if data.Length > 0 then

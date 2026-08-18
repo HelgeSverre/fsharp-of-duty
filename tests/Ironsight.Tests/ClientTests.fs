@@ -49,6 +49,12 @@ module ClientTests =
         Assert.NotEqual<byte array>(glyph 'B', glyph '8')
         Assert.NotEqual<byte array>(glyph 'S', glyph '5')
         Assert.Contains(255uy, glyph '?')
+        Assert.Contains(255uy, glyph '<')
+        Assert.Contains(255uy, glyph '>')
+        // The space cell must be fully transparent: the solid-rectangle texel
+        // once lived at (0,0) inside it and drew a tick on every padding space.
+        Assert.DoesNotContain(255uy, glyph ' ')
+        Assert.Equal(255uy, font.Pixels[font.Width * font.Height - 1])
 
     [<Fact>]
     let ``generated viewmodels and audio contain usable procedural data`` () =
@@ -103,10 +109,13 @@ module ClientTests =
         let listed = { StartMenu.initial with Page = ServerList; ServerRows = Some rows }
         let items = StartMenu.items listed
         Assert.Equal(4, items.Length)
-        Assert.Contains("fsharp-of-duty.fly.dev", items[0])
-        Assert.Contains("3/16", items[0])
-        Assert.Contains("FREE FOR ALL", items[1])
-        Assert.Contains("OFFLINE", items[2])
+        Assert.Contains("FSHARP-OF-DUTY.FLY.DEV", items[0])
+        // Columns are structured cells drawn at fixed x offsets, not padded text.
+        let cells = (StartMenu.serverCells listed).Value
+        Assert.Equal(3, cells.Length)
+        Assert.Contains(cells[0], fun (_, text) -> text = "3/16")
+        Assert.Contains(cells[1], fun (_, text) -> text = "FREE FOR ALL")
+        Assert.Contains(cells[2], fun (_, text) -> text = "OFFLINE")
         // Offline rows are not joinable.
         let struct (still, offlineAction) = StartMenu.update 1280 720 activate { listed with Selected = 2 }
         Assert.Equal(ServerList, still.Page)
@@ -140,6 +149,34 @@ module ClientTests =
         Assert.Equal(None, backAction)
         let struct (_, quitAction) = StartMenu.update 1280 720 activate { StartMenu.initial with Selected = 5 }
         Assert.Equal(Some ExitGame, quitAction)
+
+    [<Fact>]
+    let ``long menu pages scroll a window that keeps the selection in view`` () =
+        let idle = TestKit.idleMenuInput
+        let server index = { Name = $"S{index}"; Url = Uri $"ws://server-{index}.example:8080/play" }
+        let rows =
+            Array.init 14 (fun index ->
+                { Server = server index; Mode = TeamDeathmatch; Phase = "Waiting"; Players = 0; Capacity = 16; PingMs = 10; Online = true })
+        let listed = { StartMenu.initial with Page = ServerList; ServerRows = Some rows }
+        // 14 rows + BACK = 15 items; the window shows MaxVisibleRows of them.
+        Assert.Equal(15, (StartMenu.items listed).Length)
+        Assert.Equal((0, StartMenu.MaxVisibleRows), StartMenu.visibleRange listed)
+        // Walk the selection to the bottom: the window follows.
+        let mutable state = listed
+        for _ in 1..14 do
+            let struct (next, _) = StartMenu.update 1280 720 { idle with Down = true } state
+            state <- next
+        Assert.Equal(14, state.Selected)
+        let first, visible = StartMenu.visibleRange state
+        Assert.Equal(15 - StartMenu.MaxVisibleRows, first)
+        Assert.Equal(StartMenu.MaxVisibleRows, visible)
+        Assert.True(state.Selected >= first && state.Selected < first + visible)
+        // Wrapping back to the top snaps the window back with it.
+        let struct (wrapped, _) = StartMenu.update 1280 720 { idle with Down = true } state
+        Assert.Equal(0, wrapped.Selected)
+        Assert.Equal((0, StartMenu.MaxVisibleRows), StartMenu.visibleRange wrapped)
+        // Short pages never scroll.
+        Assert.Equal((0, 6), StartMenu.visibleRange StartMenu.initial)
 
     [<Fact>]
     let ``lethal headshot pose removes head geometry`` () =
