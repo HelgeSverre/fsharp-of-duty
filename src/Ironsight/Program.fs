@@ -18,6 +18,23 @@ module Program =
         let hits = events |> List.choose (function HitConfirmed(_, lethal) -> Some lethal | _ -> None)
         if List.isEmpty hits then None else Some(List.contains true hits)
 
+    type MenuHome =
+        /// The boot menu: no session behind it, Esc on the root page does nothing.
+        | Boot
+        /// The pause menu: a session is behind it, Esc on the root page resumes.
+        | Pause
+
+    /// What is on screen — exactly one at a time. The input sampler's menu mode
+    /// and the HUD's overlay fields all derive from this, so a screen change
+    /// cannot forget to flip the input mode or leave two panels fighting.
+    [<RequireQualifiedAccess>]
+    type Screen =
+        | Playing
+        /// Weapon picker over live play; the world keeps simulating.
+        | Loadout of selected: int
+        /// The start or pause menu, optionally with settings pushed over it.
+        | Menu of home: MenuHome * state: StartMenuState * settings: SettingsUi.State option
+
     [<EntryPoint>]
     let main args =
         let mutable onlineRequested = args |> Array.contains "--online"
@@ -55,6 +72,7 @@ module Program =
         // applied to the *rendered* position only (QuakeWorld-style error
         // smoothing): tiny corrections glide instead of snapping the camera.
         let mutable predictionError = System.Numerics.Vector3.Zero
+        let mutable debugView = false
         let mutable serverStatusTask: Task<ServerStatus option> option = None
         let mutable serverStatusAt = DateTimeOffset.MinValue
         let mutable predictedFireCooldown = 0.0f
@@ -68,14 +86,15 @@ module Program =
         let mutable lastActiveWeaponName = ""
         let mutable lastActiveInMag = -1
         let mutable grenadeButtonHeld = false
-        let mutable loadoutScreen: int option = None
         let mutable lastHeartbeatTick = -1L
         let mutable lastDistantTick = -1L
         let mutable settings =
             if args |> Array.contains "--reset-settings" then Settings.defaults else Settings.load ()
-        let mutable settingsScreen: SettingsUi.State option = None
         let applySettings () =
-            sampler |> Option.iter (fun input -> input.SetSensitivity settings.MouseSensitivity; input.SetAdsToggle settings.AdsToggle)
+            sampler |> Option.iter (fun input ->
+                input.SetSensitivity settings.MouseSensitivity
+                input.SetAdsToggle settings.AdsToggle
+                input.SetCrouchToggle settings.CrouchToggle)
             renderer |> Option.iter (fun value -> value.SetSettings settings)
         let createOfflineWorld map =
             match map with
@@ -99,9 +118,9 @@ module Program =
         let mutable initialWorld =
             customMapWorld
             |> Option.defaultWith (fun () -> createOfflineWorld (requestedMap |> Option.defaultValue "paintball"))
-        let mutable menu =
-            if onlineRequested || requestedMap.IsSome || customMapWorld.IsSome then None
-            else Some(StartMenu.create playerName)
+        let mutable screen =
+            if onlineRequested || requestedMap.IsSome || customMapWorld.IsSome then Screen.Playing
+            else Screen.Menu(Boot, StartMenu.create playerName, None)
         let mutable previous = initialWorld
         let mutable current = previous
         let mutable accumulator = 0.0
@@ -181,13 +200,11 @@ module Program =
             reconciledTick <- -1L
             predictedFireHeld <- false
 
-        let returnToMenu (inputSampler: InputSampler) =
-            disconnectOnline ()
-            settingsScreen <- None
-            loadoutScreen <- None
-            menu <- Some(StartMenu.create playerName)
-            inputSampler.SetMenuActive true
-            window.Title <- "IRONSIGHT — F# of Duty"
+        /// The only place a screen changes: the input sampler's menu mode (Esc
+        /// routing, cursor capture, look-delta suppression) always follows.
+        let setScreen next =
+            screen <- next
+            sampler |> Option.iter (fun s -> s.SetMenuActive(match next with Screen.Playing -> false | _ -> true))
 
         window.add_Load(fun () ->
             let api = window.CreateOpenGL()
@@ -195,7 +212,9 @@ module Program =
             gl <- Some api
             input <- Some inputContext
             let inputSampler = InputSampler inputContext
-            menu |> Option.iter (fun _ -> inputSampler.SetMenuActive true)
+            match screen with
+            | Screen.Playing -> ()
+            | _ -> inputSampler.SetMenuActive true
             sampler <- Some inputSampler
             renderer <- Some(new Renderer(api))
             // The OS can deliver the initial framebuffer size before the
@@ -260,8 +279,8 @@ module Program =
                 | _ -> ()
                 match sampler with
                 | Some inputSampler ->
-                    match menu with
-                    | Some state ->
+                    match screen with
+                    | Screen.Menu(home, state, settingsOverlay) ->
                         // Server list rows show live player counts and ping,
                         // refreshed every few seconds while the page is open.
                         // The status is folded into the state *before* the menu
@@ -283,96 +302,90 @@ module Program =
                                     serverStatusTask <- Some(fetchServerStatus ())
                                     state
                                 | None -> state
-                        match settingsScreen with
-                        | Some screen ->
+                        match settingsOverlay with
+                        | Some settingsState ->
                             let menuInput = inputSampler.ConsumeMenuInput()
                             if menuInput.Back then
-                                settingsScreen <- None
+                                screen <- Screen.Menu(home, state, None)
                                 Settings.save settings |> ignore
                             else
-                                let updated = SettingsUi.update menuInput screen
-                                settingsScreen <- Some updated
+                                let updated = SettingsUi.update menuInput settingsState
+                                screen <- Screen.Menu(home, state, Some updated)
                                 if updated.Settings <> settings then
                                     settings <- updated.Settings
                                     applySettings ()
                                     Settings.save settings |> ignore
                         | None ->
                             let menuInput = inputSampler.ConsumeMenuInput()
-                            let sessionLive = onlineClient |> Option.exists (fun c -> c.Connected)
-                            if sessionLive && menuInput.Back && state.Page = Main then
-                                // Esc on the root page of the pause menu: back to
-                                // the match. Deeper pages still step back a page.
-                                menu <- None
-                                inputSampler.SetMenuActive false
+                            if home = Pause && menuInput.Back && state.Page = Main then
+                                // Esc on the pause menu's root page resumes the
+                                // session: offline the frozen sim, online the
+                                // match that never stopped. Deeper pages still
+                                // step back one page inside StartMenu.update.
+                                setScreen Screen.Playing
                             else
-                            let struct (nextMenu, action) = StartMenu.update window.Size.X window.Size.Y menuInput state
-                            menu <- Some nextMenu
-                            playerName <- nextMenu.PlayerName
-                            action
-                            |> Option.iter (function
-                                | StartOffline map ->
-                                    disconnectOnline ()
-                                    initialWorld <- createOfflineWorld map
-                                    previous <- initialWorld
-                                    current <- initialWorld
-                                    menu <- None
-                                    inputSampler.SetMenuActive false
-                                    window.Title <- $"IRONSIGHT — {current.Level.Name}"
-                                | StartOnline(weaponName, mode) ->
-                                    disconnectOnline ()
-                                    onlineRequested <- true
-                                    selectedOnlineWeapon <- weaponName
-                                    selectedOnlineMode <- mode
-                                    reconnectAfter <- DateTimeOffset.MinValue
-                                    menu <- None
-                                    inputSampler.SetMenuActive false
-                                    window.Title <- "IRONSIGHT — CONNECTING TO FLY.IO"
-                                | OpenSettings ->
-                                    settingsScreen <- Some(SettingsUi.create settings)
-                                | ExitGame -> window.Close())
-                    | None ->
-                        if inputSampler.ConsumeLoadoutToggle() && loadoutScreen.IsNone then
-                            loadoutScreen <- Some 0
-                            inputSampler.SetMenuActive true
-                        match loadoutScreen with
-                        | Some selected ->
-                            let struct (nextSelected, choice) = LoadoutMenu.update (inputSampler.ConsumeMenuInput()) selected
-                            match choice with
-                            | LoadoutMenu.Browsing -> loadoutScreen <- Some nextSelected
-                            | LoadoutMenu.Closed ->
-                                loadoutScreen <- None
-                                inputSampler.SetMenuActive false
-                            | LoadoutMenu.Chosen weaponName ->
-                                loadoutScreen <- None
-                                inputSampler.SetMenuActive false
-                                match onlineClient with
-                                | Some client when client.Connected ->
-                                    selectedOnlineWeapon <- weaponName
-                                    client.RequestLoadout weaponName
-                                | _ ->
-                                    current.Player.Slots
-                                    |> Array.tryFindIndex (fun slot -> slot.Class.Name = weaponName)
-                                    |> Option.iter (fun index ->
-                                        if index <> current.Player.Active then
-                                            current <- { current with Player = { current.Player with Active = index; Ads = 0.0f } }
-                                            previous <- current)
-                        | None -> ()
-                        if inputSampler.ConsumeEscape() then
-                            if onlineClient |> Option.exists (fun c -> c.Connected) then
-                                // Pause menu over a live match: the session stays
-                                // up and the server coasts us like a stalled
-                                // stream. Esc again closes it.
-                                menu <- Some(StartMenu.create playerName)
-                                inputSampler.SetMenuActive true
-                            else returnToMenu inputSampler
+                                let struct (nextMenu, action) = StartMenu.update window.Size.X window.Size.Y menuInput state
+                                screen <- Screen.Menu(home, nextMenu, None)
+                                playerName <- nextMenu.PlayerName
+                                action
+                                |> Option.iter (function
+                                    | StartOffline map ->
+                                        disconnectOnline ()
+                                        initialWorld <- createOfflineWorld map
+                                        previous <- initialWorld
+                                        current <- initialWorld
+                                        setScreen Screen.Playing
+                                        window.Title <- $"IRONSIGHT — {current.Level.Name}"
+                                    | StartOnline(weaponName, mode) ->
+                                        disconnectOnline ()
+                                        onlineRequested <- true
+                                        selectedOnlineWeapon <- weaponName
+                                        selectedOnlineMode <- mode
+                                        reconnectAfter <- DateTimeOffset.MinValue
+                                        setScreen Screen.Playing
+                                        window.Title <- "IRONSIGHT — CONNECTING TO FLY.IO"
+                                    | OpenSettings ->
+                                        screen <- Screen.Menu(home, nextMenu, Some(SettingsUi.create settings))
+                                    | ExitGame -> window.Close())
+                    | Screen.Playing | Screen.Loadout _ ->
+                        (match screen with
+                         | Screen.Playing ->
+                             if inputSampler.ConsumeDebugToggle() then debugView <- not debugView
+                             if inputSampler.ConsumeLoadoutToggle() then setScreen (Screen.Loadout 0)
+                             elif inputSampler.ConsumeEscape() then
+                                 // Pause, uniformly: offline the sim freezes
+                                 // because the play block below is gated on
+                                 // Screen.Playing; online the session stays up
+                                 // and the server coasts the idle player.
+                                 setScreen (Screen.Menu(Pause, StartMenu.create playerName, None))
+                         | Screen.Loadout selected ->
+                             let struct (nextSelected, choice) = LoadoutMenu.update (inputSampler.ConsumeMenuInput()) selected
+                             match choice with
+                             | LoadoutMenu.Browsing -> screen <- Screen.Loadout nextSelected
+                             | LoadoutMenu.Closed -> setScreen Screen.Playing
+                             | LoadoutMenu.Chosen weaponName ->
+                                 setScreen Screen.Playing
+                                 match onlineClient with
+                                 | Some client when client.Connected ->
+                                     selectedOnlineWeapon <- weaponName
+                                     client.RequestLoadout weaponName
+                                 | _ ->
+                                     current.Player.Slots
+                                     |> Array.tryFindIndex (fun slot -> slot.Class.Name = weaponName)
+                                     |> Option.iter (fun index ->
+                                         if index <> current.Player.Active then
+                                             current <- { current with Player = { current.Player with Active = index; Ads = 0.0f } }
+                                             previous <- current)
+                         | Screen.Menu _ -> ())
                         let sampledFrame = inputSampler.Sample()
                         // While the loadout picker is open the world keeps
                         // simulating, but the player stands idle (CS buy-menu
                         // feel); online the server coasts us the same way.
                         let inputFrame =
-                            if loadoutScreen.IsSome then
+                            match screen with
+                            | Screen.Loadout _ ->
                                 { sampledFrame with Move = System.Numerics.Vector2.Zero; Look = System.Numerics.Vector2.Zero; Buttons = InputButtons.None }
-                            else sampledFrame
+                            | _ -> sampledFrame
                         let weaponKeys =
                             InputButtons.Weapon1 ||| InputButtons.Weapon2 ||| InputButtons.Weapon3
                             ||| InputButtons.Weapon4 ||| InputButtons.Weapon5
@@ -401,63 +414,11 @@ module Program =
                                 pendingInputs.Enqueue inputFrame
                                 while pendingInputs.Count > 240 do pendingInputs.Dequeue() |> ignore
                                 current <- OnlineWorld.applyPrediction current.Level inputFrame current
-                            match client.TryLatestSnapshot() with
-                            | Some snapshot when snapshot.Tick > reconciledTick ->
-                                if snapshot.LevelName <> current.Level.Name then
-                                    let level =
-                                        match onlineLevel with
-                                        | Some synced when synced.Name = snapshot.LevelName -> synced
-                                        | _ ->
-                                            Ironsight.ProcGen.Levels.byName snapshot.LevelName
-                                            |> Option.defaultValue Ironsight.ProcGen.Levels.paintballArena
-                                    current <- { current with Level = level }
-                                let networkEvents =
-                                    snapshot.Events
-                                    |> Array.filter (fun event -> event.Id > lastOnlineEventId && (event.RecipientId = 0 || event.RecipientId = client.PlayerId))
-                                    |> Array.sortBy (fun event -> event.Id)
-                                    |> Array.choose OnlineWorld.eventToGameEvent
-                                    |> Array.toList
-                                let presentationEvents =
-                                    networkEvents
-                                    |> List.filter (function
-                                        | ShotFired(Some(EntityId shooter), _, _, _) when shooter = client.PlayerId -> false
-                                        | _ -> true)
-                                if snapshot.Events.Length > 0 then
-                                    lastOnlineEventId <- max lastOnlineEventId (snapshot.Events |> Array.maxBy (fun event -> event.Id)).Id
-                                renderer |> Option.iter (fun value -> value.HandleEvents presentationEvents)
-                                audio |> Option.iter (fun value -> value.Handle presentationEvents)
-                                networkEvents
-                                |> List.tryPick (function Subtitle(_, line) -> Some line | _ -> None)
-                                |> Option.iter (fun text -> subtitle <- Some(struct (text, Units.seconds 4.0f)))
-                                match hitMarkerKind networkEvents with
-                                | Some lethal ->
-                                    hitMarkerLethal <- lethal
-                                    hitMarkerRemaining <- hitMarkerDuration lethal
-                                | None -> ()
-                                let beforeReconcile = current.Player.Position
-                                let reconciled, remaining = OnlineWorld.reconcile current.Level (pendingInputs |> Seq.toList) client.PlayerId current snapshot
-                                let error = predictionError + (beforeReconcile - reconciled.Player.Position)
-                                // Large errors are teleports (respawn, round
-                                // reset): snapping is correct there.
-                                predictionError <- if error.Length() > 1.0f then System.Numerics.Vector3.Zero else error
-                                current <- reconciled
-                                pendingInputs.Clear()
-                                remaining |> List.iter pendingInputs.Enqueue
-                                reconciledTick <- snapshot.Tick
-                                onlineSnapshot <- Some snapshot
-                            | _ -> ()
-                            match client.TryInterpolatedSnapshot() with
-                            | Some interpolated -> current <- OnlineWorld.interpolateRemotes client.PlayerId current interpolated
-                            | None -> ()
-                        | Some client when onlineRequested ->
-                            if reconnectTask.IsNone && DateTimeOffset.UtcNow >= reconnectAfter then
-                                let token = if String.IsNullOrWhiteSpace client.SessionToken then None else Some client.SessionToken
-                                reconnectTask <- Some(beginReconnect connectionGeneration token)
-                                window.Title <- "IRONSIGHT — RECONNECTING"
-                        | None when onlineRequested ->
-                            if reconnectTask.IsNone && DateTimeOffset.UtcNow >= reconnectAfter then
-                                reconnectTask <- Some(beginReconnect connectionGeneration None)
-                                window.Title <- "IRONSIGHT — CONNECTING"
+                        | _ when onlineRequested ->
+                            // Connecting or reconnecting: the world stays
+                            // frozen; the shared network step below drives the
+                            // reconnect attempts.
+                            ()
                         | _ ->
                             if current.Round.IsNone && current.Player.Health <= Units.health 0.0f && inputFrame.Buttons.HasFlag InputButtons.Reload then
                                 current <- initialWorld
@@ -500,6 +461,73 @@ module Program =
                                     hitMarkerRemaining <- hitMarkerDuration lethal
                                 | None -> ()
                 | None -> ()
+                // The receive half of the online session runs on every screen,
+                // so the match keeps flowing behind the pause menu and a
+                // dropped connection recovers without unpausing. Nothing is
+                // sent from here: paused players coast on the server.
+                match onlineClient with
+                | Some client when client.Connected ->
+                    (match screen with
+                     | Screen.Playing | Screen.Loadout _ -> ()
+                     | _ -> previous <- current)
+                    match client.TryLatestSnapshot() with
+                    | Some snapshot when snapshot.Tick > reconciledTick ->
+                        if snapshot.LevelName <> current.Level.Name then
+                            let level =
+                                match onlineLevel with
+                                | Some synced when synced.Name = snapshot.LevelName -> synced
+                                | _ ->
+                                    Ironsight.ProcGen.Levels.byName snapshot.LevelName
+                                    |> Option.defaultValue Ironsight.ProcGen.Levels.paintballArena
+                            current <- { current with Level = level }
+                        let networkEvents =
+                            snapshot.Events
+                            |> Array.filter (fun event -> event.Id > lastOnlineEventId && (event.RecipientId = 0 || event.RecipientId = client.PlayerId))
+                            |> Array.sortBy (fun event -> event.Id)
+                            |> Array.choose OnlineWorld.eventToGameEvent
+                            |> Array.toList
+                        let presentationEvents =
+                            networkEvents
+                            |> List.filter (function
+                                | ShotFired(Some(EntityId shooter), _, _, _) when shooter = client.PlayerId -> false
+                                | _ -> true)
+                        if snapshot.Events.Length > 0 then
+                            lastOnlineEventId <- max lastOnlineEventId (snapshot.Events |> Array.maxBy (fun event -> event.Id)).Id
+                        renderer |> Option.iter (fun value -> value.HandleEvents presentationEvents)
+                        audio |> Option.iter (fun value -> value.Handle presentationEvents)
+                        networkEvents
+                        |> List.tryPick (function Subtitle(_, line) -> Some line | _ -> None)
+                        |> Option.iter (fun text -> subtitle <- Some(struct (text, Units.seconds 4.0f)))
+                        match hitMarkerKind networkEvents with
+                        | Some lethal ->
+                            hitMarkerLethal <- lethal
+                            hitMarkerRemaining <- hitMarkerDuration lethal
+                        | None -> ()
+                        let beforeReconcile = current.Player.Position
+                        let reconciled, remaining = OnlineWorld.reconcile current.Level (pendingInputs |> Seq.toList) client.PlayerId current snapshot
+                        let error = predictionError + (beforeReconcile - reconciled.Player.Position)
+                        // Large errors are teleports (respawn, round
+                        // reset): snapping is correct there.
+                        predictionError <- if error.Length() > 1.0f then System.Numerics.Vector3.Zero else error
+                        current <- reconciled
+                        pendingInputs.Clear()
+                        remaining |> List.iter pendingInputs.Enqueue
+                        reconciledTick <- snapshot.Tick
+                        onlineSnapshot <- Some snapshot
+                    | _ -> ()
+                    match client.TryInterpolatedSnapshot() with
+                    | Some interpolated -> current <- OnlineWorld.interpolateRemotes client.PlayerId current interpolated
+                    | None -> ()
+                | Some client when onlineRequested ->
+                    if reconnectTask.IsNone && DateTimeOffset.UtcNow >= reconnectAfter then
+                        let token = if String.IsNullOrWhiteSpace client.SessionToken then None else Some client.SessionToken
+                        reconnectTask <- Some(beginReconnect connectionGeneration token)
+                        window.Title <- "IRONSIGHT — RECONNECTING"
+                | None when onlineRequested ->
+                    if reconnectTask.IsNone && DateTimeOffset.UtcNow >= reconnectAfter then
+                        reconnectTask <- Some(beginReconnect connectionGeneration None)
+                        window.Title <- "IRONSIGHT — CONNECTING"
+                | _ -> ()
                 let activeSlot = current.Player.Slots[current.Player.Active]
                 if activeSlot.Class.Name <> lastActiveWeaponName then
                     if lastActiveWeaponName <> "" then inventoryShow <- Units.seconds 2.5f
@@ -521,7 +549,12 @@ module Program =
                 accumulator <- accumulator - fixedStep)
 
         window.add_Render(fun _ ->
-            let alpha = float32 (accumulator / fixedStep)
+            let alpha =
+                match screen, onlineClient with
+                // A menu over a frozen offline world: previous = current, and a
+                // varying alpha would make the backdrop jiggle a tick behind it.
+                | Screen.Menu _, None -> 1.0f
+                | _ -> float32 (accumulator / fixedStep)
             let renderedWorld =
                 let interpolated = RenderInterpolation.world alpha previous current
                 if predictionError = System.Numerics.Vector3.Zero then interpolated
@@ -536,6 +569,7 @@ module Program =
                   HitMarkerLethal = hitMarkerLethal
                   Subtitle = subtitleText
                   ShowInventory = inventoryShow > Units.seconds 0.0f
+                  DebugView = debugView
                   GrenadeCooking =
                     (match current.Player.Grenade with Cooking _ -> true | _ -> false)
                     // Online the hand state is never advanced locally, so fall back
@@ -543,10 +577,10 @@ module Program =
                     // simulation uses, otherwise the arc promises a throw that
                     // never happens.
                     || (onlineClient.IsSome && grenadeButtonHeld && not current.Player.Sprinting && current.Player.Health > Units.health 0.0f)
-                  Menu = if settingsScreen.IsSome then None else menu
+                  Menu = (match screen with Screen.Menu(_, state, None) -> Some state | _ -> None)
                   Settings = settings
-                  LoadoutScreen = loadoutScreen
-                  SettingsScreen = settingsScreen }
+                  LoadoutScreen = (match screen with Screen.Loadout selected -> Some selected | _ -> None)
+                  SettingsScreen = (match screen with Screen.Menu(_, _, Some settingsState) -> Some settingsState | _ -> None) }
             renderer |> Option.iter (fun value -> value.Render(renderedWorld, hudInfo)))
         window.add_FramebufferResize(fun _ ->
             // Query the properties rather than trusting the event payload so

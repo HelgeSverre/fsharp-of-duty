@@ -31,6 +31,10 @@ type InputSampler(context: IInputContext) =
     let mutable adsToggleEnabled = false
     let mutable adsLatched = false
     let mutable adsPrevHeld = false
+    let mutable crouchToggleEnabled = false
+    let mutable crouchLatched = false
+    let mutable crouchPrevHeld = false
+    let mutable debugLatched = false
 
     do
         keyboard
@@ -47,7 +51,8 @@ type InputSampler(context: IInputContext) =
                 else
                     if key = Key.Escape then escapeLatched <- true
                     elif key = Key.R then reloadLatched <- true
-                    elif key = Key.B then loadoutLatched <- true)
+                    elif key = Key.B then loadoutLatched <- true
+                    elif key = Key.F3 then debugLatched <- true)
             device.add_KeyChar(fun _ character ->
                 if menuActive && character >= ' ' && character <= '~' then
                     menuText <- menuText + string character))
@@ -84,7 +89,17 @@ type InputSampler(context: IInputContext) =
         if ads then buttons <- buttons ||| InputButtons.Ads
         if pressed Key.ShiftLeft then buttons <- buttons ||| InputButtons.Sprint
         if reloadLatched then buttons <- buttons ||| InputButtons.Reload
-        if pressed Key.ControlLeft then buttons <- buttons ||| InputButtons.Crouch
+        // Hold-to-crouch is the default; toggle mode latches here in the input
+        // layer and simply keeps the button held, so the simulation only ever
+        // sees hold semantics.
+        let crouchHeld = pressed Key.ControlLeft
+        let crouch =
+            if crouchToggleEnabled then
+                if crouchHeld && not crouchPrevHeld then crouchLatched <- not crouchLatched
+                crouchPrevHeld <- crouchHeld
+                crouchLatched
+            else crouchHeld
+        if crouch then buttons <- buttons ||| InputButtons.Crouch
         if pressed Key.Z then buttons <- buttons ||| InputButtons.Prone
         if pressed Key.G then buttons <- buttons ||| InputButtons.Grenade
         if pressed Key.Space then buttons <- buttons ||| InputButtons.Jump
@@ -109,6 +124,12 @@ type InputSampler(context: IInputContext) =
         reloadLatched <- false
         adsLatched <- false
         adsPrevHeld <- false
+        crouchLatched <- false
+        crouchPrevHeld <- false
+        // A press latched under the old mode must not fire under the new one —
+        // a stale Esc would instantly close the menu it just opened.
+        escapeLatched <- false
+        menuBack <- false
         mouse
         |> Option.iter (fun device -> device.Cursor.CursorMode <- if value then CursorMode.Normal else CursorMode.Raw)
 
@@ -118,6 +139,11 @@ type InputSampler(context: IInputContext) =
         adsToggleEnabled <- value
         adsLatched <- false
         adsPrevHeld <- false
+
+    member _.SetCrouchToggle(value: bool) =
+        crouchToggleEnabled <- value
+        crouchLatched <- false
+        crouchPrevHeld <- false
 
     member _.ConsumeMenuInput() =
         // Report the pointer only when the mouse moved (or clicked). A cursor
@@ -155,5 +181,10 @@ type InputSampler(context: IInputContext) =
     member _.ConsumeLoadoutToggle() =
         let value = loadoutLatched
         loadoutLatched <- false
+        value
+
+    member _.ConsumeDebugToggle() =
+        let value = debugLatched
+        debugLatched <- false
         value
     member _.ScoreboardHeld = keyboard |> Option.exists (fun device -> device.IsKeyPressed Key.Tab)
