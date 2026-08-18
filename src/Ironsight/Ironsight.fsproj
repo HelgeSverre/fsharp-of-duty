@@ -4,13 +4,15 @@
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <!-- Embedded into the Windows apphost; ignored on other platforms. -->
     <ApplicationIcon>../../packaging/icon.ico</ApplicationIcon>
-    <!-- Published builds are one self-contained executable. Native libraries
-         (GLFW, OpenAL Soft) ride inside it and self-extract; content files
-         like servers.json stay loose beside it on purpose, so players can
-         read and edit them. No trimming: F# + Silk.NET reflection is
-         trim-hostile and the size win is not worth broken rendering. -->
+    <!-- Published builds are one self-contained executable, but native
+         libraries (GLFW, OpenAL Soft) must stay loose beside it: Silk.NET's
+         loader never probes the single-file self-extract dir (~/.net/...),
+         so self-extracted natives are invisible to it and the app dies at
+         Window.Create. Content files like servers.json stay loose on
+         purpose, so players can read and edit them. No trimming: F# +
+         Silk.NET reflection is trim-hostile and the size win is not worth
+         broken rendering. -->
     <PublishSingleFile>true</PublishSingleFile>
-    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="../Ironsight.Core/Ironsight.Core.fsproj" />
@@ -31,6 +33,7 @@
     <Compile Include="Settings.fs" />
     <Compile Include="MapStore.fs" />
     <Compile Include="ServerDirectory.fs" />
+    <Compile Include="UiLayout.fs" />
     <Compile Include="Menu.fs" />
     <Compile Include="SettingsUi.fs" />
     <Compile Include="Input.fs" />

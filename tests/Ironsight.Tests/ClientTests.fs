@@ -151,6 +151,23 @@ module ClientTests =
         Assert.Equal(Some ExitGame, quitAction)
 
     [<Fact>]
+    let ``row slot geometry round-trips between drawing and hit-testing`` () =
+        let rows = { X = 100.0f; Y = 200.0f; W = 600.0f; H = 54.0f * 5.0f }
+        for index in 0..4 do
+            let slot = Rect.slot 54.0f index rows
+            // A point in the middle of a drawn slot hits that same slot.
+            let middle = Vector2(slot.X + slot.W * 0.5f, slot.Y + slot.H * 0.5f)
+            Assert.Equal(Some index, Rect.slotAt 54.0f 5 middle rows)
+        Assert.Equal(None, Rect.slotAt 54.0f 5 (Vector2(99.0f, 227.0f)) rows)
+        Assert.Equal(None, Rect.slotAt 54.0f 5 (Vector2(400.0f, 199.0f)) rows)
+        Assert.Equal(None, Rect.slotAt 54.0f 5 (Vector2(400.0f, 200.0f + 54.0f * 5.0f)) rows)
+        // textY centers any scale on the slot midline (glyphs are 12px at scale 1).
+        let slot = Rect.slot 54.0f 2 rows
+        for scale in [ 1.0f; 1.15f; 1.25f; 1.3f ] do
+            let y = Rect.textY scale slot
+            Assert.Equal(slot.Y + slot.H * 0.5f, y + 6.0f * scale, 3)
+
+    [<Fact>]
     let ``long menu pages scroll a window that keeps the selection in view`` () =
         let idle = TestKit.idleMenuInput
         let server index = { Name = $"S{index}"; Url = Uri $"ws://server-{index}.example:8080/play" }

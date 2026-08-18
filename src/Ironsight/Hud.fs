@@ -121,21 +121,43 @@ type Hud(gl: GL) =
         let white = Vector4(0.92f, 0.94f, 0.89f, 0.95f)
         let shadow = Vector4(0.0f, 0.0f, 0.0f, 0.7f)
         let centerX, centerY = float32 width * 0.5f, float32 height * 0.5f
-        // ---- Shared overlay-panel pieces: loadout, menu and settings all
-        // draw a backing rect + accent strip (optionally behind a fullscreen
-        // dim), a selected-row highlight bar, and an identical prompt footer.
-        let overlayPanel dim (accentAlpha: float32) (panelWidth: float32) (panelHeight: float32) =
-            let panelLeft = centerX - panelWidth * 0.5f
-            let panelTop = centerY - panelHeight * 0.5f
+        // ---- Tiny layout DSL. Every panel, overlay screen, and row list
+        // routes through these, so accent strips, highlight insets, column
+        // offsets, and text centering have exactly one source each. Row
+        // geometry lives in Rect (UiLayout.fs), shared with hover hit-testing.
+        let panel (r: Rect) (back: Vector4) (accentHeight: float32) (accent: Vector4) =
+            solid r.X r.Y r.W r.H back
+            solid r.X r.Y r.W accentHeight accent
+        /// Centered overlay screen: optional fullscreen dim, panel chrome, and
+        /// the prompt footer. Returns the panel rect the caller lays out in.
+        let overlay dim (accentAlpha: float32) (panelWidth: float32) (panelHeight: float32) (prompt: string) =
+            let r =
+                { X = centerX - panelWidth * 0.5f; Y = centerY - panelHeight * 0.5f; W = panelWidth; H = panelHeight }
             if dim then solid 0.0f 0.0f (float32 width) (float32 height) (Vector4(0.005f, 0.009f, 0.008f, 0.63f))
-            solid panelLeft panelTop panelWidth panelHeight (Vector4(0.025f, 0.040f, 0.034f, 0.94f))
-            solid panelLeft panelTop panelWidth 5.0f (Vector4(0.82f, 0.22f, 0.08f, accentAlpha))
-            panelLeft, panelTop
-        let rowHighlight (left: float32) (panelWidth: float32) (barTop: float32) (barHeight: float32) =
-            solid (left + 18.0f) barTop (panelWidth - 36.0f) barHeight (Vector4(0.47f, 0.17f, 0.07f, 0.88f))
-            solid (left + 18.0f) barTop 5.0f barHeight (Vector4(1.0f, 0.74f, 0.30f, 1.0f))
-        let panelPrompt (panelTop: float32) (panelHeight: float32) (text: string) =
-            addTextCentered centerX (panelTop + panelHeight - 30.0f) 0.9f (Vector4(0.64f, 0.67f, 0.61f, 1.0f)) text
+            panel r (Vector4(0.025f, 0.040f, 0.034f, 0.94f)) 5.0f (Vector4(0.82f, 0.22f, 0.08f, accentAlpha))
+            addTextCentered centerX (r.Y + r.H - 30.0f) 0.9f (Vector4(0.64f, 0.67f, 0.61f, 1.0f)) prompt
+            r
+        /// Progress meter: background track plus a left-anchored fill.
+        let meter (r: Rect) (ratio: float32) (back: Vector4) (fill: Vector4) =
+            solid r.X r.Y r.W r.H back
+            solid r.X r.Y (r.W * MathEx.clamp01 ratio) r.H fill
+        /// Horizontal pad from a rows rect's left edge to its text origin.
+        let rowTextPad = 24.0f
+        /// Column header labels at the same offsets the data rows use.
+        let tableHeader (rows: Rect) (y: float32) scale color (columns: (float32 * string) array) =
+            for offset, label in columns do
+                addText (rows.X + rowTextPad + offset) y scale color label
+        /// One data row: optional inset-centered selection bar, then cells as
+        /// (xOffset, scale, text) — offsets shared with tableHeader, every
+        /// scale centered on the slot midline.
+        let tableRow (rows: Rect) (rowHeight: float32) slotIndex selected (color: Vector4) (cells: (float32 * float32 * string) list) =
+            let slot = Rect.slot rowHeight slotIndex rows
+            if selected then
+                let bar = Rect.inset 0.0f (slot.H / 9.0f) slot
+                solid bar.X bar.Y bar.W bar.H (Vector4(0.47f, 0.17f, 0.07f, 0.88f))
+                solid bar.X bar.Y 5.0f bar.H (Vector4(1.0f, 0.74f, 0.30f, 1.0f))
+            for offset, scale, text in cells do
+                addText (rows.X + rowTextPad + offset) (Rect.textY scale slot) scale color text
         let weapon = world.Player.Slots[world.Player.Active]
         let scoped = weapon.Class.Kind = SniperRifle && world.Player.Ads >= 0.72f
         if scoped then
@@ -192,8 +214,7 @@ type Hud(gl: GL) =
         let weaponPanelWidth, weaponPanelHeight = 226.0f, 66.0f
         let weaponPanelX = float32 width - weaponPanelWidth - 20.0f
         let weaponPanelY = float32 height - weaponPanelHeight - 18.0f
-        solid weaponPanelX weaponPanelY weaponPanelWidth weaponPanelHeight panelBack
-        solid weaponPanelX weaponPanelY weaponPanelWidth 3.0f accent
+        panel { X = weaponPanelX; Y = weaponPanelY; W = weaponPanelWidth; H = weaponPanelHeight } panelBack 3.0f accent
         let weaponName = weapon.Class.Name.ToUpperInvariant()
         addText (weaponPanelX + 14.0f) (weaponPanelY + 10.0f) 1.0f label weaponName
         let magText = $"{weapon.InMag}"
@@ -223,21 +244,20 @@ type Hud(gl: GL) =
             let barTop = weaponPanelY - 16.0f
             let reloadText = sprintf "RELOADING %d%%" (int (progress * 100.0f))
             solid (barLeft - 2.0f) (barTop - 2.0f) (barWidth + 4.0f) 12.0f (Vector4(0.0f, 0.0f, 0.0f, 0.72f))
-            solid barLeft barTop barWidth 8.0f (Vector4(0.16f, 0.18f, 0.16f, 0.92f))
-            solid barLeft barTop (barWidth * progress) 8.0f (Vector4(0.92f, 0.55f, 0.14f, 1.0f))
+            meter { X = barLeft; Y = barTop; W = barWidth; H = 8.0f } progress
+                (Vector4(0.16f, 0.18f, 0.16f, 0.92f)) (Vector4(0.92f, 0.55f, 0.14f, 1.0f))
             addTextRight (barLeft - 14.0f) (barTop - 3.0f) 1.0f white reloadText
         | _ -> ()
         // ---- Bottom-left health panel with a color-shifting bar ----
         let healthPanelWidth, healthPanelHeight = 196.0f, 48.0f
         let healthPanelX, healthPanelY = 20.0f, float32 height - 48.0f - 18.0f
-        solid healthPanelX healthPanelY healthPanelWidth healthPanelHeight panelBack
-        solid healthPanelX healthPanelY healthPanelWidth 3.0f accent
+        panel { X = healthPanelX; Y = healthPanelY; W = healthPanelWidth; H = healthPanelHeight } panelBack 3.0f accent
         let healthRatio = MathEx.clamp01 (Units.raw world.Player.Health / 100.0f)
         let healthFill = Vector4(0.85f - 0.42f * healthRatio, 0.16f + 0.52f * healthRatio, 0.12f + 0.20f * healthRatio, 0.95f)
         addText (healthPanelX + 14.0f) (healthPanelY + 10.0f) 1.0f label "HEALTH"
         addTextRight (healthPanelX + healthPanelWidth - 14.0f) (healthPanelY + 8.0f) 1.4f white $"{int (Units.raw world.Player.Health)}"
-        solid (healthPanelX + 14.0f) (healthPanelY + 30.0f) (healthPanelWidth - 28.0f) 9.0f (Vector4(0.10f, 0.12f, 0.10f, 0.9f))
-        solid (healthPanelX + 14.0f) (healthPanelY + 30.0f) ((healthPanelWidth - 28.0f) * healthRatio) 9.0f healthFill
+        meter { X = healthPanelX + 14.0f; Y = healthPanelY + 30.0f; W = healthPanelWidth - 28.0f; H = 9.0f } healthRatio
+            (Vector4(0.10f, 0.12f, 0.10f, 0.9f)) healthFill
         if info.DebugView then
             addText 22.0f 8.0f 1.0f (Vector4(1.0f, 0.74f, 0.30f, 0.95f)) "DEBUG VIEW [F3]  GREEN: CLEAR LOS  RED: BLOCKED"
         let heading = ((world.Player.Yaw * 180.0f / MathF.PI) % 360.0f + 360.0f) % 360.0f
@@ -281,25 +301,27 @@ type Hud(gl: GL) =
                     match online.Mode with
                     | TeamDeathmatch -> (if player.Team = Allies then 0 else 1), -player.Kills, player.Deaths
                     | _ -> 0, -player.Kills, player.Deaths)
-            let panelHeight = 72.0f + rowHeight * float32 sorted.Length
-            let left = centerX - panelWidth * 0.5f
-            let top = 105.0f
-            solid left top panelWidth panelHeight (Vector4(0.015f, 0.02f, 0.018f, 0.88f))
-            solid left top panelWidth 4.0f (Vector4(0.62f, 0.14f, 0.08f, 0.95f))
-            addText (left + 22.0f) (top + 17.0f) 1.35f white (if online.Mode = FreeForAll then "FREE FOR ALL" else "TEAM DEATHMATCH")
-            addText (left + 22.0f) (top + 46.0f) 0.95f white "PLAYER"
-            addText (left + 382.0f) (top + 46.0f) 0.95f white "TEAM"
-            addText (left + 500.0f) (top + 46.0f) 0.95f white "K   D"
+            let panelRect =
+                { X = centerX - panelWidth * 0.5f; Y = 105.0f; W = panelWidth; H = 72.0f + rowHeight * float32 sorted.Length }
+            panel panelRect (Vector4(0.015f, 0.02f, 0.018f, 0.88f)) 4.0f (Vector4(0.62f, 0.14f, 0.08f, 0.95f))
+            let rows = { X = panelRect.X + 18.0f; Y = panelRect.Y + 64.0f; W = panelRect.W - 36.0f; H = rowHeight * float32 sorted.Length }
+            let columns = [| 0.0f, "PLAYER"; 340.0f, "TEAM"; 460.0f, "K   D" |]
+            addText (rows.X + rowTextPad) (panelRect.Y + 17.0f) 1.35f white (if online.Mode = FreeForAll then "FREE FOR ALL" else "TEAM DEATHMATCH")
+            tableHeader rows (panelRect.Y + 46.0f) 0.95f white columns
             sorted
             |> Array.iteri (fun index player ->
-                let y = top + 70.0f + float32 index * rowHeight
                 let isLocal = info.LocalPlayerId = Some player.Id
-                if isLocal then solid (left + 10.0f) (y - 3.0f) (panelWidth - 20.0f) 22.0f (Vector4(0.30f, 0.34f, 0.18f, 0.48f))
+                if isLocal then
+                    // "You" tint, not the amber selection bar: the scoreboard
+                    // has no cursor, it marks the local player's own row.
+                    let bar = Rect.inset 0.0f 3.0f (Rect.slot rowHeight index rows)
+                    solid bar.X bar.Y bar.W bar.H (Vector4(0.30f, 0.34f, 0.18f, 0.48f))
                 let rowColor = if isLocal then Vector4(1.0f, 0.92f, 0.58f, 1.0f) else white
                 let team = if online.Mode = FreeForAll then "--" else string player.Team
-                addText (left + 22.0f) y 1.0f rowColor player.Name
-                addText (left + 382.0f) y 1.0f rowColor team
-                addText (left + 500.0f) y 1.0f rowColor $"{player.Kills}   {player.Deaths}")
+                tableRow rows rowHeight index false rowColor
+                    [ fst columns[0], 1.0f, player.Name
+                      fst columns[1], 1.0f, team
+                      fst columns[2], 1.0f, $"{player.Kills}   {player.Deaths}" ])
         | _ -> ()
         info.Subtitle
         |> Option.iter (fun subtitle ->
@@ -334,94 +356,86 @@ type Hud(gl: GL) =
             let rowHeight = 30.0f
             let panelWidth = min 640.0f (float32 width - 48.0f)
             let panelHeight = 150.0f + rowHeight * float32 weapons.Length
-            let panelLeft, panelTop = overlayPanel false accent.W panelWidth panelHeight
-            addText (panelLeft + 26.0f) (panelTop + 20.0f) 2.0f white "LOADOUT"
+            let panelRect = overlay false accent.W panelWidth panelHeight "UP/DOWN SELECT   ENTER EQUIP   ESC CLOSE"
+            addText (panelRect.X + 26.0f) (panelRect.Y + 20.0f) 2.0f white "LOADOUT"
             let hint = if info.Online.IsSome then "ARMS ON YOUR NEXT SPAWN" else "SWAPS IMMEDIATELY"
-            addTextRight (panelLeft + panelWidth - 26.0f) (panelTop + 30.0f) 1.0f label hint
-            addText (panelLeft + 40.0f) (panelTop + 62.0f) 0.95f label "WEAPON"
-            addText (panelLeft + 320.0f) (panelTop + 62.0f) 0.95f label "DMG"
-            addText (panelLeft + 400.0f) (panelTop + 62.0f) 0.95f label "RPM"
-            addText (panelLeft + 480.0f) (panelTop + 62.0f) 0.95f label "MAG"
+            addTextRight (panelRect.X + panelRect.W - 26.0f) (panelRect.Y + 30.0f) 1.0f label hint
+            let rows = { X = panelRect.X + 18.0f; Y = panelRect.Y + 82.0f; W = panelRect.W - 36.0f; H = rowHeight * float32 weapons.Length }
+            let columns = [| 0.0f, "WEAPON"; 280.0f, "DMG"; 360.0f, "RPM"; 440.0f, "MAG" |]
+            tableHeader rows (panelRect.Y + 62.0f) 0.95f label columns
             weapons
             |> Array.iteri (fun index weaponClass ->
-                let slotTop = panelTop + 82.0f + float32 index * rowHeight
-                let nameY = MenuLayout.rowTextY slotTop rowHeight 1.15f
-                let statY = MenuLayout.rowTextY slotTop rowHeight 1.0f
                 let isSelected = index = selected
                 let isCurrent = weaponClass.Name = weapon.Class.Name
-                if isSelected then rowHighlight panelLeft panelWidth (slotTop + 2.0f) (rowHeight - 4.0f)
                 let color =
                     if isSelected then Vector4(1.0f, 0.91f, 0.64f, 1.0f)
                     elif isCurrent then Vector4(1.0f, 0.86f, 0.30f, 0.95f)
                     else white
-                addText (panelLeft + 40.0f) nameY 1.15f color (weaponClass.Name.ToUpperInvariant())
                 let pellets = if weaponClass.Pellets > 1 then $"x{weaponClass.Pellets}" else ""
-                addText (panelLeft + 320.0f) statY 1.0f color $"{int (Units.raw weaponClass.Damage)}{pellets}"
-                addText (panelLeft + 400.0f) statY 1.0f color $"{int weaponClass.RoundsPerMin}"
-                addText (panelLeft + 480.0f) statY 1.0f color $"{weaponClass.MagSize}"
-                if isCurrent then addText (panelLeft + 540.0f) statY 1.0f color "<")
-            panelPrompt panelTop panelHeight "UP/DOWN SELECT   ENTER EQUIP   ESC CLOSE")
+                let cells =
+                    [ fst columns[0], 1.15f, weaponClass.Name.ToUpperInvariant()
+                      fst columns[1], 1.0f, $"{int (Units.raw weaponClass.Damage)}{pellets}"
+                      fst columns[2], 1.0f, $"{int weaponClass.RoundsPerMin}"
+                      fst columns[3], 1.0f, $"{weaponClass.MagSize}" ]
+                let cells = if isCurrent then cells @ [ 500.0f, 1.0f, "<" ] else cells
+                tableRow rows rowHeight index isSelected color cells))
         info.Menu
         |> Option.iter (fun menu ->
             let options = StartMenu.items menu
             let firstVisible, visibleCount = StartMenu.visibleRange menu
-            let rowHeight = MenuLayout.RowHeight
-            let panelWidth = MenuLayout.panelWidth width
-            let panelHeight = MenuLayout.panelHeight visibleCount
-            let panelLeft, panelTop = overlayPanel true 1.0f panelWidth panelHeight
-            addTextCentered centerX (panelTop + 24.0f) 3.0f white "IRONSIGHT"
+            let panelRect =
+                overlay true 1.0f (MenuLayout.panelWidth width) (MenuLayout.panelHeight visibleCount)
+                    "UP/DOWN OR MOUSE   ENTER/CLICK TO SELECT   ESC TO BACK"
+            // The exact rect StartMenu hit-tests hover against: pixels and
+            // hitboxes cannot disagree.
+            let rows = MenuLayout.rowsRect panelRect visibleCount
+            addTextCentered centerX (panelRect.Y + 24.0f) 3.0f white "IRONSIGHT"
             let subtitleColor = Vector4(0.68f, 0.72f, 0.67f, 1.0f)
             let cells = StartMenu.serverCells menu
             match cells with
             | Some _ ->
                 // The server table gets column headers aligned with the rows;
                 // the room count sits where the subtitle would be.
-                for offset, label in StartMenu.serverColumns do
-                    addText (panelLeft + 42.0f + offset) (panelTop + 68.0f) 1.0f subtitleColor label
-                addTextRight (panelLeft + panelWidth - 42.0f) (panelTop + 68.0f) 1.0f subtitleColor (StartMenu.subtitle menu)
-            | None -> addTextCentered centerX (panelTop + 68.0f) 1.0f subtitleColor (StartMenu.subtitle menu)
+                tableHeader rows (panelRect.Y + 68.0f) 1.0f subtitleColor StartMenu.serverColumns
+                addTextRight (panelRect.X + panelRect.W - 42.0f) (panelRect.Y + 68.0f) 1.0f subtitleColor (StartMenu.subtitle menu)
+            | None -> addTextCentered centerX (panelRect.Y + 68.0f) 1.0f subtitleColor (StartMenu.subtitle menu)
             if options.Length > visibleCount then
-                addTextRight (panelLeft + panelWidth - 42.0f) (panelTop + 46.0f) 0.9f subtitleColor
+                addTextRight (panelRect.X + panelRect.W - 42.0f) (panelRect.Y + 46.0f) 0.9f subtitleColor
                     $"{firstVisible + 1}-{firstVisible + visibleCount} OF {options.Length}"
             for slot in 0 .. visibleCount - 1 do
                 let index = firstVisible + slot
-                let slotTop = panelTop + MenuLayout.FirstRowTop + float32 slot * rowHeight
-                let y = MenuLayout.rowTextY slotTop rowHeight 1.3f
                 let selected = index = menu.Selected
-                if selected then rowHighlight panelLeft panelWidth (slotTop + 6.0f) (rowHeight - 12.0f)
                 let color = if selected then Vector4(1.0f, 0.91f, 0.64f, 1.0f) else white
-                match cells with
-                | Some rows when index < rows.Length ->
-                    for offset, text in rows[index] do
-                        addText (panelLeft + 42.0f + offset) y 1.3f color text
-                | _ -> addText (panelLeft + 42.0f) y 1.3f color options[index]
-            panelPrompt panelTop panelHeight "UP/DOWN OR MOUSE   ENTER/CLICK TO SELECT   ESC TO BACK")
+                let rowCells =
+                    match cells with
+                    | Some serverRows when index < serverRows.Length ->
+                        [ for offset, text in serverRows[index] -> offset, 1.3f, text ]
+                    | _ -> [ 0.0f, 1.3f, options[index] ]
+                tableRow rows MenuLayout.RowHeight slot selected color rowCells)
         info.SettingsScreen
         |> Option.iter (fun screen ->
             let rowHeight = 40.0f
-            let rows = SettingsUi.visibleRows screen
+            let visible = SettingsUi.visibleRows screen
             let panelWidth = min 860.0f (float32 width - 48.0f)
-            let panelHeight = 150.0f + rowHeight * float32 rows.Length
-            let panelLeft, panelTop = overlayPanel true 1.0f panelWidth panelHeight
-            let title = "SETTINGS"
-            addTextCentered centerX (panelTop + 26.0f) 2.4f white title
-            rows
+            let panelRect =
+                overlay true 1.0f panelWidth (150.0f + rowHeight * float32 visible.Length)
+                    "UP/DOWN SELECT   LEFT/RIGHT ADJUST   ENTER CONFIRM   ESC BACK"
+            addTextCentered centerX (panelRect.Y + 26.0f) 2.4f white "SETTINGS"
+            let rows = { X = panelRect.X + 18.0f; Y = panelRect.Y + 85.0f; W = panelRect.W - 36.0f; H = rowHeight * float32 visible.Length }
+            visible
             |> List.iteri (fun index row ->
-                let slotTop = panelTop + 85.0f + float32 index * rowHeight
-                let y = MenuLayout.rowTextY slotTop rowHeight 1.25f
-                if row.Selected then rowHighlight panelLeft panelWidth (slotTop + 4.0f) (rowHeight - 8.0f)
                 let labelColor =
                     if row.Header then Vector4(0.62f, 0.67f, 0.60f, 0.85f)
                     elif row.Selected then Vector4(1.0f, 0.91f, 0.64f, 1.0f)
                     else white
-                addText (panelLeft + 42.0f) y 1.25f labelColor row.Label
+                tableRow rows rowHeight index row.Selected labelColor [ 0.0f, 1.25f, row.Label ]
                 let value =
                     if row.Adjustable then $"< {row.Value} >"
                     elif row.Value = "" then ""
                     else row.Value
                 if value <> "" then
-                    addTextRight (panelLeft + panelWidth - 70.0f) y 1.25f labelColor value)
-            panelPrompt panelTop panelHeight "UP/DOWN SELECT   LEFT/RIGHT ADJUST   ENTER CONFIRM   ESC BACK")
+                    let slot = Rect.slot rowHeight index rows
+                    addTextRight (panelRect.X + panelRect.W - 70.0f) (Rect.textY 1.25f slot) 1.25f labelColor value))
         let data = vertices.ToArray()
         if data.Length > 0 then
             gl.Disable EnableCap.DepthTest

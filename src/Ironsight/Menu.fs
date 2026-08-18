@@ -5,9 +5,9 @@ open System.Numerics
 open Ironsight
 
 /// Shared geometry for the start-menu panel, used both to draw it (Hud) and
-/// to hit-test mouse hover against it (here). A row is a RowHeight-tall slot
-/// measured from FirstRowTop; the highlight bar, the text, and the hover
-/// hitbox all derive from the same slot so they can never drift apart.
+/// to hit-test mouse hover against it (here). rowsRect is the single source:
+/// the highlight bars, the row text, and the hover hitbox all derive from
+/// the same rect, so they can never drift apart.
 [<RequireQualifiedAccess>]
 module MenuLayout =
     let RowHeight = 54.0f
@@ -15,11 +15,20 @@ module MenuLayout =
     let panelHeight (rowCount: int) = 156.0f + RowHeight * float32 rowCount
     /// Top of the first row slot, measured from the panel top.
     let FirstRowTop = 99.0f
-    /// Text y that vertically centers a glyph line of `scale` (12 logical
-    /// pixels tall at scale 1) in a row slot, so cells drawn at different
-    /// scales share the slot's midline.
-    let rowTextY (slotTop: float32) (slotHeight: float32) (scale: float32) =
-        slotTop + (slotHeight - 12.0f * scale) * 0.5f
+
+    /// The centered panel rect for a page showing `rowCount` rows.
+    let panelRect (width: int) (height: int) (rowCount: int) =
+        let w = panelWidth width
+        let h = panelHeight rowCount
+        { X = float32 width * 0.5f - w * 0.5f; Y = float32 height * 0.5f - h * 0.5f; W = w; H = h }
+
+    /// The rows' shared rect inside the panel: highlight-bar extent and hover
+    /// hitbox; row text sits a fixed pad inside it.
+    let rowsRect (panel: Rect) (rowCount: int) =
+        { X = panel.X + 18.0f
+          Y = panel.Y + FirstRowTop
+          W = panel.W - 36.0f
+          H = RowHeight * float32 rowCount }
 
 type MenuPage = Main | NameEntry | OfflineMaps | ServerList | OnlineLoadout
 
@@ -106,6 +115,8 @@ module StartMenu =
     /// Column x-offsets from the row's left edge, shared by the header and rows.
     let serverColumns = [| 0.0f, "SERVER"; 300.0f, "MODE"; 500.0f, "PLAYERS"; 590.0f, "PHASE"; 700.0f, "PING" |]
 
+    let private columnX index = fst serverColumns[index]
+
     /// Server-table rows as (xOffset, text) cells drawn at fixed columns by
     /// the HUD; None on pages that draw plain labels. The trailing BACK row is
     /// not included — the HUD falls back to its label.
@@ -118,12 +129,12 @@ module StartMenu =
                     let value = row.Server.Url.Host
                     if value.Length > 26 then value.Substring(0, 26) else value
                 if row.Online then
-                    [| 0.0f, host
-                       300.0f, (if row.Mode = FreeForAll then "FREE FOR ALL" else "TEAM DEATHMATCH")
-                       500.0f, $"{row.Players}/{row.Capacity}"
-                       590.0f, row.Phase.ToUpperInvariant()
-                       700.0f, $"{row.PingMs}MS" |]
-                else [| 0.0f, host; 300.0f, "OFFLINE" |])
+                    [| columnX 0, host
+                       columnX 1, (if row.Mode = FreeForAll then "FREE FOR ALL" else "TEAM DEATHMATCH")
+                       columnX 2, $"{row.Players}/{row.Capacity}"
+                       columnX 3, row.Phase.ToUpperInvariant()
+                       columnX 4, $"{row.PingMs}MS" |]
+                else [| columnX 0, host; columnX 1, "OFFLINE" |])
             |> Some
         | _ -> None
 
@@ -155,13 +166,8 @@ module StartMenu =
         scrollOffset total state.Selected state.FirstVisible, min MaxVisibleRows total
 
     let private hoveredIndex (width: int) (height: int) (count: int) (pointer: Vector2) =
-        let rowHeight = MenuLayout.RowHeight
-        let panelWidth = MenuLayout.panelWidth width
-        let left = float32 width * 0.5f - panelWidth * 0.5f
-        let top = float32 height * 0.5f - MenuLayout.panelHeight count * 0.5f + MenuLayout.FirstRowTop
-        if pointer.X >= left + 18.0f && pointer.X <= left + panelWidth - 18.0f && pointer.Y >= top && pointer.Y < top + rowHeight * float32 count then
-            Some(int ((pointer.Y - top) / rowHeight))
-        else None
+        MenuLayout.rowsRect (MenuLayout.panelRect width height count) count
+        |> Rect.slotAt MenuLayout.RowHeight count pointer
 
     let update (width: int) (height: int) (input: MenuInput) (state: StartMenuState) =
         let editedName =
