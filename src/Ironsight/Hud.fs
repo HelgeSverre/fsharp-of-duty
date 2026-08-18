@@ -353,14 +353,13 @@ type Hud(gl: GL) =
         info.LoadoutScreen
         |> Option.iter (fun selected ->
             let weapons = Tuning.onlineWeapons
-            let rowHeight = 30.0f
-            let panelWidth = min 640.0f (float32 width - 48.0f)
-            let panelHeight = 150.0f + rowHeight * float32 weapons.Length
-            let panelRect = overlay false accent.W panelWidth panelHeight "UP/DOWN SELECT   ENTER EQUIP   ESC CLOSE"
+            let rowHeight = LoadoutMenu.RowHeight
+            let picker = LoadoutMenu.panelRect width height
+            let panelRect = overlay false accent.W picker.W picker.H "UP/DOWN, MOUSE   ENTER/CLICK EQUIP   ESC CLOSE"
             addText (panelRect.X + 26.0f) (panelRect.Y + 20.0f) 2.0f white "LOADOUT"
             let hint = if info.Online.IsSome then "ARMS ON YOUR NEXT SPAWN" else "SWAPS IMMEDIATELY"
             addTextRight (panelRect.X + panelRect.W - 26.0f) (panelRect.Y + 30.0f) 1.0f label hint
-            let rows = { X = panelRect.X + 18.0f; Y = panelRect.Y + 82.0f; W = panelRect.W - 36.0f; H = rowHeight * float32 weapons.Length }
+            let rows = LoadoutMenu.rowsRect panelRect
             let columns = [| 0.0f, "WEAPON"; 280.0f, "DMG"; 360.0f, "RPM"; 440.0f, "MAG" |]
             tableHeader rows (panelRect.Y + 62.0f) 0.95f label columns
             weapons
@@ -414,14 +413,14 @@ type Hud(gl: GL) =
                 tableRow rows MenuLayout.RowHeight slot selected color rowCells)
         info.SettingsScreen
         |> Option.iter (fun screen ->
-            let rowHeight = 40.0f
+            let rowHeight = SettingsUi.RowHeight
             let visible = SettingsUi.visibleRows screen
-            let panelWidth = min 860.0f (float32 width - 48.0f)
+            let settingsPanel = SettingsUi.panelRect width height visible.Length
             let panelRect =
-                overlay true 1.0f panelWidth (150.0f + rowHeight * float32 visible.Length)
-                    "UP/DOWN SELECT   LEFT/RIGHT ADJUST   ENTER CONFIRM   ESC BACK"
+                overlay true 1.0f settingsPanel.W settingsPanel.H
+                    "UP/DOWN, MOUSE   LEFT/RIGHT ADJUST   ENTER/CLICK CONFIRM   ESC BACK"
             addTextCentered centerX (panelRect.Y + 26.0f) 2.4f white "SETTINGS"
-            let rows = { X = panelRect.X + 18.0f; Y = panelRect.Y + 85.0f; W = panelRect.W - 36.0f; H = rowHeight * float32 visible.Length }
+            let rows = SettingsUi.rowsRect panelRect visible.Length
             visible
             |> List.iteri (fun index row ->
                 let labelColor =

@@ -151,6 +151,25 @@ module ClientTests =
         Assert.Equal(Some ExitGame, quitAction)
 
     [<Fact>]
+    let ``loadout picker supports mouse hover and click-to-equip`` () =
+        let idle = TestKit.idleMenuInput
+        let rowsRect = LoadoutMenu.rowsRect (LoadoutMenu.panelRect 1280 720)
+        let middleOf index =
+            let slot = Rect.slot LoadoutMenu.RowHeight index rowsRect
+            Vector2(slot.X + slot.W * 0.5f, slot.Y + slot.H * 0.5f)
+        let struct (hoveredIndex, browsing) =
+            LoadoutMenu.update 1280 720 { idle with Pointer = Some(middleOf 3) } 0
+        Assert.Equal(3, hoveredIndex)
+        Assert.Equal(LoadoutMenu.Browsing, browsing)
+        let struct (_, equipped) =
+            LoadoutMenu.update 1280 720 { idle with Pointer = Some(middleOf 3); Clicked = true } 0
+        Assert.Equal(LoadoutMenu.Chosen Tuning.onlineWeapons[3].Name, equipped)
+        // A click with the pointer outside the rows equips nothing.
+        let struct (_, outside) =
+            LoadoutMenu.update 1280 720 { idle with Pointer = Some(Vector2(5.0f, 5.0f)); Clicked = true } 0
+        Assert.Equal(LoadoutMenu.Browsing, outside)
+
+    [<Fact>]
     let ``row slot geometry round-trips between drawing and hit-testing`` () =
         let rows = { X = 100.0f; Y = 200.0f; W = 600.0f; H = 54.0f * 5.0f }
         for index in 0..4 do

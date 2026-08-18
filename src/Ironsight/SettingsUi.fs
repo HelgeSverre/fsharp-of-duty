@@ -26,6 +26,14 @@ module SettingsUi =
     [<Literal>]
     let MaxVisibleRows = 8
 
+    let RowHeight = 40.0f
+    let FirstRowTop = 85.0f
+
+    let panelRect (width: int) (height: int) (visibleCount: int) =
+        Rect.centered width height (min 860.0f (float32 width - 48.0f)) (150.0f + RowHeight * float32 visibleCount)
+
+    let rowsRect (panel: Rect) (visibleCount: int) = Rect.rowsIn FirstRowTop RowHeight visibleCount panel
+
     let rows (settings: GameSettings) : Row array =
         [| { Label = "VIDEO"
              Kind = Header
@@ -119,20 +127,31 @@ module SettingsUi =
                   | _ -> false
               Selected = index = state.Selected } ]
 
-    let update (input: MenuInput) (state: State) =
+    let update (width: int) (height: int) (input: MenuInput) (state: State) =
         let all = rows state.Settings
+        // Hover hits the drawn window; header rows are labels, not targets.
+        let visibleCount = min MaxVisibleRows all.Length
+        let hovered =
+            input.Pointer
+            |> Option.bind (fun pointer ->
+                rowsRect (panelRect width height visibleCount) visibleCount
+                |> Rect.slotAt RowHeight visibleCount pointer)
+            |> Option.map (fun slot -> min (state.FirstVisible + slot) (all.Length - 1))
+            |> Option.filter (fun index -> all[index].Kind <> Header)
         let mutable selected = state.Selected
+        hovered |> Option.iter (fun index -> selected <- index)
         if input.Up then selected <- move all -1 selected
         if input.Down then selected <- move all 1 selected
         let row = all[selected]
         let direction = if input.Left then -1 elif input.Right then 1 else 0
+        let activate = input.Activate || (input.Clicked && hovered.IsSome)
         let stepWhen condition = if condition then row.Step state.Settings direction else state.Settings
         let settings =
             match row.Kind with
             | Header -> state.Settings
             | Slider _ -> stepWhen (direction <> 0)
-            | Toggle | Cycle -> stepWhen (direction <> 0 || input.Activate)
-            | Action -> stepWhen input.Activate
+            | Toggle | Cycle -> stepWhen (direction <> 0 || activate)
+            | Action -> stepWhen activate
         { Settings = settings
           Selected = selected
           FirstVisible = scroll all MaxVisibleRows selected state.FirstVisible }

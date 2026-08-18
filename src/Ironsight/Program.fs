@@ -294,7 +294,7 @@ module Program =
                                 screen <- Screen.Menu(home, state, None)
                                 Settings.save settings |> ignore
                             else
-                                let updated = SettingsUi.update menuInput settingsState
+                                let updated = SettingsUi.update window.Size.X window.Size.Y menuInput settingsState
                                 screen <- Screen.Menu(home, state, Some updated)
                                 if updated.Settings <> settings then
                                     settings <- updated.Settings
@@ -345,7 +345,7 @@ module Program =
                                  // and the server coasts the idle player.
                                  setScreen (Screen.Menu(Pause, StartMenu.create playerName, None))
                          | Screen.Loadout selected ->
-                             let struct (nextSelected, choice) = LoadoutMenu.update (inputSampler.ConsumeMenuInput()) selected
+                             let struct (nextSelected, choice) = LoadoutMenu.update window.Size.X window.Size.Y (inputSampler.ConsumeMenuInput()) selected
                              match choice with
                              | LoadoutMenu.Browsing -> screen <- Screen.Loadout nextSelected
                              | LoadoutMenu.Closed -> setScreen Screen.Playing

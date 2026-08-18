@@ -23,6 +23,21 @@ module Rect =
     /// the slot's midline.
     let textY (scale: float32) (slot: Rect) = slot.Y + (slot.H - 12.0f * scale) * 0.5f
 
+    /// A w-by-h rect centered on the screen.
+    let centered (screenWidth: int) (screenHeight: int) (w: float32) (h: float32) =
+        { X = float32 screenWidth * 0.5f - w * 0.5f
+          Y = float32 screenHeight * 0.5f - h * 0.5f
+          W = w
+          H = h }
+
+    /// The rows region inside a panel: chrome-inset 18 on each side, rows
+    /// stacked from `firstRowTop` below the panel's header area.
+    let rowsIn (firstRowTop: float32) (rowHeight: float32) (count: int) (panel: Rect) =
+        { X = panel.X + 18.0f
+          Y = panel.Y + firstRowTop
+          W = panel.W - 36.0f
+          H = rowHeight * float32 count }
+
     /// Which of `count` row slots stacked from r.Y the point falls in — the
     /// hover hit-test, derived from the same rect the rows are drawn in.
     let slotAt (rowHeight: float32) (count: int) (point: Vector2) (r: Rect) =

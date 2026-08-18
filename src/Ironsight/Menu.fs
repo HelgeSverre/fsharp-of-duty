@@ -18,17 +18,11 @@ module MenuLayout =
 
     /// The centered panel rect for a page showing `rowCount` rows.
     let panelRect (width: int) (height: int) (rowCount: int) =
-        let w = panelWidth width
-        let h = panelHeight rowCount
-        { X = float32 width * 0.5f - w * 0.5f; Y = float32 height * 0.5f - h * 0.5f; W = w; H = h }
+        Rect.centered width height (panelWidth width) (panelHeight rowCount)
 
     /// The rows' shared rect inside the panel: highlight-bar extent and hover
     /// hitbox; row text sits a fixed pad inside it.
-    let rowsRect (panel: Rect) (rowCount: int) =
-        { X = panel.X + 18.0f
-          Y = panel.Y + FirstRowTop
-          W = panel.W - 36.0f
-          H = RowHeight * float32 rowCount }
+    let rowsRect (panel: Rect) (rowCount: int) = Rect.rowsIn FirstRowTop RowHeight rowCount panel
 
 type MenuPage = Main | NameEntry | OfflineMaps | ServerList | OnlineLoadout
 
@@ -73,14 +67,29 @@ module LoadoutMenu =
         | Closed
         | Chosen of weaponName: string
 
-    let update (input: MenuInput) (selected: int) =
+    let RowHeight = 30.0f
+    let FirstRowTop = 82.0f
+
+    let panelRect (width: int) (height: int) =
+        Rect.centered width height (min 640.0f (float32 width - 48.0f)) (150.0f + RowHeight * float32 Tuning.onlineWeapons.Length)
+
+    let rowsRect (panel: Rect) = Rect.rowsIn FirstRowTop RowHeight Tuning.onlineWeapons.Length panel
+
+    let update (width: int) (height: int) (input: MenuInput) (selected: int) =
         let count = Tuning.onlineWeapons.Length
+        // Hover hits the same rect the HUD draws the rows in.
+        let hovered =
+            input.Pointer
+            |> Option.bind (fun pointer -> Rect.slotAt RowHeight count pointer (rowsRect (panelRect width height)))
         let next =
-            if input.Up then (selected + count - 1) % count
-            elif input.Down then (selected + 1) % count
-            else selected
+            match hovered with
+            | Some index -> index
+            | None when input.Up -> (selected + count - 1) % count
+            | None when input.Down -> (selected + 1) % count
+            | None -> selected
+        let activate = input.Activate || (input.Clicked && hovered.IsSome)
         if input.Back then struct (next, Closed)
-        elif input.Activate then struct (next, Chosen Tuning.onlineWeapons[next].Name)
+        elif activate then struct (next, Chosen Tuning.onlineWeapons[next].Name)
         else struct (next, Browsing)
 
 [<RequireQualifiedAccess>]
