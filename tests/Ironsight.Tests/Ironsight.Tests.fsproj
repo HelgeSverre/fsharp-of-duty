@@ -22,5 +22,7 @@
     <Compile Include="SettingsTests.fs" />
     <Compile Include="ClientTests.fs" />
     <Compile Include="ServerTests.fs" />
+    <Compile Include="MatchScript.fs" />
+    <Compile Include="IntegrationTests.fs" />
   </ItemGroup>
 </Project>

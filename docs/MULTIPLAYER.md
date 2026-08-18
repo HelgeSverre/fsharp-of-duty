@@ -144,6 +144,41 @@ account leaderboard. It exposes public callsigns, teams, scores, life state, and
 weapon names but never session tokens. The arsenal endpoint is cacheable for five
 minutes; leaderboard responses explicitly disable caching.
 
+## Scripted match tests
+
+`tests/Ironsight.Tests/MatchScript.fs` drives real `OnlineClient` bots over real
+WebSockets from a list of `Act` values. Acts set intent — `Move`, `Press`,
+`FaceEnemy` — and a background pump turns that intent into input frames at tick
+rate, so a scenario never spells out individual frames.
+
+```fsharp
+MatchScript.run uri TeamDeathmatch [
+    Join "Alpha"
+    Join "Bravo"
+    WaitUntil("the match reaches Playing", 30.0, fun snapshot -> snapshot.Phase = Playing)
+    Move("Alpha", Vector2(0.0f, 1.0f))
+    FaceEnemy "Alpha"
+    Press("Alpha", InputButtons.Fire)
+    WaitUntil("shot events reach the other client", 5.0, fun snapshot ->
+        snapshot.Events |> Array.exists (fun event -> event.Kind = "shot"))
+    Leave "Alpha"
+]
+```
+
+A failed `Expect` or `WaitUntil` reports the label plus every bot's last snapshot.
+
+```sh
+just smoke          # scenarios in tests/Ironsight.Tests/IntegrationTests.fs
+just test           # unit tests only; the socket tests are filtered out
+```
+
+`just smoke` boots the application in-process on an ephemeral port via
+`Program.build`, so it needs no network and runs in CI. Reaching `Playing`
+requires two ready players plus the ten-second warmup, so expect these to take
+around fifteen seconds. Timing is wall-clock, so scenarios assert on outcomes
+rather than exact ticks; `ServerTests.fs` covers tick-exact behaviour by driving
+`MatchHost` directly.
+
 ## Fly.io
 
 The Fly app is `fsharp-of-duty` in region `arn`. The checked-in configuration
@@ -160,3 +195,15 @@ flyctl checks list --app fsharp-of-duty
 The deployment uses a rolling Machine update. A brief failed health check while
 the new process starts is expected; traffic becomes available after
 `/health/ready` passes.
+
+`/health/ready` returns a constant, so it proves the process is listening and
+nothing more. After a deploy, verify the match loop itself:
+
+```sh
+just smoke-remote
+```
+
+That connects a real bot to `wss://fsharp-of-duty.fly.dev/play` and asserts the
+server tick advances, which exercises the handshake, the 60 Hz match loop and the
+20 Hz snapshot pump. It joins the live public room, so it appears briefly on the
+leaderboard. Pass a different URL as the argument to check another deployment.

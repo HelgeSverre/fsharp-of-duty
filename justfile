@@ -109,10 +109,21 @@ format: _sdk
 lint: _sdk
     {{ dotnet }} format {{ solution }} --verify-no-changes --no-restore
 
-# Run the complete headless test suite.
+# Run the fast headless test suite (excludes the socket integration tests).
 [group('test')]
 test: _sdk
-    {{ dotnet }} test {{ tests }} --nologo
+    {{ dotnet }} test {{ tests }} --nologo --filter "Category!=Integration"
+
+# Drive scripted matches over real WebSockets against an in-process server.
+[group('test')]
+smoke: _sdk
+    {{ dotnet }} test {{ tests }} --nologo --filter "Category=Integration"
+
+# Smoke test a deployed server. Connects a live bot, so it joins the public room.
+[group('test')]
+[unix]
+smoke-remote server="wss://fsharp-of-duty.fly.dev/play": _sdk
+    IRONSIGHT_SMOKE_SERVER="{{ server }}" {{ dotnet }} test {{ tests }} --nologo --filter "FullyQualifiedName~advancing simulation"
 
 # Run tests in release mode without restoring.
 [group('test')]
@@ -121,7 +132,7 @@ test-release: _sdk
 
 # Local pre-commit gate.
 [group('test')]
-check: lint build test
+check: lint build test smoke
 
 # Build the Fly-compatible dedicated-server image.
 [group('container')]

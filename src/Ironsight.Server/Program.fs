@@ -115,19 +115,15 @@ module Program =
                     do! socket.CloseAsync(WebSocketCloseStatus.PolicyViolation, "First message must be a compatible hello.", cancellationToken)
     }
 
-    [<EntryPoint>]
-    let main args =
+    /// Builds the configured application without starting it. Tests bind port 0
+    /// to get an ephemeral port; the real process passes the PORT env value.
+    let build (args: string array) (port: int) =
         let sourceWebRoot = IO.Path.GetFullPath("../../website", __SOURCE_DIRECTORY__)
         let options =
             WebApplicationOptions(
                 Args = args,
                 WebRootPath = if IO.Directory.Exists sourceWebRoot then sourceWebRoot else null)
         let builder = WebApplication.CreateBuilder options
-        let port =
-            Environment.GetEnvironmentVariable "PORT"
-            |> Option.ofObj
-            |> Option.bind (fun value -> match Int32.TryParse value with true, parsed -> Some parsed | _ -> None)
-            |> Option.defaultValue 8080
         builder.WebHost.UseUrls($"http://0.0.0.0:{port}") |> ignore
         let matchLevel =
             match Environment.GetEnvironmentVariable "IRONSIGHT_LEVEL" with
@@ -169,5 +165,14 @@ module Program =
         |> ignore
         app.Map("/play", Action<IApplicationBuilder>(fun branch ->
             branch.Run(fun context -> handleSocket matches context) |> ignore)) |> ignore
-        app.Run()
+        app
+
+    [<EntryPoint>]
+    let main args =
+        let port =
+            Environment.GetEnvironmentVariable "PORT"
+            |> Option.ofObj
+            |> Option.bind (fun value -> match Int32.TryParse value with true, parsed -> Some parsed | _ -> None)
+            |> Option.defaultValue 8080
+        (build args port).Run()
         0
