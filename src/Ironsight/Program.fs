@@ -51,6 +51,10 @@ module Program =
         let mutable lastOnlineEventId = 0L
         let mutable onlineSnapshot: OnlineSnapshot option = None
         let mutable onlineLevel: Level option = None
+        // Residual misprediction after a reconcile, decayed over ~100 ms and
+        // applied to the *rendered* position only (QuakeWorld-style error
+        // smoothing): tiny corrections glide instead of snapping the camera.
+        let mutable predictionError = System.Numerics.Vector3.Zero
         let mutable serverStatusTask: Task<ServerStatus option> option = None
         let mutable serverStatusAt = DateTimeOffset.MinValue
         let mutable predictedFireCooldown = 0.0f
@@ -231,6 +235,7 @@ module Program =
                 hitMarkerRemaining <- max (Units.seconds 0.0f) (hitMarkerRemaining - Tuning.TickDuration)
                 if hitMarkerRemaining <= Units.seconds 0.0f then hitMarkerLethal <- false
                 inventoryShow <- max (Units.seconds 0.0f) (inventoryShow - Tuning.TickDuration)
+                predictionError <- predictionError * 0.75f
                 predictedFireCooldown <- max 0.0f (predictedFireCooldown - float32 fixedStep)
                 match reconnectTask with
                 | Some attempt when attempt.IsCompleted ->
@@ -259,18 +264,25 @@ module Program =
                     | Some state ->
                         // Server list rows show live player counts and ping,
                         // refreshed every few seconds while the page is open.
-                        if state.Page = ServerList then
-                            match serverStatusTask with
-                            | Some fetch when fetch.IsCompleted ->
-                                serverStatusTask <- None
-                                serverStatusAt <- DateTimeOffset.UtcNow
-                                match fetch.GetAwaiter().GetResult() with
-                                | Some status -> menu <- Some { state with ServerStatus = Some status }
-                                | None -> ()
-                            | Some _ -> ()
-                            | None when DateTimeOffset.UtcNow - serverStatusAt > TimeSpan.FromSeconds 3.0 ->
-                                serverStatusTask <- Some(fetchServerStatus ())
-                            | None -> ()
+                        // The status is folded into the state *before* the menu
+                        // update below runs — assigning `menu` here instead was
+                        // clobbered by the update's own reassignment, leaving
+                        // the page stuck on "pinging".
+                        let state =
+                            if state.Page <> ServerList then state
+                            else
+                                match serverStatusTask with
+                                | Some fetch when fetch.IsCompleted ->
+                                    serverStatusTask <- None
+                                    serverStatusAt <- DateTimeOffset.UtcNow
+                                    match fetch.GetAwaiter().GetResult() with
+                                    | Some status -> { state with ServerStatus = Some status }
+                                    | None -> state
+                                | Some _ -> state
+                                | None when DateTimeOffset.UtcNow - serverStatusAt > TimeSpan.FromSeconds 3.0 ->
+                                    serverStatusTask <- Some(fetchServerStatus ())
+                                    state
+                                | None -> state
                         match settingsScreen with
                         | Some screen ->
                             let menuInput = inputSampler.ConsumeMenuInput()
@@ -422,7 +434,12 @@ module Program =
                                     hitMarkerLethal <- lethal
                                     hitMarkerRemaining <- hitMarkerDuration lethal
                                 | None -> ()
+                                let beforeReconcile = current.Player.Position
                                 let reconciled, remaining = OnlineWorld.reconcile current.Level (pendingInputs |> Seq.toList) client.PlayerId current snapshot
+                                let error = predictionError + (beforeReconcile - reconciled.Player.Position)
+                                // Large errors are teleports (respawn, round
+                                // reset): snapping is correct there.
+                                predictionError <- if error.Length() > 1.0f then System.Numerics.Vector3.Zero else error
                                 current <- reconciled
                                 pendingInputs.Clear()
                                 remaining |> List.iter pendingInputs.Enqueue
@@ -505,7 +522,10 @@ module Program =
 
         window.add_Render(fun _ ->
             let alpha = float32 (accumulator / fixedStep)
-            let renderedWorld = RenderInterpolation.world alpha previous current
+            let renderedWorld =
+                let interpolated = RenderInterpolation.world alpha previous current
+                if predictionError = System.Numerics.Vector3.Zero then interpolated
+                else { interpolated with Player = { interpolated.Player with Position = interpolated.Player.Position + predictionError } }
             let subtitleText = subtitle |> Option.map (fun struct (text, _) -> text)
             let hudInfo =
                 { Online = onlineSnapshot

@@ -24,8 +24,14 @@ type PlayerSnapshot =
       x: float32
       y: float32
       z: float32
+      vx: float32
+      vy: float32
+      vz: float32
       yaw: float32
       pitch: float32
+      stance: string
+      crouchLatched: bool
+      crouchPrevHeld: bool
       health: float32
       alive: bool
       ready: bool
@@ -176,8 +182,17 @@ module Protocol =
                   x = player.Position.X
                   y = player.Position.Y
                   z = player.Position.Z
+                  // Velocity and stance make the client's replayed prediction
+                  // bit-identical to the server's simulation (the QuakeWorld
+                  // lesson: rebasing from position alone cannot be smooth).
+                  vx = player.Velocity.X
+                  vy = player.Velocity.Y
+                  vz = player.Velocity.Z
                   yaw = player.Yaw
                   pitch = player.Pitch
+                  stance = string player.Stance
+                  crouchLatched = player.CrouchLatched
+                  crouchPrevHeld = player.CrouchPrevHeld
                   health = Units.raw player.Health
                   alive = player.Alive
                   ready = player.Ready

@@ -31,7 +31,15 @@ module OnlineWorld =
         { previous with
             Id = EntityId snapshot.Id
             Position = snapshot.Position
-            Velocity = Vector3.Zero
+            // The full movement state, not just position: replaying pending
+            // inputs from a zeroed velocity can never match the continuous
+            // local prediction (the acceleration model needs several ticks to
+            // spin back up, and a jump arc collapses entirely), which showed
+            // up as 20 Hz stutter on flat ground and mangled jumps.
+            Velocity = snapshot.Velocity
+            Stance = snapshot.Stance
+            CrouchLatched = snapshot.CrouchLatched
+            CrouchPrevHeld = snapshot.CrouchPrevHeld
             Yaw = snapshot.Yaw
             Pitch = snapshot.Pitch
             Sprinting = false
@@ -46,7 +54,7 @@ module OnlineWorld =
           Team = snapshot.Team
           Position = snapshot.Position
           Facing = snapshot.Yaw
-          Stance = Standing
+          Stance = snapshot.Stance
           Health = Units.health snapshot.Health
           Behavior = if snapshot.Alive then Idle else Dying(Units.seconds 0.7f)
           Weapon = weaponFor snapshot

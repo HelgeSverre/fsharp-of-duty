@@ -16,8 +16,12 @@ type OnlinePlayer =
       Name: string
       Team: Team
       Position: Vector3
+      Velocity: Vector3
       Yaw: float32
       Pitch: float32
+      Stance: Stance
+      CrouchLatched: bool
+      CrouchPrevHeld: bool
       Health: float32
       Alive: bool
       Ready: bool
@@ -87,6 +91,7 @@ type OnlineClient(serverUri: Uri, playerName: string, requestedMode: GameMode, w
     let jsonOptions = JsonSerializerOptions(JsonSerializerDefaults.Web)
 
     let parseTeam = function "Allies" -> Allies | _ -> Axis
+    let parseStance = function "Crouched" -> Crouched | "Prone" -> Prone | _ -> Standing
     let parsePhase = function "Warmup" -> Warmup | "Playing" -> Playing | "Results" -> Results | _ -> Waiting
     let parseMode = function "FreeForAll" -> FreeForAll | _ -> TeamDeathmatch
 
@@ -146,8 +151,12 @@ type OnlineClient(serverUri: Uri, playerName: string, requestedMode: GameMode, w
                   Name = getString "name" value
                   Team = getString "team" value |> parseTeam
                   Position = Vector3(getFloat "x" value, getFloat "y" value, getFloat "z" value)
+                  Velocity = Vector3(getFloat "vx" value, getFloat "vy" value, getFloat "vz" value)
                   Yaw = getFloat "yaw" value
                   Pitch = getFloat "pitch" value
+                  Stance = getString "stance" value |> parseStance
+                  CrouchLatched = getBool "crouchLatched" value
+                  CrouchPrevHeld = getBool "crouchPrevHeld" value
                   Health = getFloat "health" value
                   Alive = getBool "alive" value
                   Ready = getBool "ready" value

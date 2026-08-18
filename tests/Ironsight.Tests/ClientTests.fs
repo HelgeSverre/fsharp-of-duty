@@ -215,8 +215,12 @@ module ClientTests =
                      Name = "Local"
                      Team = Allies
                      Position = Vector3(-10.0f, 0.0f, 10.0f)
+                     Velocity = Vector3.Zero
                      Yaw = 0.0f
                      Pitch = 0.0f
+                     Stance = Standing
+                     CrouchLatched = false
+                     CrouchPrevHeld = false
                      Health = 75.0f
                      Alive = true
                      Ready = true
@@ -231,8 +235,12 @@ module ClientTests =
                      Name = "Remote"
                      Team = Axis
                      Position = Vector3(4.0f, 0.0f, -4.0f)
+                     Velocity = Vector3.Zero
                      Yaw = 3.14f
                      Pitch = 0.0f
+                     Stance = Standing
+                     CrouchLatched = false
+                     CrouchPrevHeld = false
                      Health = 100.0f
                      Alive = true
                      Ready = true
@@ -255,6 +263,61 @@ module ClientTests =
         Assert.True(reconciled.Player.Position.Z < 10.0f)
         Assert.Single reconciled.Soldiers |> ignore
         Assert.Equal(EntityId 8, reconciled.Soldiers[0].Id)
+
+    [<Fact>]
+    let ``reconciliation from full movement state reproduces local prediction exactly`` () =
+        // The QuakeWorld property: rebasing on the snapshot (position AND
+        // velocity AND stance) and replaying the unacknowledged inputs must land
+        // exactly where continuous local prediction landed — including through a
+        // jump. Without velocity on the wire this fails by design.
+        let world = Sim.createTrainingWorld 700UL
+        let inputAt sequence buttons =
+            { Sequence = sequence; Move = Vector2.UnitY; Look = Vector2.Zero; Buttons = buttons }
+        let inputs =
+            [ for sequence in 1L..30L ->
+                inputAt sequence (if sequence = 10L then InputButtons.Jump else InputButtons.None) ]
+        // Continuous local prediction over all 30 frames.
+        let final =
+            inputs
+            |> List.fold (fun player input -> Movement.step Tuning.TickDuration input world.Level player) world.Player
+        // Server-equivalent state after frame 18 (mid-flight from the jump).
+        let atAck =
+            inputs
+            |> List.take 18
+            |> List.fold (fun player input -> Movement.step Tuning.TickDuration input world.Level player) world.Player
+        let snapshot =
+            { Tick = 500L
+              Mode = TeamDeathmatch
+              LevelName = world.Level.Name
+              Phase = Playing
+              AlliesScore = 0
+              AxisScore = 0
+              Players =
+                [| { Id = 1
+                     Name = "Local"
+                     Team = Allies
+                     Position = atAck.Position
+                     Velocity = atAck.Velocity
+                     Yaw = atAck.Yaw
+                     Pitch = atAck.Pitch
+                     Stance = atAck.Stance
+                     CrouchLatched = atAck.CrouchLatched
+                     CrouchPrevHeld = atAck.CrouchPrevHeld
+                     Health = 100.0f
+                     Alive = true
+                     Ready = true
+                     Ads = atAck.Ads
+                     Ammo = 30
+                     Reserve = 60
+                     WeaponName = "Thompson"
+                     Kills = 0
+                     Deaths = 0
+                     AcknowledgedInput = 18L } |]
+              Grenades = [||]
+              Events = [||] }
+        let reconciled, _ = OnlineWorld.reconcile world.Level inputs 1 world snapshot
+        Assert.InRange(Vector3.Distance(reconciled.Player.Position, final.Position), 0.0f, 0.0001f)
+        Assert.InRange(Vector3.Distance(reconciled.Player.Velocity, final.Velocity), 0.0f, 0.0001f)
 
     [<Fact>]
     let ``Fly hostname is the online default`` () =
