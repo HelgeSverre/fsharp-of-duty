@@ -5,6 +5,19 @@ open Ironsight
 open Silk.NET.Input
 
 type InputSampler(context: IInputContext) =
+    /// Plain held-key bindings. Fire/ADS/crouch/reload are handled separately
+    /// because they latch or toggle.
+    static let heldKeyButtons =
+        [ Key.ShiftLeft, InputButtons.Sprint
+          Key.Z, InputButtons.Prone
+          Key.G, InputButtons.Grenade
+          Key.Space, InputButtons.Jump
+          Key.Number1, InputButtons.Weapon1
+          Key.Number2, InputButtons.Weapon2
+          Key.Number3, InputButtons.Weapon3
+          Key.Number4, InputButtons.Weapon4
+          Key.Number5, InputButtons.Weapon5 ]
+
     let keyboard = context.Keyboards |> Seq.tryHead
     let mouse = context.Mice |> Seq.tryHead
     let mutable sequence = 0L
@@ -41,18 +54,22 @@ type InputSampler(context: IInputContext) =
         |> Option.iter (fun device ->
             device.add_KeyDown(fun _ key _ ->
                 if menuActive then
-                    if key = Key.Up then menuUp <- true
-                    elif key = Key.Down then menuDown <- true
-                    elif key = Key.Left then menuLeft <- true
-                    elif key = Key.Right then menuRight <- true
-                    elif key = Key.Enter then menuActivate <- true
-                    elif key = Key.Escape then menuBack <- true
-                    elif key = Key.Backspace then menuBackspace <- true
+                    match key with
+                    | Key.Up -> menuUp <- true
+                    | Key.Down -> menuDown <- true
+                    | Key.Left -> menuLeft <- true
+                    | Key.Right -> menuRight <- true
+                    | Key.Enter -> menuActivate <- true
+                    | Key.Escape -> menuBack <- true
+                    | Key.Backspace -> menuBackspace <- true
+                    | _ -> ()
                 else
-                    if key = Key.Escape then escapeLatched <- true
-                    elif key = Key.R then reloadLatched <- true
-                    elif key = Key.B then loadoutLatched <- true
-                    elif key = Key.F3 then debugLatched <- true)
+                    match key with
+                    | Key.Escape -> escapeLatched <- true
+                    | Key.R -> reloadLatched <- true
+                    | Key.B -> loadoutLatched <- true
+                    | Key.F3 -> debugLatched <- true
+                    | _ -> ())
             device.add_KeyChar(fun _ character ->
                 if menuActive && character >= ' ' && character <= '~' then
                     menuText <- menuText + string character))
@@ -87,7 +104,6 @@ type InputSampler(context: IInputContext) =
                 adsLatched
             else adsHeld
         if ads then buttons <- buttons ||| InputButtons.Ads
-        if pressed Key.ShiftLeft then buttons <- buttons ||| InputButtons.Sprint
         if reloadLatched then buttons <- buttons ||| InputButtons.Reload
         // Hold-to-crouch is the default; toggle mode latches here in the input
         // layer and simply keeps the button held, so the simulation only ever
@@ -100,14 +116,8 @@ type InputSampler(context: IInputContext) =
                 crouchLatched
             else crouchHeld
         if crouch then buttons <- buttons ||| InputButtons.Crouch
-        if pressed Key.Z then buttons <- buttons ||| InputButtons.Prone
-        if pressed Key.G then buttons <- buttons ||| InputButtons.Grenade
-        if pressed Key.Space then buttons <- buttons ||| InputButtons.Jump
-        if pressed Key.Number1 then buttons <- buttons ||| InputButtons.Weapon1
-        if pressed Key.Number2 then buttons <- buttons ||| InputButtons.Weapon2
-        if pressed Key.Number3 then buttons <- buttons ||| InputButtons.Weapon3
-        if pressed Key.Number4 then buttons <- buttons ||| InputButtons.Weapon4
-        if pressed Key.Number5 then buttons <- buttons ||| InputButtons.Weapon5
+        for key, button in heldKeyButtons do
+            if pressed key then buttons <- buttons ||| button
         let sampledLook = Vector2(System.Math.Clamp(lookDelta.X, -0.2f, 0.2f), System.Math.Clamp(lookDelta.Y, -0.2f, 0.2f))
         lookDelta <- Vector2.Zero
         fireLatched <- false

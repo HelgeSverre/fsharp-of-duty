@@ -170,7 +170,7 @@
     const classes = [];
     if (name.includes("Sniper")) classes.push("sniper");
     if (name.includes("Trench")) classes.push("shotgun");
-    if (name.includes("M1911")) classes.push("pistol");
+    if (name.includes("M1911") || name.includes("Luger")) classes.push("pistol");
     if (mode === "FullAuto") classes.push("auto");
     return classes.join(" ");
   }

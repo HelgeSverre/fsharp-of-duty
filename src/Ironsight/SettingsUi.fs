@@ -115,9 +115,7 @@ module SettingsUi =
               Header = all[index].Kind = Header
               Adjustable =
                   match all[index].Kind with
-                  | Slider _ -> true
-                  | Toggle -> true
-                  | Cycle -> true
+                  | Slider _ | Toggle | Cycle -> true
                   | _ -> false
               Selected = index = state.Selected } ]
 
@@ -128,13 +126,13 @@ module SettingsUi =
         if input.Down then selected <- move all 1 selected
         let row = all[selected]
         let direction = if input.Left then -1 elif input.Right then 1 else 0
+        let stepWhen condition = if condition then row.Step state.Settings direction else state.Settings
         let settings =
             match row.Kind with
             | Header -> state.Settings
-            | Slider _ -> if direction <> 0 then row.Step state.Settings direction else state.Settings
-            | Toggle -> if direction <> 0 || input.Activate then row.Step state.Settings direction else state.Settings
-            | Cycle -> if direction <> 0 || input.Activate then row.Step state.Settings direction else state.Settings
-            | Action -> if input.Activate then row.Step state.Settings direction else state.Settings
+            | Slider _ -> stepWhen (direction <> 0)
+            | Toggle | Cycle -> stepWhen (direction <> 0 || input.Activate)
+            | Action -> stepWhen input.Activate
         { Settings = settings
           Selected = selected
           FirstVisible = scroll all MaxVisibleRows selected state.FirstVisible }

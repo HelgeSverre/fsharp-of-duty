@@ -8,18 +8,10 @@ open Ironsight
 module Guns =
     let private placed position mesh = MeshGen.translate position mesh
 
-    let private rotationFromZ (direction: Vector3) =
-        let target = MathEx.normalizedOrZero direction
-        let dot = Vector3.Dot(Vector3.UnitZ, target)
-        if dot < -0.9999f then Quaternion.CreateFromAxisAngle(Vector3.UnitX, MathF.PI)
-        else
-            let axis = Vector3.Cross(Vector3.UnitZ, target)
-            Quaternion.Normalize(Quaternion(axis.X, axis.Y, axis.Z, 1.0f + dot))
-
     let private limb radius material (startPoint: Vector3) (endPoint: Vector3) =
         let delta = endPoint - startPoint
         MeshGen.cylinder 9 radius (max 0.01f (delta.Length())) material
-        |> MeshGen.transform (Matrix4x4.CreateFromQuaternion(rotationFromZ delta) * Matrix4x4.CreateTranslation((startPoint + endPoint) * 0.5f))
+        |> MeshGen.transform (Matrix4x4.CreateFromQuaternion(MathEx.rotationFromZ delta) * Matrix4x4.CreateTranslation((startPoint + endPoint) * 0.5f))
 
     let private rifleArms =
         MeshGen.union
@@ -130,6 +122,28 @@ module Guns =
                MeshGen.cylinder 10 0.035f 0.24f Metal |> placed (Vector3(0.0f, 0.06f, -0.62f))
                MeshGen.box (Vector3(0.025f, 0.04f, 0.03f)) Metal |> placed (Vector3(0.0f, 0.155f, -0.50f))
                MeshGen.box (Vector3(0.08f, 0.05f, 0.04f)) Metal |> placed (Vector3(0.0f, 0.155f, -0.06f)) |]
+
+    let private luger =
+        MeshGen.union
+            [| // Slim frame under a rounded receiver; the whole gun is narrower
+               // than the M1911 so the two pistols read differently at a glance.
+               MeshGen.box (Vector3(0.11f, 0.08f, 0.34f)) Metal |> placed (Vector3(0.0f, 0.01f, -0.20f))
+               MeshGen.cylinder 10 0.048f 0.30f Metal |> placed (Vector3(0.0f, 0.085f, -0.22f))
+               // Long thin exposed barrel — no slide wrapping it.
+               MeshGen.cylinder 10 0.026f 0.36f Metal |> placed (Vector3(0.0f, 0.085f, -0.66f))
+               // Toggle-lock knuckle: the sideways disc pair at the rear of the
+               // receiver is the Luger's signature.
+               MeshGen.cylinder 8 0.038f 0.17f Metal |> MeshGen.rotateY (MathF.PI * 0.5f) |> placed (Vector3(0.0f, 0.135f, -0.03f))
+               MeshGen.box (Vector3(0.06f, 0.05f, 0.10f)) Metal |> placed (Vector3(0.0f, 0.125f, -0.09f))
+               // Steeply raked wooden grip, far more angled than the M1911.
+               MeshGen.box (Vector3(0.10f, 0.26f, 0.13f)) Wood |> MeshGen.rotateX -0.60f |> placed (Vector3(0.0f, -0.13f, -0.02f))
+               // Trigger guard loop.
+               MeshGen.box (Vector3(0.09f, 0.02f, 0.11f)) Metal |> placed (Vector3(0.0f, -0.065f, -0.24f))
+               MeshGen.box (Vector3(0.02f, 0.045f, 0.02f)) Metal |> placed (Vector3(0.0f, -0.045f, -0.28f))
+               MeshGen.box (Vector3(0.02f, 0.045f, 0.02f)) Metal |> placed (Vector3(0.0f, -0.045f, -0.19f))
+               // Front blade at the muzzle, notch on the knuckle hump.
+               MeshGen.box (Vector3(0.02f, 0.04f, 0.025f)) Metal |> placed (Vector3(0.0f, 0.13f, -0.82f))
+               MeshGen.box (Vector3(0.05f, 0.03f, 0.03f)) Metal |> placed (Vector3(0.0f, 0.165f, -0.03f)) |]
 
     let private m1897 =
         MeshGen.union
@@ -247,6 +261,7 @@ module Guns =
             match name with
             | "Thompson" -> thompson
             | "M1911" -> m1911
+            | "Luger P08" -> luger
             | "M1897 Trench Gun" -> m1897
             | "Kar98k Sniper" -> kar98kSniper
             | "M1 Garand" -> m1Garand
@@ -256,5 +271,5 @@ module Guns =
             | "FG42" -> fg42
             | "BAR" -> bar
             | _ -> kar98k
-        let arms = if name = "M1911" then pistolArms else rifleArms
+        let arms = if name = "M1911" || name = "Luger P08" then pistolArms else rifleArms
         MeshGen.union [| weapon; arms |]

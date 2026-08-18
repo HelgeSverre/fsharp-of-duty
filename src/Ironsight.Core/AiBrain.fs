@@ -186,7 +186,7 @@ module AiBrain =
             combatSoldiers
             |> Array.mapi (fun i s -> i, s)
             |> Array.filter (fun (_, s) ->
-                s.Team = enemyTeam && s.Health > Units.health 0.0f
+                s.Team = enemyTeam && s.IsAlive
                 && Vector3.DistanceSquared(self.Position, s.Position) < rangeSq)
             |> Array.sortBy (fun (_, s) -> Vector3.DistanceSquared(self.Position, s.Position))
             |> Array.truncate maxCandidates
@@ -201,7 +201,7 @@ module AiBrain =
             if guard positioned.Id then soldiers, true
             else
                 let struct (weapon, requests) =
-                    Weapons.step dt 0.0f (wantsFire wantsToFire positioned.Weapon) (shouldReload positioned.Weapon) adsAmount &rng positioned.Weapon
+                    Weapons.step dt 0.0f positioned.Stance (wantsFire wantsToFire positioned.Weapon) (shouldReload positioned.Weapon) adsAmount &rng positioned.Weapon
                 soldiers[index] <- { positioned with Weapon = weapon }
                 for request in requests do
                     let origin = Ballistics.soldierMuzzleOrigin positioned
@@ -214,6 +214,104 @@ module AiBrain =
                     soldiers <- hitSoldiers
                     events.AddRange(hitEvents |> List.filter (function HitConfirmed _ -> false | _ -> true))
                 soldiers, true
+
+    /// Behaviour half of the Axis brain: movement, cover, and flanking against
+    /// the player's last known position. Pure — no RNG, no events.
+    let private tacticalBehavior dt (level: Level) (board: SquadBlackboard option) (playerId: EntityId) (lastKnown: Vector3) (perceived: Soldier) =
+        let hasCoveringFire = board |> Option.bind (fun value -> value.Suppressor) |> Option.exists ((<>) perceived.Id)
+        if perceived.Weapon.Class.Kind = MachineGun then
+            let facing = MathF.Atan2(lastKnown.X - perceived.Position.X, -(lastKnown.Z - perceived.Position.Z))
+            let cover =
+                { Pos = perceived.Position
+                  PeekDir = MathEx.yawForward facing
+                  Crouch = true
+                  Owner = Some perceived.Team }
+            { perceived with Facing = facing; Behavior = InCover(cover, Units.seconds 1.1f) }
+        else
+            let aggressive = aggression perceived.Id
+            // Healthy soldiers assault at speed with a lateral
+            // weave; only cover-seekers plod in a straight line.
+            let mover = if wantsCover perceived then moveTowards else moveWith 2.9f 0.55f
+            match perceived.Behavior with
+            | Idle ->
+                if wantsCover perceived then
+                    match closestCover lastKnown level perceived with
+                    | Some cover -> { perceived with Behavior = AdvancingTo(cover.Pos, findPath level perceived.Position cover.Pos) }
+                    | None -> { perceived with Behavior = AdvancingTo(lastKnown, findPath level perceived.Position lastKnown) }
+                elif hasCoveringFire && aggressive >= 0.6f then
+                    let (EntityId soldierId) = perceived.Id
+                    let toward = MathEx.horizontal (lastKnown - perceived.Position) |> MathEx.normalizedOrZero
+                    let side = Vector3(-toward.Z, 0.0f, toward.X) * (if soldierId % 2 = 0 then 9.0f else -9.0f)
+                    let flankPoint = lastKnown + side
+                    { perceived with Behavior = Flanking(playerId, findPath level perceived.Position flankPoint) }
+                else
+                    { perceived with Behavior = AdvancingTo(lastKnown, findPath level perceived.Position lastKnown) }
+            | AdvancingTo(waypoint, path) ->
+                match path with
+                | nextNode :: remaining ->
+                    let moved, arrived = mover dt level nextNode perceived
+                    { moved with Behavior = AdvancingTo(waypoint, if arrived then remaining else path) }
+                | [] ->
+                    let moved, arrived = mover dt level waypoint perceived
+                    if arrived then
+                        if wantsCover moved then
+                            match closestCover lastKnown level moved with
+                            | Some cover -> { moved with Behavior = InCover(cover, Units.seconds 0.0f) }
+                            | None -> { moved with Behavior = AdvancingTo(lastKnown, findPath level moved.Position lastKnown) }
+                        else
+                            // Keep pressing the live contact point.
+                            { moved with Behavior = AdvancingTo(lastKnown, []) }
+                    else moved
+            | InCover(cover, phase) ->
+                // Cover is a pause, not a career: after a few
+                // peek cycles a recovered soldier rejoins the
+                // assault. Aggressive types leave sooner.
+                let nextPhase = phase + dt
+                let dwell = Units.seconds (1.8f * (2.0f + 2.0f * (1.0f - aggressive)))
+                if nextPhase >= dwell && not (wantsCover perceived) then
+                    { perceived with Behavior = AdvancingTo(lastKnown, findPath level perceived.Position lastKnown) }
+                else
+                    { perceived with Position = cover.Pos; Behavior = InCover(cover, nextPhase) }
+            | Flanking(target, nextNode :: remaining) ->
+                let moved, arrived = mover dt level nextNode perceived
+                { moved with Behavior = Flanking(target, if arrived then remaining else nextNode :: remaining) }
+            | Flanking(_, []) ->
+                { perceived with Behavior = AdvancingTo(lastKnown, findPath level perceived.Position lastKnown) }
+            | state -> { perceived with Behavior = state }
+
+    /// Fire half of the Axis brain: step the weapon and shoot the player
+    /// through the loose battlefield cone. Returns the armed soldier and the
+    /// (possibly hurt) player.
+    let private fireAtPlayer dt (level: Level) (rng: byref<Rng.State>) (events: ResizeArray<GameEvent>) (player: Player) shouldFire (tactical: Soldier) =
+        let struct (weapon, requests) =
+            Weapons.step dt 0.0f tactical.Stance (wantsFire shouldFire tactical.Weapon) (shouldReload tactical.Weapon) 0.0f &rng tactical.Weapon
+        let armed = { tactical with Weapon = weapon }
+        let mutable updatedPlayer = player
+        for request in requests do
+            // Visibility was sampled at tick start; stop engaging
+            // once the player has fallen to earlier fire this tick.
+            if updatedPlayer.IsAlive then
+                let origin = Ballistics.soldierMuzzleOrigin armed
+                let target = updatedPlayer.Position + Vector3(0.0f, 1.05f, 0.0f)
+                // Player-facing AI deliberately shoots a loose cone. The cone
+                // tightens toward close range so a massed battlefield stays
+                // threatening without turning every rifleman into a laser or
+                // making point-blank encounters instant kills at range.
+                let range = Vector3.Distance(origin, target)
+                let aimFactor = Math.Clamp(6.0f / MathF.Max(1.0f, range), 0.35f, Tuning.EnemyAimSpreadMultiplier)
+                // Player-facing enemy fire keeps a fixed cone regardless of the
+                // weapon's player-facing hip spread. Scaling the existing offset
+                // preserves both the random distribution and the RNG stream.
+                let spreadScale = Tuning.EnemyHipSpread / MathF.Max(1e-4f, weapon.Class.HipSpread)
+                let direction = aimDirection origin target (request.DirectionOffset * spreadScale * aimFactor)
+                events.Add(ShotFired(Some armed.Id, origin, direction, weapon.Class.Name))
+                match playerHitDistance origin direction updatedPlayer with
+                | Some hitDistance when hitDistance < staticHitDistance origin direction level ->
+                    let hurt, hurtEvent = Damage.hurtPlayer (request.Damage * Tuning.EnemyDamageScale) (-direction) updatedPlayer
+                    updatedPlayer <- hurt
+                    events.Add hurtEvent
+                | _ -> ()
+        armed, updatedPlayer
 
     let step dt (rng: byref<Rng.State>) (level: Level) (blackboards: Map<int, SquadBlackboard>) (player: Player) (soldiers: Soldier array) =
         let mutable localRng = rng
@@ -264,70 +362,10 @@ module AiBrain =
                         let patrolGoal = Vector3(lane, perceived.Position.Y, 3.5f)
                         followRoute dt level patrolGoal perceived
                     | None -> { perceived with Behavior = Idle }
-                    | Some(struct (lastKnown, contactAge)) ->
+                    | Some(struct (lastKnown, _)) ->
                         let visible = playerVisible[index]
                         let board = Map.tryFind perceived.Squad blackboards
-                        let hasCoveringFire = board |> Option.bind (fun value -> value.Suppressor) |> Option.exists ((<>) perceived.Id)
-                        let tactical =
-                            if perceived.Weapon.Class.Kind = MachineGun then
-                                let facing = MathF.Atan2(lastKnown.X - perceived.Position.X, -(lastKnown.Z - perceived.Position.Z))
-                                let cover =
-                                    { Pos = perceived.Position
-                                      PeekDir = MathEx.yawForward facing
-                                      Crouch = true
-                                      Owner = Some perceived.Team }
-                                { perceived with Facing = facing; Behavior = InCover(cover, Units.seconds 1.1f) }
-                            else
-                                let aggressive = aggression perceived.Id
-                                // Healthy soldiers assault at speed with a lateral
-                                // weave; only cover-seekers plod in a straight line.
-                                let mover = if wantsCover perceived then moveTowards else moveWith 2.9f 0.55f
-                                match perceived.Behavior with
-                                | Idle ->
-                                    if wantsCover perceived then
-                                        match closestCover lastKnown level perceived with
-                                        | Some cover -> { perceived with Behavior = AdvancingTo(cover.Pos, findPath level perceived.Position cover.Pos) }
-                                        | None -> { perceived with Behavior = AdvancingTo(lastKnown, findPath level perceived.Position lastKnown) }
-                                    elif hasCoveringFire && aggressive >= 0.6f then
-                                        let (EntityId soldierId) = perceived.Id
-                                        let toward = MathEx.horizontal (lastKnown - perceived.Position) |> MathEx.normalizedOrZero
-                                        let side = Vector3(-toward.Z, 0.0f, toward.X) * (if soldierId % 2 = 0 then 9.0f else -9.0f)
-                                        let flankPoint = lastKnown + side
-                                        { perceived with Behavior = Flanking(updatedPlayer.Id, findPath level perceived.Position flankPoint) }
-                                    else
-                                        { perceived with Behavior = AdvancingTo(lastKnown, findPath level perceived.Position lastKnown) }
-                                | AdvancingTo(waypoint, path) ->
-                                    match path with
-                                    | nextNode :: remaining ->
-                                        let moved, arrived = mover dt level nextNode perceived
-                                        { moved with Behavior = AdvancingTo(waypoint, if arrived then remaining else path) }
-                                    | [] ->
-                                        let moved, arrived = mover dt level waypoint perceived
-                                        if arrived then
-                                            if wantsCover moved then
-                                                match closestCover lastKnown level moved with
-                                                | Some cover -> { moved with Behavior = InCover(cover, Units.seconds 0.0f) }
-                                                | None -> { moved with Behavior = AdvancingTo(lastKnown, findPath level moved.Position lastKnown) }
-                                            else
-                                                // Keep pressing the live contact point.
-                                                { moved with Behavior = AdvancingTo(lastKnown, []) }
-                                        else moved
-                                | InCover(cover, phase) ->
-                                    // Cover is a pause, not a career: after a few
-                                    // peek cycles a recovered soldier rejoins the
-                                    // assault. Aggressive types leave sooner.
-                                    let nextPhase = phase + dt
-                                    let dwell = Units.seconds (1.8f * (2.0f + 2.0f * (1.0f - aggressive)))
-                                    if nextPhase >= dwell && not (wantsCover perceived) then
-                                        { perceived with Behavior = AdvancingTo(lastKnown, findPath level perceived.Position lastKnown) }
-                                    else
-                                        { perceived with Position = cover.Pos; Behavior = InCover(cover, nextPhase) }
-                                | Flanking(target, nextNode :: remaining) ->
-                                    let moved, arrived = mover dt level nextNode perceived
-                                    { moved with Behavior = Flanking(target, if arrived then remaining else nextNode :: remaining) }
-                                | Flanking(_, []) ->
-                                    { perceived with Behavior = AdvancingTo(lastKnown, findPath level perceived.Position lastKnown) }
-                                | state -> { perceived with Behavior = state }
+                        let tactical = tacticalBehavior dt level board updatedPlayer.Id lastKnown perceived
                         let isSuppressor = board |> Option.bind (fun value -> value.Suppressor) = Some tactical.Id
                         let shouldFire =
                             visible && Set.contains tactical.Id engagementSlots
@@ -341,40 +379,15 @@ module AiBrain =
                                    | AdvancingTo _ -> true
                                    | Flanking _ -> true
                                    | _ -> false)
-                        let struct (weapon, requests) =
-                            Weapons.step dt 0.0f (wantsFire shouldFire tactical.Weapon) (shouldReload tactical.Weapon) 0.0f &localRng tactical.Weapon
-                        let armed = { tactical with Weapon = weapon }
+                        let armed, hurtPlayer = fireAtPlayer dt level &localRng events updatedPlayer shouldFire tactical
+                        updatedPlayer <- hurtPlayer
                         let (EntityId armedId) = armed.Id
                         steppedWeapons.Add armedId |> ignore
-                        for request in requests do
-                            // Visibility was sampled at tick start; stop engaging
-                            // once the player has fallen to earlier fire this tick.
-                            if updatedPlayer.Health > Units.health 0.0f then
-                                let origin = Ballistics.soldierMuzzleOrigin armed
-                                let target = updatedPlayer.Position + Vector3(0.0f, 1.05f, 0.0f)
-                                // Player-facing AI deliberately shoots a loose cone. The cone
-                                // tightens toward close range so a massed battlefield stays
-                                // threatening without turning every rifleman into a laser or
-                                // making point-blank encounters instant kills at range.
-                                let range = Vector3.Distance(origin, target)
-                                let aimFactor = Math.Clamp(6.0f / MathF.Max(1.0f, range), 0.35f, Tuning.EnemyAimSpreadMultiplier)
-                                // Player-facing enemy fire keeps a fixed cone regardless of the
-                                // weapon's player-facing hip spread. Scaling the existing offset
-                                // preserves both the random distribution and the RNG stream.
-                                let spreadScale = Tuning.EnemyHipSpread / MathF.Max(1e-4f, weapon.Class.HipSpread)
-                                let direction = aimDirection origin target (request.DirectionOffset * spreadScale * aimFactor)
-                                events.Add(ShotFired(Some armed.Id, origin, direction, weapon.Class.Name))
-                                match playerHitDistance origin direction updatedPlayer with
-                                | Some hitDistance when hitDistance < staticHitDistance origin direction level ->
-                                    let hurt, hurtEvent = Damage.hurtPlayer (request.Damage * Tuning.EnemyDamageScale) (-direction) updatedPlayer
-                                    updatedPlayer <- hurt
-                                    events.Add hurtEvent
-                                | _ -> ()
                         armed)
         let mutable combatSoldiers = updatedSoldiers
         for allyIndex in 0..combatSoldiers.Length - 1 do
             let ally = combatSoldiers[allyIndex]
-            if ally.Team = Allies && ally.Health > Units.health 0.0f then
+            if ally.Team = Allies && ally.IsAlive then
                 let position (self: Soldier) (enemy: Soldier) =
                     let distance = Vector3.Distance(self.Position, enemy.Position)
                     let positioned =
@@ -396,7 +409,7 @@ module AiBrain =
         // for the player to enter its perception cone.
         for axisIndex in 0..combatSoldiers.Length - 1 do
             let axis = combatSoldiers[axisIndex]
-            if axis.Team = Axis && axis.Health > Units.health 0.0f then
+            if axis.Team = Axis && axis.IsAlive then
                 let position (self: Soldier) (friendly: Soldier) =
                     let facing = MathF.Atan2(friendly.Position.X - self.Position.X, -(friendly.Position.Z - self.Position.Z))
                     struct ({ self with Facing = facing; Contacts = Map.add friendly.Id (struct (friendly.Position, Units.seconds 0.0f)) self.Contacts }, true)

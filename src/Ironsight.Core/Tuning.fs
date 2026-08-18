@@ -41,6 +41,9 @@ module Tuning =
     let BloomMax = 0.045f
     let BloomPerShot = 0.32f
     let MovementSpreadMultiplier = 1.6f
+    // Stance accuracy bonus applies to the whole cone (base spread + bloom).
+    let CrouchSpreadMultiplier = 0.75f
+    let ProneSpreadMultiplier = 0.55f
     let BodyPenetrationCost = 3.0f
     let BodyDamageRetention = 0.6f
 
@@ -111,6 +114,26 @@ module Tuning =
           Penetration = 5.0f
           HeadshotMultiplier = 1.5f
           MuzzleDistance = 0.58f }
+
+    // The precision sidearm: weakest round in the game but near-rifle accuracy,
+    // a snappy draw, and a 2.0x headshot multiplier. Two-taps with one headshot,
+    // three-taps body — the M1911 stays the harder-hitting, looser sibling.
+    let luger =
+        { Name = "Luger P08"
+          Mode = SemiAuto
+          Kind = Pistol
+          Damage = Units.health 34.0f
+          RoundsPerMin = 480.0f
+          MagSize = 8
+          ReloadTime = Units.seconds 1.5f
+          Pellets = 1
+          AdsTime = Units.seconds 0.09f
+          HipSpread = 0.038f
+          AdsSpread = 0.0045f
+          Recoil = [| Vector2(0.001f, 0.013f); Vector2(-0.002f, 0.015f) |]
+          Penetration = 4.0f
+          HeadshotMultiplier = 2.0f
+          MuzzleDistance = 0.70f }
 
     let mg42 =
         { Name = "MG42"
@@ -252,7 +275,7 @@ module Tuning =
 
     // Appended in this order on purpose: existing indices are load-bearing for
     // the online loadout menu and its tests.
-    let onlineWeapons = [| kar98k; thompson; m1911; kar98kSniper; m1897; m1Garand; stg44; mp40; leeEnfield; fg42; bar |]
+    let onlineWeapons = [| kar98k; thompson; m1911; kar98kSniper; m1897; m1Garand; stg44; mp40; leeEnfield; fg42; bar; luger |]
 
     let defaultWeapon = function Allies -> thompson | Axis -> kar98k
 

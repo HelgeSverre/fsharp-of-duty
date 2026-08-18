@@ -6,7 +6,7 @@ open System.Numerics
 [<RequireQualifiedAccess>]
 module Perception =
     let canSeePlayer (level: Level) (player: Player) (soldier: Soldier) =
-        if soldier.Health <= Units.health 0.0f || player.Health <= Units.health 0.0f then false
+        if soldier.IsDead || player.IsDead then false
         else
             let eye = soldier.Position + Vector3(0.0f, 1.55f, 0.0f)
             let torso = player.Position + Vector3(0.0f, 1.05f, 0.0f)
@@ -30,6 +30,6 @@ module Perception =
         { soldier with Contacts = contacts }
 
     let heardShot source radius (soldier: Soldier) =
-        if soldier.Health > Units.health 0.0f && Vector3.Distance(source, soldier.Position) <= radius then
+        if soldier.IsAlive && Vector3.Distance(source, soldier.Position) <= radius then
             { soldier with Contacts = Map.add (EntityId -1) (struct (source, Units.seconds 0.0f)) soldier.Contacts }
         else soldier

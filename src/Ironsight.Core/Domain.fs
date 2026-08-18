@@ -65,6 +65,9 @@ type Player =
       Active: int
       Grenade: GrenadeHand }
 
+    member this.IsAlive = this.Health > Units.health 0.0f
+    member this.IsDead = not this.IsAlive
+
 type CoverPoint =
     { Pos: Vector3
       PeekDir: Vector3
@@ -93,6 +96,9 @@ type Soldier =
       Contacts: Map<EntityId, struct (Vector3 * float32<s>)>
       Suppression: float32
       AnimPhase: float32 }
+
+    member this.IsAlive = this.Health > Units.health 0.0f
+    member this.IsDead = not this.IsAlive
 
 type Material = Brick | Plaster | Wood | Mud | Snow | Sandbag | Metal | UniformOlive | UniformFeldgrau | Skin | Water
 

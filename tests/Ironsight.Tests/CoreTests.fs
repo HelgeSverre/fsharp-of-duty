@@ -7,8 +7,7 @@ open Ironsight.ProcGen
 open Xunit
 
 module CoreTests =
-    let input sequence buttons move =
-        { Sequence = sequence; Move = move; Look = Vector2.Zero; Buttons = buttons }
+    let input = TestKit.input
 
     [<Fact>]
     let ``paintball killhouse is a bounded player versus four fight`` () =
@@ -45,14 +44,12 @@ module CoreTests =
         Assert.Equal(1, scoredRound.PlayerScore)
         Assert.True(scoredRound.ResetIn.IsSome)
         Assert.Contains(events, fun event -> event = Subtitle("MARSHAL", "ROUND WON"))
-        let mutable reset = scored
-        for tick in 2L..100L do
-            reset <- let struct (next, _) = Sim.step (input tick InputButtons.None Vector2.Zero) reset in next
+        let reset = TestKit.advance 2L 100L InputButtons.None scored
         let nextRound = reset.Round.Value
         Assert.Equal(2, nextRound.Number)
         Assert.Equal(1, nextRound.PlayerScore)
-        Assert.True(reset.Player.Health > Units.health 0.0f)
-        Assert.All(reset.Soldiers, fun soldier -> Assert.True(soldier.Health > Units.health 0.0f))
+        Assert.True(reset.Player.IsAlive)
+        Assert.All(reset.Soldiers, fun soldier -> Assert.True(soldier.IsAlive))
 
     [<Fact>]
     let ``mounted gun crew remains at its generated emplacement`` () =
@@ -62,12 +59,10 @@ module CoreTests =
                   LevelDsl.mg42 (Vector3(0.0f, 0.0f, -12.0f)) MathF.PI Axis
                   LevelDsl.spawnSquad Allies 1 (Vector3(0.0f, 0.0f, 14.0f)) ]
             |> LevelCompile.compile
-        let mutable world = Sim.createWorld nest "Silence the gun" 144UL
-        let gunner = world.Soldiers |> Array.find (fun soldier -> soldier.Weapon.Class.Name = "MG42")
+        let initial = Sim.createWorld nest "Silence the gun" 144UL
+        let gunner = initial.Soldiers |> Array.find (fun soldier -> soldier.Weapon.Class.Name = "MG42")
         let initialPosition = gunner.Position
-        for tick in 1L..180L do
-            let struct (next, _) = Sim.step (input tick InputButtons.None Vector2.Zero) world
-            world <- next
+        let world = TestKit.advance 1L 180L InputButtons.None initial
         let updated = world.Soldiers |> Array.find (fun soldier -> soldier.Id = gunner.Id)
         Assert.Equal(initialPosition, updated.Position)
 
@@ -84,14 +79,11 @@ module CoreTests =
                 { Id = EntityId(100 + index); Team = Axis; Position = Vector3(x, 0.0f, z); Facing = MathF.PI; Stance = Standing
                   Health = Units.health 100.0f; Behavior = AdvancingTo(player.Position, []); Weapon = weapon; Squad = 2
                   Contacts = Map.add player.Id (struct (player.Position, Units.seconds 0.0f)) Map.empty; Suppression = 0.0f; AnimPhase = float32 index })
-        let mutable world = { baseline with Player = player; Soldiers = enemies; Level = arena; Objectives = [||]; Script = { baseline.Script with Rules = [||] } }
-        let mutable hostileShots = 0
-        for tick in 1L..180L do
-            let struct (next, events) = Sim.step (input tick InputButtons.None Vector2.Zero) world
-            world <- next
-            hostileShots <- hostileShots + (events |> List.filter (function ShotFired(Some(EntityId id), _, _, _) when id >= 100 -> true | _ -> false) |> List.length)
+        let start = { baseline with Player = player; Soldiers = enemies; Level = arena; Objectives = [||]; Script = { baseline.Script with Rules = [||] } }
+        let world, events = TestKit.stepAll 1L 180L InputButtons.None start
+        let hostileShots = events |> List.sumBy (function ShotFired(Some(EntityId id), _, _, _) when id >= 100 -> 1 | _ -> 0)
         Assert.True(hostileShots > 0)
-        Assert.True(world.Player.Health > Units.health 0.0f)
+        Assert.True(world.Player.IsAlive)
 
     [<Fact>]
     let ``enemy fire uses a deliberately loose player facing accuracy model`` () =
@@ -136,11 +128,9 @@ module CoreTests =
         let initial = Sim.createTrainingWorld 11UL
         let slots = Array.copy initial.Player.Slots
         slots[0] <- { slots[0] with InMag = 1; Reserve = 12 }
-        let mutable world = { initial with Player = { initial.Player with Slots = slots } }
-        world <- let struct (next, _) = Sim.step (input 1L InputButtons.Reload Vector2.Zero) world in next
-        Assert.True(match world.Player.Slots[0].State with Reloading _ -> true | _ -> false)
-        for sequence in 2L..180L do
-            world <- let struct (next, _) = Sim.step (input sequence InputButtons.None Vector2.Zero) world in next
+        let reloading = TestKit.advance 1L 1L InputButtons.Reload { initial with Player = { initial.Player with Slots = slots } }
+        Assert.True(match reloading.Player.Slots[0].State with Reloading _ -> true | _ -> false)
+        let world = TestKit.advance 2L 180L InputButtons.None reloading
         let weapon = world.Player.Slots[0]
         Assert.Equal(weapon.Class.MagSize, weapon.InMag)
         Assert.Equal(Ready, weapon.State)
@@ -148,10 +138,10 @@ module CoreTests =
 
     [<Fact>]
     let ``number key switches campaign weapon after transition`` () =
-        let mutable world = Sim.createTrainingWorld 17UL
-        world <- let struct (next, _) = Sim.step (input 1L InputButtons.Weapon2 Vector2.Zero) world in next
-        for sequence in 2L..24L do
-            world <- let struct (next, _) = Sim.step (input sequence InputButtons.None Vector2.Zero) world in next
+        let world =
+            Sim.createTrainingWorld 17UL
+            |> TestKit.advance 1L 1L InputButtons.Weapon2
+            |> TestKit.advance 2L 24L InputButtons.None
         Assert.Equal(3, world.Player.Active)
         Assert.Equal("Thompson", world.Player.Slots[world.Player.Active].Class.Name)
 
@@ -162,11 +152,11 @@ module CoreTests =
         Assert.Equal(0, world.Player.Active)
         let mutable sequence = 1L
         let press () =
-            world <- let struct (next, _) = Sim.step (input sequence InputButtons.Weapon1 Vector2.Zero) world in next
-            sequence <- sequence + 1L
-            for _ in 1..24 do
-                world <- let struct (next, _) = Sim.step (input sequence InputButtons.None Vector2.Zero) world in next
-                sequence <- sequence + 1L
+            world <-
+                world
+                |> TestKit.advance sequence sequence InputButtons.Weapon1
+                |> TestKit.advance (sequence + 1L) (sequence + 24L) InputButtons.None
+            sequence <- sequence + 25L
         press ()
         Assert.Equal("M1 Garand", world.Player.Slots[world.Player.Active].Class.Name)
         press ()
@@ -181,10 +171,10 @@ module CoreTests =
 
     [<Fact>]
     let ``fourth slot equips a scoped high damage sniper rifle`` () =
-        let mutable world = Sim.createTrainingWorld 18UL
-        world <- let struct (next, _) = Sim.step (input 1L InputButtons.Weapon4 Vector2.Zero) world in next
-        for sequence in 2L..24L do
-            world <- let struct (next, _) = Sim.step (input sequence InputButtons.None Vector2.Zero) world in next
+        let world =
+            Sim.createTrainingWorld 18UL
+            |> TestKit.advance 1L 1L InputButtons.Weapon4
+            |> TestKit.advance 2L 24L InputButtons.None
         let sniper = world.Player.Slots[world.Player.Active].Class
         Assert.Equal(7, world.Player.Active)
         Assert.Equal("Kar98k Sniper", sniper.Name)
@@ -192,17 +182,17 @@ module CoreTests =
 
     [<Fact>]
     let ``fifth slot equips a pellet shotgun without replacing the sniper`` () =
-        let mutable world = Sim.createTrainingWorld 19UL
-        world <- let struct (next, _) = Sim.step (input 1L InputButtons.Weapon5 Vector2.Zero) world in next
-        for sequence in 2L..24L do
-            world <- let struct (next, _) = Sim.step (input sequence InputButtons.None Vector2.Zero) world in next
+        let world =
+            Sim.createTrainingWorld 19UL
+            |> TestKit.advance 1L 1L InputButtons.Weapon5
+            |> TestKit.advance 2L 24L InputButtons.None
         let beforeAmmo = world.Player.Slots[world.Player.Active].InMag
         let struct (fired, events) = Sim.step (input 25L InputButtons.Fire Vector2.Zero) world
         let shots =
             events
             |> List.filter (function ShotFired(Some(EntityId 1), _, _, "M1897 Trench Gun") -> true | _ -> false)
         let mutable rng = Rng.create 91UL
-        let struct (_, pellets) = Weapons.step Tuning.TickDuration 0.0f true false 0.0f &rng (Tuning.weaponSlot Tuning.m1897 5)
+        let struct (_, pellets) = Weapons.step Tuning.TickDuration 0.0f Standing true false 0.0f &rng (Tuning.weaponSlot Tuning.m1897 5)
         Assert.Equal(9, world.Player.Active)
         Assert.Equal("M1897 Trench Gun", world.Player.Slots[world.Player.Active].Class.Name)
         Assert.Equal(1, shots.Length)
@@ -211,12 +201,8 @@ module CoreTests =
 
     [<Fact>]
     let ``bolt action requires trigger release before another shot`` () =
-        let mutable world = Sim.createTrainingWorld 23UL
-        let mutable shots = 0
-        for sequence in 1L..120L do
-            let struct (next, events) = Sim.step (input sequence InputButtons.Fire Vector2.Zero) world
-            world <- next
-            shots <- shots + (events |> List.filter (function ShotFired(Some(EntityId 1), _, _, _) -> true | _ -> false) |> List.length)
+        let _, events = TestKit.stepAll 1L 120L InputButtons.Fire (Sim.createTrainingWorld 23UL)
+        let shots = events |> List.sumBy (function ShotFired(Some(EntityId 1), _, _, _) -> 1 | _ -> 0)
         Assert.Equal(1, shots)
 
     [<Fact>]
@@ -227,7 +213,7 @@ module CoreTests =
         let mutable maxBloom = 0.0f
         let mutable shots = 0
         for _ in 1..120 do
-            let struct (next, requests) = Weapons.step Tuning.TickDuration 0.0f true false 0.0f &rng slot
+            let struct (next, requests) = Weapons.step Tuning.TickDuration 0.0f Standing true false 0.0f &rng slot
             if requests.Length > 0 then
                 if shots = 0 then firstShotBloom <- next.Bloom
                 maxBloom <- max maxBloom next.Bloom
@@ -243,7 +229,7 @@ module CoreTests =
             let mutable slot = Tuning.weaponSlot Tuning.m1911 4
             let mutable worst = 0.0f
             for _ in 1..120 do
-                let struct (next, requests) = Weapons.step Tuning.TickDuration speed true false 0.0f &rng slot
+                let struct (next, requests) = Weapons.step Tuning.TickDuration speed Standing true false 0.0f &rng slot
                 for request in requests do
                     worst <- max worst (request.DirectionOffset.Length())
                 slot <- next
@@ -251,13 +237,26 @@ module CoreTests =
         Assert.True(maxSpread 0.0f < maxSpread (Tuning.WalkSpeed * Tuning.SprintMultiplier))
 
     [<Fact>]
+    let ``crouching and going prone tighten hipfire spread`` () =
+        let maxSpread stance =
+            let mutable rng = Rng.create 17UL
+            let mutable slot = Tuning.weaponSlot Tuning.m1911 4
+            let mutable worst = 0.0f
+            for _ in 1..120 do
+                let struct (next, requests) = Weapons.step Tuning.TickDuration 0.0f stance true false 0.0f &rng slot
+                for request in requests do
+                    worst <- max worst (request.DirectionOffset.Length())
+                slot <- next
+            worst
+        Assert.True(maxSpread Crouched < maxSpread Standing)
+        Assert.True(maxSpread Prone < maxSpread Crouched)
+
+    [<Fact>]
     let ``jump follows gravity and lands on generated ground`` () =
-        let mutable world = Sim.createTrainingWorld 29UL
-        let startY = world.Player.Position.Y
-        world <- let struct (next, _) = Sim.step (input 1L InputButtons.Jump Vector2.Zero) world in next
-        Assert.True(world.Player.Position.Y > startY)
-        for sequence in 2L..120L do
-            world <- let struct (next, _) = Sim.step (input sequence InputButtons.None Vector2.Zero) world in next
+        let initial = Sim.createTrainingWorld 29UL
+        let jumped = TestKit.advance 1L 1L InputButtons.Jump initial
+        Assert.True(jumped.Player.Position.Y > initial.Player.Position.Y)
+        let world = TestKit.advance 2L 120L InputButtons.None jumped
         Assert.InRange(world.Player.Position.Y, 0.0f, 0.002f)
         Assert.Equal(0.0f, world.Player.Velocity.Y)
 
@@ -303,14 +302,15 @@ module CoreTests =
         let struct (_, events) = Sim.step (input 1L InputButtons.None Vector2.UnitY) world
         Assert.Contains(events, fun event -> match event with FootStep(_, Mud) -> true | _ -> false)
 
+    let private makePlayer id team : NetworkPlayer =
+        { Id = EntityId id; Name = string id; Team = team; Position = Vector3.Zero; Velocity = Vector3.Zero
+          Yaw = 0.0f; Pitch = 0.0f; Stance = Standing; Sprinting = false; Ads = 0.0f
+          Health = Units.health 100.0f; RegenIn = Units.seconds 0.0f; Weapon = Tuning.weaponSlot Tuning.kar98k 2; RequestedWeapon = None
+          Grenade = GrenadeIdle 3; Connected = true; Ready = true; Alive = true; RespawnIn = Units.seconds 0.0f; SpawnProtection = Units.seconds 0.0f
+          Kills = 0; Deaths = 0; LastInputSequence = 0L }
+
     [<Fact>]
     let ``friendly kill does not score in team deathmatch`` () =
-        let makePlayer id team =
-            { Id = EntityId id; Name = string id; Team = team; Position = Vector3.Zero; Velocity = Vector3.Zero
-              Yaw = 0.0f; Pitch = 0.0f; Stance = Standing; Sprinting = false; Ads = 0.0f
-              Health = Units.health 100.0f; RegenIn = Units.seconds 0.0f; Weapon = Tuning.weaponSlot Tuning.kar98k 2; RequestedWeapon = None
-              Grenade = GrenadeIdle 3; Connected = true; Ready = true; Alive = true; RespawnIn = Units.seconds 0.0f; SpawnProtection = Units.seconds 0.0f
-              Kills = 0; Deaths = 0; LastInputSequence = 0L }
         let state =
             { Multiplayer.create TeamDeathmatch with
                 Players = [ EntityId 1, makePlayer 1 Allies; EntityId 2, makePlayer 2 Allies ] |> Map.ofList }
@@ -320,12 +320,6 @@ module CoreTests =
 
     [<Fact>]
     let ``team deathmatch hostile kill scores and marks victim dead`` () =
-        let makePlayer id team =
-            { Id = EntityId id; Name = string id; Team = team; Position = Vector3.Zero; Velocity = Vector3.Zero
-              Yaw = 0.0f; Pitch = 0.0f; Stance = Standing; Sprinting = false; Ads = 0.0f
-              Health = Units.health 100.0f; RegenIn = Units.seconds 0.0f; Weapon = Tuning.weaponSlot Tuning.kar98k 2; RequestedWeapon = None
-              Grenade = GrenadeIdle 3; Connected = true; Ready = true; Alive = true; RespawnIn = Units.seconds 0.0f; SpawnProtection = Units.seconds 0.0f
-              Kills = 0; Deaths = 0; LastInputSequence = 0L }
         let state =
             { Multiplayer.create TeamDeathmatch with
                 Players = [ EntityId 1, makePlayer 1 Allies; EntityId 2, makePlayer 2 Axis ] |> Map.ofList }

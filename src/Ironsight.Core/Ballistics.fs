@@ -82,7 +82,7 @@ module Ballistics =
            struct (at LegsLow, at LegsHigh, LegsRadius) |]
 
     let private soldierHit origin direction index (soldier: Soldier) =
-        if soldier.Health <= Units.health 0.0f then None
+        if soldier.IsDead then None
         else
             let hits =
                 hitCapsules soldier.Stance soldier.Position

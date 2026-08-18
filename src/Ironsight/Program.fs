@@ -386,7 +386,7 @@ module Program =
                             let inLiveMatch = onlineSnapshot |> Option.exists (fun snapshot -> snapshot.Phase = Playing)
                             let triggerEdge = firePressed && not predictedFireHeld
                             let mayRepeat = localWeapon.Class.Mode = FullAuto && firePressed
-                            if inLiveMatch && current.Player.Health > Units.health 0.0f && localWeapon.InMag > 0
+                            if inLiveMatch && current.Player.IsAlive && localWeapon.InMag > 0
                                && not current.Player.Sprinting
                                && predictedFireCooldown <= 0.0f && (triggerEdge || mayRepeat) then
                                 let origin = Ballistics.playerMuzzleOrigin current.Player localWeapon.Class
@@ -396,7 +396,7 @@ module Program =
                                 audio |> Option.iter (fun value -> value.Handle cosmetic)
                                 predictedFireCooldown <- 60.0f / localWeapon.Class.RoundsPerMin
                             predictedFireHeld <- firePressed
-                            if current.Player.Health > Units.health 0.0f then
+                            if current.Player.IsAlive then
                                 pendingInputs.Enqueue inputFrame
                                 while pendingInputs.Count > 240 do pendingInputs.Dequeue() |> ignore
                                 current <- OnlineWorld.applyPrediction current.Level inputFrame current
@@ -406,17 +406,17 @@ module Program =
                             // reconnect attempts.
                             ()
                         | _ ->
-                            if current.Round.IsNone && current.Player.Health <= Units.health 0.0f && inputFrame.Buttons.HasFlag InputButtons.Reload then
+                            if current.Round.IsNone && current.Player.IsDead && inputFrame.Buttons.HasFlag InputButtons.Reload then
                                 current <- initialWorld
                                 previous <- initialWorld
                                 subtitle <- None
-                            elif current.Player.Health > Units.health 0.0f || current.Round.IsSome then
+                            elif current.Player.IsAlive || current.Round.IsSome then
                                 let previousWeaponState = current.Player.Slots[current.Player.Active].State
                                 // A fallen player no longer steers the body or the
                                 // camera, but the world keeps stepping so the round
                                 // timer, friendly AI, and grenades settle.
                                 let aliveInput =
-                                    if current.Player.Health > Units.health 0.0f then inputFrame
+                                    if current.Player.IsAlive then inputFrame
                                     else
                                         { inputFrame with
                                             Move = Vector2.Zero
@@ -431,7 +431,7 @@ module Program =
                                 | Ready, Reloading _ -> audio |> Option.iter (fun value -> value.PlayReload current.Player.Position)
                                 | _ -> ()
                                 renderer |> Option.iter (fun value -> value.HandleEvents events)
-                                if events |> List.exists (function ShotFired(Some shooter, _, _, _) when shooter = current.Player.Id -> true | _ -> false) then
+                                if events |> List.exists (function ShotFired(Some shooter, _, _, _) -> shooter = current.Player.Id | _ -> false) then
                                     renderer |> Option.iter (fun value -> value.KickWeapon())
                                 audio |> Option.iter (fun value -> value.Handle events)
                                 events
@@ -514,10 +514,12 @@ module Program =
                     audio |> Option.iter (fun value -> value.PlayPing current.Player.Position)
                 lastActiveWeaponName <- activeSlot.Class.Name
                 lastActiveInMag <- activeSlot.InMag
-                renderer |> Option.iter (fun value -> value.StepEffects(float32 fixedStep))
-                renderer |> Option.iter (fun value -> value.StepViewmodel(float32 fixedStep))
+                renderer
+                |> Option.iter (fun value ->
+                    value.StepEffects(float32 fixedStep)
+                    value.StepViewmodel(float32 fixedStep))
                 audio |> Option.iter (fun value -> value.UpdateListener current.Player)
-                if current.Tick <> lastHeartbeatTick && current.Player.Health > Units.health 0.0f && current.Player.Health < Units.health 30.0f && current.Tick % 60L = 0L then
+                if current.Tick <> lastHeartbeatTick && current.Player.IsAlive && current.Player.Health < Units.health 30.0f && current.Tick % 60L = 0L then
                     audio |> Option.iter (fun value -> value.PlayHeartbeat current.Player.Position)
                     lastHeartbeatTick <- current.Tick
                 if onlineClient.IsNone && current.Tick <> lastDistantTick && current.Tick % 480L = 240L then
@@ -554,7 +556,7 @@ module Program =
                     // to the button. Sprinting is excluded to match the rule the
                     // simulation uses, otherwise the arc promises a throw that
                     // never happens.
-                    || (onlineClient.IsSome && grenadeButtonHeld && not current.Player.Sprinting && current.Player.Health > Units.health 0.0f)
+                    || (onlineClient.IsSome && grenadeButtonHeld && not current.Player.Sprinting && current.Player.IsAlive)
                   Menu = (match screen with Screen.Menu(_, state, None) -> Some state | _ -> None)
                   Settings = settings
                   LoadoutScreen = (match screen with Screen.Loadout selected -> Some selected | _ -> None)
@@ -569,12 +571,11 @@ module Program =
                 value.Resize(window.FramebufferSize.X, window.FramebufferSize.Y, window.Size)))
         window.add_Closing(fun () ->
             Settings.save settings |> ignore
-            onlineClient
-            |> Option.iter (fun client ->
-                closeClient client)
-            renderer |> Option.iter (fun value -> (value :> IDisposable).Dispose())
-            audio |> Option.iter (fun value -> (value :> IDisposable).Dispose())
-            input |> Option.iter (fun value -> value.Dispose())
-            gl |> Option.iter (fun value -> value.Dispose()))
+            let dispose (value: #IDisposable) = value.Dispose()
+            onlineClient |> Option.iter closeClient
+            renderer |> Option.iter dispose
+            audio |> Option.iter dispose
+            input |> Option.iter dispose
+            gl |> Option.iter dispose)
         window.Run()
         0

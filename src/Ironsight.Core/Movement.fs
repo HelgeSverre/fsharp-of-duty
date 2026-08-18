@@ -6,8 +6,6 @@ open Ironsight.ProcGen
 
 [<RequireQualifiedAccess>]
 module Movement =
-    let private hasButton button (buttons: InputButtons) = buttons.HasFlag button
-
     let stanceHeight = function
         | Standing -> Tuning.StandingHeight
         | Crouched -> Tuning.CrouchedHeight
@@ -17,8 +15,8 @@ module Movement =
     // layer concern (InputSampler latches and keeps the button held), so the
     // server never needs latch state and clients can pick either mode freely.
     let private requestedStance buttons =
-        if hasButton InputButtons.Prone buttons then Prone
-        elif hasButton InputButtons.Crouch buttons then Crouched
+        if Input.hasButton InputButtons.Prone buttons then Prone
+        elif Input.hasButton InputButtons.Crouch buttons then Crouched
         else Standing
 
     let private collides (level: Level) (stance: Stance) (position: Vector3) =
@@ -121,7 +119,7 @@ module Movement =
             match level.WaterLevel with
             | Some water -> player.Position.Y < water - 0.05f
             | None -> false
-        let wantsSprint = hasButton InputButtons.Sprint input.Buttons && move.Y > 0.1f && stance = Standing && not wading
+        let wantsSprint = Input.hasButton InputButtons.Sprint input.Buttons && move.Y > 0.1f && stance = Standing && not wading
         let targetSpeed =
             Tuning.WalkSpeed
             * (if wantsSprint then Tuning.SprintMultiplier else 1.0f)
@@ -148,7 +146,7 @@ module Movement =
         let blend = 1.0f - MathF.Exp(-acceleration * seconds)
         let horizontalVelocity = Vector3.Lerp(MathEx.horizontal player.Velocity, targetVelocity, blend)
         let verticalVelocity =
-            if onGround && hasButton InputButtons.Jump input.Buttons && stance = Standing then 7.0f
+            if onGround && Input.hasButton InputButtons.Jump input.Buttons && stance = Standing then 7.0f
             elif onGround && player.Velocity.Y <= 0.0f then 0.0f
             else player.Velocity.Y - Tuning.Gravity * seconds
         let velocity = Vector3(horizontalVelocity.X, verticalVelocity, horizontalVelocity.Z)
@@ -159,7 +157,7 @@ module Movement =
             let y = if abs (position.Y - requested.Y) > 0.0001f then 0.0f else velocity.Y
             let z = if abs (position.Z - requested.Z) > 0.0001f then 0.0f else velocity.Z
             Vector3(x, y, z)
-        let adsTarget = if hasButton InputButtons.Ads input.Buttons && not wantsSprint then 1.0f else 0.0f
+        let adsTarget = if Input.hasButton InputButtons.Ads input.Buttons && not wantsSprint then 1.0f else 0.0f
         let adsTime = max 0.01f (Units.raw player.Slots[player.Active].Class.AdsTime)
         let adsDirection = if adsTarget > player.Ads then 1.0f elif adsTarget < player.Ads then -1.0f else 0.0f
         let ads = MathEx.clamp01 (player.Ads + adsDirection * seconds / adsTime)

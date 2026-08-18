@@ -395,7 +395,7 @@ module GeometryTests =
 
         [<Fact>]
         let ``wading below the waterline is slower than walking the same ground`` () =
-            let dry = LevelDsl.level "Dry" [ LevelDsl.street 80.0f 40.0f Mud ] |> LevelCompile.compile
+            let dry = TestKit.streetArenaSized "Dry" 80.0f 40.0f
             let wet = LevelDsl.level "Wet" [ LevelDsl.street 80.0f 40.0f Mud; LevelDsl.water 1.0f ] |> LevelCompile.compile
             let travel level =
                 let world = Sim.createTrainingWorld 3UL

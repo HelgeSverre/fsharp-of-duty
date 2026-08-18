@@ -41,6 +41,7 @@ type AudioSystem() =
     let shotPitch weapon =
         match weapon with
         | "M1911" -> 1.18f
+        | "Luger P08" -> 1.26f
         | "MP40" -> 1.10f
         | "Thompson" -> 1.0f
         | "STG-44" -> 0.92f

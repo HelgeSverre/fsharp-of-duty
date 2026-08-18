@@ -63,7 +63,7 @@ module AiTests =
 
     [<Fact>]
     let ``a healthy soldier leaves cover to assault instead of camping`` () =
-        let level = LevelDsl.level "Assault lane" [ LevelDsl.street 30.0f 10.0f Mud ] |> LevelCompile.compile
+        let level = TestKit.streetArenaSized "Assault lane" 30.0f 10.0f
         let baseline = Sim.createTrainingWorld 1301UL
         let player = { baseline.Player with Position = Vector3(0.0f, 0.0f, 8.0f) }
         let template = baseline.Soldiers |> Array.find (fun soldier -> soldier.Team = Axis)
@@ -85,7 +85,7 @@ module AiTests =
 
     [<Fact>]
     let ``a direct hit suppresses the target soldier`` () =
-        let level = LevelDsl.level "Hit range" [ LevelDsl.street 30.0f 10.0f Mud ] |> LevelCompile.compile
+        let level = TestKit.streetArenaSized "Hit range" 30.0f 10.0f
         let world = Sim.createTrainingWorld 5UL
         let target =
             { TestKit.soldier 44 Vector3.Zero with
@@ -100,7 +100,7 @@ module AiTests =
                 // pitch down so this hit lands on the torso.
                 Pitch = -0.09f }
         let world = { world with Level = level; Player = player; Soldiers = [| target |] }
-        let struct (after, events) = Sim.step { Sequence = 1L; Move = Vector2.Zero; Look = Vector2.Zero; Buttons = InputButtons.Fire } world
+        let struct (after, events) = Sim.step (TestKit.input 1L InputButtons.Fire Vector2.Zero) world
         Assert.Contains(events, function HitConfirmed(EntityId 44, false) -> true | _ -> false)
         let soldier = after.Soldiers |> Array.find (fun soldier -> soldier.Id = target.Id)
         Assert.True(soldier.Suppression >= 2.0f)
@@ -110,7 +110,7 @@ module AiTests =
 
     [<Fact>]
     let ``a killed soldier stays down instead of standing back up`` () =
-        let level = LevelDsl.level "Kill range" [ LevelDsl.street 30.0f 10.0f Mud ] |> LevelCompile.compile
+        let level = TestKit.streetArenaSized "Kill range" 30.0f 10.0f
         let world = Sim.createTrainingWorld 5UL
         let precise = { Tuning.kar98k with HipSpread = 0.0f; AdsSpread = 0.0f }
         let target =
@@ -129,25 +129,21 @@ module AiTests =
                 Slots = slots
                 Active = 0 }
         let mutable world = { world with Level = level; Player = player; Soldiers = [| target |] }
-        let struct (after, _) = Sim.step { Sequence = 1L; Move = Vector2.Zero; Look = Vector2.Zero; Buttons = InputButtons.Fire } world
-        Assert.True(after.Soldiers[0].Health <= Units.health 0.0f)
+        let struct (after, _) = Sim.step (TestKit.input 1L InputButtons.Fire Vector2.Zero) world
+        Assert.True(after.Soldiers[0].IsDead)
         match after.Soldiers[0].Behavior with
         | Dying _ | DyingHeadshot _ -> ()
         | other -> Assert.Fail($"expected dying behaviour, got {other}")
-        let mutable stepped = after
-        for tick in 2L..120L do
-            stepped <-
-                let struct (next, _) = Sim.step { Sequence = tick; Move = Vector2.Zero; Look = Vector2.Zero; Buttons = InputButtons.None } stepped
-                next
+        let stepped = TestKit.advance 2L 120L InputButtons.None after
         match stepped.Soldiers[0].Behavior with
         | Dying _ | DyingHeadshot _ -> ()
         | other -> Assert.Fail($"corpse stood back up as {other}")
 
     [<Fact>]
     let ``crouching player avoids standing-height shots`` () =
-        let level = LevelDsl.level "Hit range" [ LevelDsl.street 30.0f 10.0f Mud ] |> LevelCompile.compile
+        let level = TestKit.streetArenaSized "Hit range" 30.0f 10.0f
         let world = Sim.createTrainingWorld 5UL
-        let target = world.Soldiers |> Array.find (fun soldier -> soldier.Team = Axis && soldier.Health > Units.health 0.0f)
+        let target = world.Soldiers |> Array.find (fun soldier -> soldier.Team = Axis && soldier.IsAlive)
         let crouchedPlayer =
             { world.Player with
                 Position = target.Position + Vector3(0.0f, 0.0f, -5.0f)
@@ -194,11 +190,7 @@ module AiTests =
                 Facing = MathF.PI
                 Behavior = AdvancingTo(player.Position, [])
                 Contacts = Map.ofList [ player.Id, struct (player.Position, Units.seconds 0.0f) ] }
-        let mutable rng = Rng.create 902UL
-        let mutable soldiers = [| enemy |]
-        for _ in 1..180 do
-            let _, next, _ = AiBrain.step Tuning.TickDuration &rng level Map.empty player soldiers
-            soldiers <- next
+        let _, soldiers, _ = TestKit.runBrain 902UL level player [| enemy |] 180
         Assert.True(soldiers[0].Position.Z <= -4.84f, $"AI crossed wall boundary at z={soldiers[0].Position.Z}")
 
     [<Fact>]
@@ -226,26 +218,21 @@ module AiTests =
 
     [<Fact>]
     let ``ai versus ai damage does not emit player hit confirmation`` () =
-        let level = LevelDsl.level "Feedback lane" [ LevelDsl.street 30.0f 10.0f Mud ] |> LevelCompile.compile
+        let level = TestKit.streetArenaSized "Feedback lane" 30.0f 10.0f
         let baseline = Sim.createTrainingWorld 903UL
         let allyTemplate = baseline.Soldiers |> Array.find (fun soldier -> soldier.Team = Allies)
         let axisTemplate = baseline.Soldiers |> Array.find (fun soldier -> soldier.Team = Axis)
         let ally = { allyTemplate with Position = Vector3(0.0f, 0.0f, 3.0f); Weapon = Tuning.weaponSlot Tuning.thompson 4 }
         let axis = { axisTemplate with Position = Vector3(0.0f, 0.0f, -3.0f); Facing = MathF.PI; Weapon = Tuning.weaponSlot Tuning.kar98k 4 }
         let deadPlayer = { baseline.Player with Position = Vector3(20.0f, 0.0f, 20.0f); Health = Units.health 0.0f }
-        let mutable rng = Rng.create 904UL
-        let mutable soldiers = [| ally; axis |]
-        let mutable hitConfirmations = 0
-        for _ in 1..180 do
-            let _, next, events = AiBrain.step Tuning.TickDuration &rng level Map.empty deadPlayer soldiers
-            soldiers <- next
-            hitConfirmations <- hitConfirmations + (events |> List.filter (function HitConfirmed _ -> true | _ -> false) |> List.length)
+        let _, soldiers, events = TestKit.runBrain 904UL level deadPlayer [| ally; axis |] 180
+        let hitConfirmations = events |> List.sumBy (function HitConfirmed _ -> 1 | _ -> 0)
         Assert.Equal(0, hitConfirmations)
         Assert.Contains(soldiers, fun soldier -> soldier.Health < Units.health 100.0f)
 
     [<Fact>]
     let ``suppression requires accumulated near misses within the decay window`` () =
-        let level = LevelDsl.level "Suppression lane" [ LevelDsl.street 40.0f 12.0f Mud ] |> LevelCompile.compile
+        let level = TestKit.streetArenaSized "Suppression lane" 40.0f 12.0f
         let baseline = Sim.createTrainingWorld 808UL
         let precise = { Tuning.m1911 with HipSpread = 0.0f; AdsSpread = 0.0f }
         let player =
@@ -266,7 +253,7 @@ module AiTests =
             { baseline with Player = player; Soldiers = [| enemy |]; Level = level; Objectives = [||]; Script = { baseline.Script with Rules = [||] } }
         for tick in 1L..23L do
             let buttons = if tick = 1L || tick = 12L || tick = 23L then InputButtons.Fire else InputButtons.None
-            let frame = { Sequence = tick; Move = Vector2.Zero; Look = Vector2.Zero; Buttons = buttons }
+            let frame = TestKit.input tick buttons Vector2.Zero
             let struct (next, _) = Sim.step frame world
             world <- next
         Assert.True(world.Soldiers[0].Suppression >= 2.0f)
@@ -274,7 +261,7 @@ module AiTests =
 
     [<Fact>]
     let ``axis soldier perceives advances and shoots player through deterministic AI`` () =
-        let level = LevelDsl.level "AI range" [ LevelDsl.street 40.0f 10.0f Mud ] |> LevelCompile.compile
+        let level = TestKit.streetArenaSized "AI range" 40.0f 10.0f
         let world = Sim.createTrainingWorld 88UL
         let player = { world.Player with Position = Vector3.Zero }
         let enemy =
@@ -282,15 +269,8 @@ module AiTests =
                 Facing = MathF.PI
                 Weapon = Tuning.weaponSlot Tuning.kar98k 3
                 Squad = 2 }
-        let mutable rng = Rng.create 99UL
-        let mutable currentPlayer = player
-        let mutable soldiers = [| enemy |]
-        let mutable shots = 0
-        for _ in 1..180 do
-            let nextPlayer, nextSoldiers, events = AiBrain.step Tuning.TickDuration &rng level Map.empty currentPlayer soldiers
-            currentPlayer <- nextPlayer
-            soldiers <- nextSoldiers
-            shots <- shots + (events |> List.filter (function ShotFired _ -> true | _ -> false) |> List.length)
+        let currentPlayer, soldiers, events = TestKit.runBrain 99UL level player [| enemy |] 180
+        let shots = events |> List.sumBy (function ShotFired _ -> 1 | _ -> 0)
         Assert.True(shots > 0)
         Assert.True(currentPlayer.Health < Units.health 100.0f)
         Assert.True(soldiers[0].Position.Z > enemy.Position.Z)
@@ -298,7 +278,7 @@ module AiTests =
 
     [<Fact>]
     let ``bolt action bot cycles the bolt and fires repeatedly under sustained contact`` () =
-        let level = LevelDsl.level "Cycle range" [ LevelDsl.street 40.0f 10.0f Mud ] |> LevelCompile.compile
+        let level = TestKit.streetArenaSized "Cycle range" 40.0f 10.0f
         let world = Sim.createTrainingWorld 288UL
         let player = { world.Player with Position = Vector3.Zero }
         let template = world.Soldiers |> Array.find (fun soldier -> soldier.Team = Axis)
@@ -309,28 +289,15 @@ module AiTests =
                 Behavior = Idle
                 Weapon = Tuning.weaponSlot Tuning.kar98k 3
                 Contacts = Map.ofList [ player.Id, struct (player.Position, Units.seconds 0.0f) ] }
-        let mutable rng = Rng.create 289UL
-        let mutable currentPlayer = player
-        let mutable soldiers = [| enemy |]
-        let mutable shots = 0
-        for _ in 1..300 do
-            let nextPlayer, nextSoldiers, events = AiBrain.step Tuning.TickDuration &rng level Map.empty currentPlayer soldiers
-            currentPlayer <- nextPlayer
-            soldiers <- nextSoldiers
-            shots <-
-                shots
-                + (events
-                   |> List.filter (function
-                       | ShotFired(Some shooter, _, _, _) when shooter = enemy.Id -> true
-                       | _ -> false)
-                   |> List.length)
+        let _, _, events = TestKit.runBrain 289UL level player [| enemy |] 300
+        let shots = events |> List.sumBy (function ShotFired(Some shooter, _, _, _) when shooter = enemy.Id -> 1 | _ -> 0)
         // A bolt action that never releases the trigger fires once and stalls.
         // The AI must cycle the bolt and keep firing on its natural cadence.
         Assert.True(shots >= 2, $"expected the bolt to cycle, fired {shots} times")
 
     [<Fact>]
     let ``enemy reloads an empty weapon and resumes firing`` () =
-        let level = LevelDsl.level "Reload range" [ LevelDsl.street 40.0f 10.0f Mud ] |> LevelCompile.compile
+        let level = TestKit.streetArenaSized "Reload range" 40.0f 10.0f
         let world = Sim.createTrainingWorld 188UL
         let player = { world.Player with Position = Vector3.Zero }
         let template = world.Soldiers |> Array.find (fun soldier -> soldier.Team = Axis)
@@ -359,7 +326,7 @@ module AiTests =
 
     [<Fact>]
     let ``perception contact expires after eight seconds without sight`` () =
-        let level = LevelDsl.level "Memory range" [ LevelDsl.street 40.0f 10.0f Mud ] |> LevelCompile.compile
+        let level = TestKit.streetArenaSized "Memory range" 40.0f 10.0f
         let world = Sim.createTrainingWorld 1UL
         let hiddenPlayer = { world.Player with Position = Vector3(0.0f, 0.0f, 10.0f) }
         let template = world.Soldiers |> Array.find (fun value -> value.Team = Axis)
@@ -373,18 +340,13 @@ module AiTests =
 
     [<Fact>]
     let ``friendly squad advances and engages visible axis soldiers`` () =
-        let level = LevelDsl.level "Squad range" [ LevelDsl.street 50.0f 14.0f Mud ] |> LevelCompile.compile
+        let level = TestKit.streetArenaSized "Squad range" 50.0f 14.0f
         let baseWorld = Sim.createTrainingWorld 144UL
         let player = { baseWorld.Player with Position = Vector3(10.0f, 0.0f, 20.0f); Health = Units.health 0.0f }
         let template = baseWorld.Soldiers[0]
         let ally = { template with Id = EntityId 10; Team = Allies; Position = Vector3(0.0f, 0.0f, 8.0f); Weapon = Tuning.weaponSlot Tuning.thompson 4 }
         let enemy = { template with Id = EntityId 11; Team = Axis; Position = Vector3(0.0f, 0.0f, -8.0f); Weapon = Tuning.weaponSlot Tuning.kar98k 4 }
-        let mutable rng = Rng.create 155UL
-        let mutable soldiers = [| ally; enemy |]
-        let mutable shots = 0
-        for _ in 1..300 do
-            let _, next, events = AiBrain.step Tuning.TickDuration &rng level Map.empty player soldiers
-            soldiers <- next
-            shots <- shots + (events |> List.filter (function ShotFired(Some(EntityId 10), _, _, _) -> true | _ -> false) |> List.length)
+        let _, soldiers, events = TestKit.runBrain 155UL level player [| ally; enemy |] 300
+        let shots = events |> List.sumBy (function ShotFired(Some(EntityId 10), _, _, _) -> 1 | _ -> 0)
         Assert.True(shots > 0)
         Assert.True(soldiers[1].Health < Units.health 100.0f)

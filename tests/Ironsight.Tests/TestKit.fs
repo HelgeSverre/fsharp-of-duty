@@ -6,6 +6,7 @@ open System.Text.Json
 open Ironsight
 open Ironsight.ProcGen
 open Ironsight.Server
+open Ironsight.Shell
 open Microsoft.AspNetCore.Hosting.Server
 open Microsoft.AspNetCore.Hosting.Server.Features
 open Microsoft.Extensions.DependencyInjection
@@ -51,9 +52,64 @@ module TestKit =
         for _ in 1..721 do
             host.AdvanceTick()
 
-    /// A bare open street arena, no spawns declared.
-    let streetArena name =
-        LevelDsl.level name [ LevelDsl.street 50.0f 20.0f Mud ] |> LevelCompile.compile
+    /// One campaign input frame: buttons + move, no look.
+    let input (sequence: int64) buttons (move: Vector2) : InputFrame =
+        { Sequence = sequence; Move = move; Look = Vector2.Zero; Buttons = buttons }
+
+    /// Run the campaign sim over the inclusive sequence range, holding the
+    /// same buttons (and no movement) every tick; collects every event.
+    let stepAll (firstSequence: int64) (lastSequence: int64) buttons (world: World) =
+        let mutable current = world
+        let collected = ResizeArray<GameEvent>()
+        for sequence in firstSequence .. lastSequence do
+            let struct (next, events) = Sim.step (input sequence buttons Vector2.Zero) current
+            current <- next
+            collected.AddRange events
+        current, List.ofSeq collected
+
+    /// As stepAll, discarding the events.
+    let advance firstSequence lastSequence buttons world =
+        stepAll firstSequence lastSequence buttons world |> fst
+
+    /// Fold AiBrain.step over `ticks` ticks with a fresh RNG from `seed` and
+    /// no squad blackboards, concatenating every emitted event.
+    let runBrain (seed: uint64) (level: Level) (player: Player) (soldiers: Soldier array) ticks =
+        let mutable rng = Rng.create seed
+        let mutable currentPlayer = player
+        let mutable current = soldiers
+        let events = ResizeArray<GameEvent>()
+        for _ in 1..ticks do
+            let nextPlayer, next, emitted = AiBrain.step Tuning.TickDuration &rng level Map.empty currentPlayer current
+            currentPlayer <- nextPlayer
+            current <- next
+            events.AddRange emitted
+        currentPlayer, current, List.ofSeq events
+
+    /// A menu input frame with nothing pressed; record-update what you need.
+    let idleMenuInput: MenuInput =
+        { Up = false
+          Down = false
+          Left = false
+          Right = false
+          Activate = false
+          Back = false
+          Backspace = false
+          TextInput = ""
+          Pointer = None
+          Clicked = false }
+
+    /// Triangle triples from an indexed mesh.
+    let triangles (vertices: MeshVertex array) (indices: uint32 array) =
+        indices
+        |> Seq.chunkBySize 3
+        |> Seq.map (fun triple -> vertices[int triple[0]], vertices[int triple[1]], vertices[int triple[2]])
+
+    /// A bare open street arena of the given size, no spawns declared.
+    let streetArenaSized name width depth =
+        LevelDsl.level name [ LevelDsl.street width depth Mud ] |> LevelCompile.compile
+
+    /// The default 50 x 20 open street arena.
+    let streetArena name = streetArenaSized name 50.0f 20.0f
 
     /// The same street arena with an Allies squad north and an Axis squad south.
     let streetArenaWithSpawns name =

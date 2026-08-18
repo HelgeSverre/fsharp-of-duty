@@ -14,8 +14,19 @@ module MathEx =
 
     let horizontal (value: Vector3) = Vector3(value.X, 0.0f, value.Z)
 
+    let horizontalSpeed (value: Vector3) = (horizontal value).Length()
+
     let normalizedOrZero (value: Vector3) =
         if value.LengthSquared() > 0.000001f then Vector3.Normalize value else Vector3.Zero
+
+    /// Shortest-arc rotation taking +Z onto `direction`.
+    let rotationFromZ (direction: Vector3) =
+        let target = normalizedOrZero direction
+        let dot = Vector3.Dot(Vector3.UnitZ, target)
+        if dot < -0.9999f then Quaternion.CreateFromAxisAngle(Vector3.UnitX, MathF.PI)
+        else
+            let axis = Vector3.Cross(Vector3.UnitZ, target)
+            Quaternion.Normalize(Quaternion(axis.X, axis.Y, axis.Z, 1.0f + dot))
 
     let yawForward yaw = Vector3(MathF.Sin yaw, 0.0f, -MathF.Cos yaw)
 

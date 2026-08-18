@@ -19,9 +19,14 @@ module Weapons =
             { slot with State = Switching(incoming, Units.seconds 0.0f) }
         | Switching(incoming, remaining) -> { slot with State = Switching(incoming, remaining - dt) }
 
-    let step (dt: float32<s>) moveSpeed trigger reload ads (rng: byref<Rng.State>) slot =
+    let step (dt: float32<s>) moveSpeed stance trigger reload ads (rng: byref<Rng.State>) slot =
         let current = advanceState dt slot
         let movementFactor = 1.0f + MathEx.clamp01 (moveSpeed / Tuning.WalkSpeed) * Tuning.MovementSpreadMultiplier
+        let stanceFactor =
+            match stance with
+            | Standing -> 1.0f
+            | Crouched -> Tuning.CrouchSpreadMultiplier
+            | Prone -> Tuning.ProneSpreadMultiplier
         let bloom = max 0.0f (current.Bloom - Tuning.BloomDecayPerSecond * Units.raw dt)
 
         if reload && current.State = Ready && current.InMag < current.Class.MagSize && current.Reserve > 0 then
@@ -35,6 +40,7 @@ module Weapons =
             let spread =
                 (current.Class.HipSpread + (current.Class.AdsSpread - current.Class.HipSpread) * sightedAccuracy + bloom)
                 * movementFactor
+                * stanceFactor
             let shots = ResizeArray<ShotRequest>()
             for _ in 1..max 1 current.Class.Pellets do
                 let angle = Rng.nextFloat32 &rng * MathF.Tau

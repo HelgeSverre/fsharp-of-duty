@@ -11,7 +11,7 @@ module Script =
         | SquadDead squad ->
             world.Soldiers
             |> Array.filter (fun (soldier: Soldier) -> soldier.Squad = squad)
-            |> fun members -> members.Length > 0 && Array.forall (fun (soldier: Soldier) -> soldier.Health <= Units.health 0.0f) members
+            |> fun members -> members.Length > 0 && Array.forall (fun (soldier: Soldier) -> soldier.IsDead) members
         | ObjectiveDone index -> index >= 0 && index < world.Objectives.Length && world.Objectives[index].Done
         | Delay time -> world.Script.MissionTime >= time
 
@@ -45,8 +45,7 @@ module Script =
             { world with Objectives = objectives }, [ ObjectiveUpdated index ]
         | Say(speaker, line) -> world, [ Subtitle(speaker, line) ]
         | OpenPath brushIndex when brushIndex >= 0 && brushIndex < world.Level.Brushes.Length ->
-            let brushes = world.Level.Brushes |> Array.mapi (fun index brush -> index, brush) |> Array.choose (fun (index, brush) -> if index = brushIndex then None else Some brush)
-            { world with Level = LevelCompile.rebuild brushes world.Level }, []
+            { world with Level = LevelCompile.rebuild (Array.removeAt brushIndex world.Level.Brushes) world.Level }, []
         | EndMission -> { world with Script = { world.Script with Ended = true } }, [ Subtitle("HQ", "Mission complete") ]
         | _ -> world, []
 

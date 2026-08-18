@@ -6,20 +6,12 @@ open Ironsight
 
 [<RequireQualifiedAccess>]
 module Humanoid =
-    let private rotationFromZ (direction: Vector3) =
-        let target = MathEx.normalizedOrZero direction
-        let dot = Vector3.Dot(Vector3.UnitZ, target)
-        if dot < -0.9999f then Quaternion.CreateFromAxisAngle(Vector3.UnitX, MathF.PI)
-        else
-            let axis = Vector3.Cross(Vector3.UnitZ, target)
-            Quaternion.Normalize(Quaternion(axis.X, axis.Y, axis.Z, 1.0f + dot))
-
     let private segment radius material (startPoint: Vector3) (endPoint: Vector3) =
         let delta = endPoint - startPoint
         let length = max 0.01f (delta.Length())
         let center = (startPoint + endPoint) * 0.5f
         MeshGen.cylinder 8 radius length material
-        |> MeshGen.transform (Matrix4x4.CreateFromQuaternion(rotationFromZ delta) * Matrix4x4.CreateTranslation center)
+        |> MeshGen.transform (Matrix4x4.CreateFromQuaternion(MathEx.rotationFromZ delta) * Matrix4x4.CreateTranslation center)
 
     let private taperedBody material (bottom: Vector3) (top: Vector3) =
         let delta = top - bottom
@@ -30,7 +22,7 @@ module Humanoid =
                Vector2(0.27f, length * 0.25f)
                Vector2(0.22f, length * 0.50f) |]
         MeshGen.lathe 10 profile material
-        |> MeshGen.transform (Matrix4x4.CreateFromQuaternion(rotationFromZ delta) * Matrix4x4.CreateTranslation((bottom + top) * 0.5f))
+        |> MeshGen.transform (Matrix4x4.CreateFromQuaternion(MathEx.rotationFromZ delta) * Matrix4x4.CreateTranslation((bottom + top) * 0.5f))
 
     let private head center =
         MeshGen.lathe 10

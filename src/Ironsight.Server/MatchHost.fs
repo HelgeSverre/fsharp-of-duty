@@ -10,6 +10,14 @@ type MatchHost(mode: GameMode, ?matchLevel: Level) =
     let level = defaultArg matchLevel (Sim.createTrainingWorld 0xF5A4D3UL).Level
     let mutable nextPlayerId = 1
     let mutable state = { Multiplayer.create mode with LevelName = level.Name }
+
+    /// Replace one player's entry in the authoritative state.
+    let setPlayer id player =
+        state <- { state with Players = Map.add id player state.Players }
+
+    /// Update a player if connected-known; a missing id is a no-op.
+    let updatePlayer id update =
+        Map.tryFind id state.Players |> Option.iter (update >> setPlayer id)
     // Per-player FIFO of unapplied inputs. Buffering (instead of keeping only
     // the newest frame) means a TCP burst no longer silently discards the
     // overwritten frames — dropped fire clicks and jumps were the main source
@@ -111,7 +119,7 @@ type MatchHost(mode: GameMode, ?matchLevel: Level) =
                                 Connected = true
                                 Name = Multiplayer.sanitizeName name
                                 Weapon = weapon }
-                        state <- { state with Players = Map.add id restored state.Players }
+                        setPlayer id restored
                         disconnectedSince <- Map.remove id disconnectedSince
                         Some(id, token)
                     | _ -> None)
@@ -152,7 +160,7 @@ type MatchHost(mode: GameMode, ?matchLevel: Level) =
                       Deaths = 0
                       LastInputSequence = -1L }
                 let token = Convert.ToHexString(Guid.NewGuid().ToByteArray())
-                state <- { state with Players = Map.add id player state.Players }
+                setPlayer id player
                 sessionOwners <- Map.add token id sessionOwners
                 Some(id, token))
 
@@ -160,7 +168,7 @@ type MatchHost(mode: GameMode, ?matchLevel: Level) =
         lock gate (fun () ->
             match Map.tryFind id state.Players with
             | Some player ->
-                state <- { state with Players = Map.add id { player with Connected = false; Ready = false } state.Players }
+                setPlayer id { player with Connected = false; Ready = false }
                 disconnectedSince <- Map.add id DateTimeOffset.UtcNow disconnectedSince
                 pendingInputs <- Map.remove id pendingInputs
                 inputCredits <- Map.remove id inputCredits
@@ -168,9 +176,7 @@ type MatchHost(mode: GameMode, ?matchLevel: Level) =
 
     member _.SetReady id =
         lock gate (fun () ->
-            match Map.tryFind id state.Players with
-            | Some player -> state <- { state with Players = Map.add id { player with Ready = true } state.Players }
-            | None -> ())
+            updatePlayer id (fun player -> { player with Ready = true }))
 
     /// Unrestricted mid-match loadout change. Outside live play it swaps the
     /// weapon on the spot; during a live round it arms on the next spawn so a
@@ -183,7 +189,7 @@ type MatchHost(mode: GameMode, ?matchLevel: Level) =
                     if state.Phase <> Playing && player.Alive then
                         { player with Weapon = Tuning.weaponSlot weaponClass 4; RequestedWeapon = None }
                     else { player with RequestedWeapon = Some weaponClass }
-                state <- { state with Players = Map.add id updated state.Players }
+                setPlayer id updated
             | _ -> ())
 
     member _.ApplyInput(id, message: JsonElement) =
@@ -224,8 +230,7 @@ type MatchHost(mode: GameMode, ?matchLevel: Level) =
                 else
                     // The client keeps numbering input while dead. Acknowledge
                     // those no-op frames so respawn does not see a false jump.
-                    let acknowledged = { player with LastInputSequence = sequence }
-                    state <- { state with Players = Map.add id acknowledged state.Players }
+                    setPlayer id { player with LastInputSequence = sequence }
             | _ -> ())
 
     member _.AdvanceTick() =
@@ -372,7 +377,7 @@ type MatchHost(mode: GameMode, ?matchLevel: Level) =
                         if after.Health < before.Health then
                             let damaged = { before with Health = after.Health; RegenIn = Tuning.RegenDelay }
                             combatState <- { combatState with Players = Map.add targetId damaged combatState.Players }
-                            if after.Health <= Units.health 0.0f then
+                            if after.IsDead then
                                 combatState <- Multiplayer.recordKill shooterId targetId combatState
                 | _ -> ()
             let grenadeSet = Array.append lifecycleState.Grenades (thrownGrenades.ToArray())

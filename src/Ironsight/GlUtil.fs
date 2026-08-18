@@ -3,6 +3,7 @@ namespace Ironsight.Shell
 #nowarn "9"
 
 open System.Numerics
+open Microsoft.FSharp.NativeInterop
 open Ironsight
 open Silk.NET.OpenGL
 
@@ -82,3 +83,16 @@ module GlUtil =
            matrix.M21; matrix.M22; matrix.M23; matrix.M24
            matrix.M31; matrix.M32; matrix.M33; matrix.M34
            matrix.M41; matrix.M42; matrix.M43; matrix.M44 |]
+
+    /// Uploads an array to the given buffer target in one call; the pointer
+    /// only needs to live for the duration of BufferData.
+    let inline upload (gl: GL) (target: BufferTargetARB) (data: ^a[]) (usage: BufferUsageARB) =
+        use pointer = fixed data
+        gl.BufferData(target, unativeint (data.Length * sizeof< ^a>), NativePtr.toVoidPtr pointer, usage)
+
+    /// Sets a mat4 uniform from a System.Numerics matrix (flatten + fixed +
+    /// UniformMatrix4 in one call).
+    let setMatrix (gl: GL) (program: uint32) (name: string) (matrix: Matrix4x4) =
+        let values = matrixArray matrix
+        use pointer = fixed values
+        gl.UniformMatrix4(gl.GetUniformLocation(program, name), 1u, false, pointer)

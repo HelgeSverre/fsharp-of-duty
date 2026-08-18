@@ -48,6 +48,18 @@ type Renderer(gl: GL) =
     let mutable deathStarted = Stopwatch.GetTimestamp()
 
     let createLinkedProgram = GlUtil.createProgram gl
+    let setMatrix = GlUtil.setMatrix gl
+    let uniform1f (program: uint32) (name: string) (value: float32) = gl.Uniform1(gl.GetUniformLocation(program, name), value)
+    let uniform1i (program: uint32) (name: string) (value: int) = gl.Uniform1(gl.GetUniformLocation(program, name), value)
+    let uniform3 (program: uint32) (name: string) (value: Vector3) = gl.Uniform3(gl.GetUniformLocation(program, name), value.X, value.Y, value.Z)
+
+    /// Bind the VAO's vertex/index buffers and upload both arrays.
+    let uploadMesh vao vb ib (vertices: float32[]) (indices: uint32[]) usage =
+        gl.BindVertexArray vao
+        gl.BindBuffer(BufferTargetARB.ArrayBuffer, vb)
+        GlUtil.upload gl BufferTargetARB.ArrayBuffer vertices usage
+        gl.BindBuffer(BufferTargetARB.ElementArrayBuffer, ib)
+        GlUtil.upload gl BufferTargetARB.ElementArrayBuffer indices usage
 
     let createShadowMap () =
         shadowTexture <- gl.GenTexture()
@@ -78,13 +90,7 @@ type Renderer(gl: GL) =
         vao <- v
         vertexBuffer <- vb
         indexBuffer <- ib
-        gl.BindVertexArray vao
-        gl.BindBuffer(BufferTargetARB.ArrayBuffer, vertexBuffer)
-        use vertexPointer = fixed vertices
-        gl.BufferData(BufferTargetARB.ArrayBuffer, unativeint (vertices.Length * sizeof<float32>), NativePtr.toVoidPtr vertexPointer, BufferUsageARB.StaticDraw)
-        gl.BindBuffer(BufferTargetARB.ElementArrayBuffer, indexBuffer)
-        use indexPointer = fixed level.Indices
-        gl.BufferData(BufferTargetARB.ElementArrayBuffer, unativeint (level.Indices.Length * sizeof<uint32>), NativePtr.toVoidPtr indexPointer, BufferUsageARB.StaticDraw)
+        uploadMesh vao vertexBuffer indexBuffer vertices level.Indices BufferUsageARB.StaticDraw
         gl.BindVertexArray 0u
         indexCount <- uint32 level.Indices.Length
         loadedLevel <- level.Name
@@ -93,13 +99,7 @@ type Renderer(gl: GL) =
     let uploadGun name =
         let mesh = Guns.forWeapon name
         let vertices = GlUtil.flattenVertices mesh.Vertices
-        gl.BindVertexArray gunVao
-        gl.BindBuffer(BufferTargetARB.ArrayBuffer, gunVertexBuffer)
-        use vertexPointer = fixed vertices
-        gl.BufferData(BufferTargetARB.ArrayBuffer, unativeint (vertices.Length * sizeof<float32>), NativePtr.toVoidPtr vertexPointer, BufferUsageARB.StaticDraw)
-        gl.BindBuffer(BufferTargetARB.ElementArrayBuffer, gunIndexBuffer)
-        use indexPointer = fixed mesh.Indices
-        gl.BufferData(BufferTargetARB.ElementArrayBuffer, unativeint (mesh.Indices.Length * sizeof<uint32>), NativePtr.toVoidPtr indexPointer, BufferUsageARB.StaticDraw)
+        uploadMesh gunVao gunVertexBuffer gunIndexBuffer vertices mesh.Indices BufferUsageARB.StaticDraw
         gunIndexCount <- uint32 mesh.Indices.Length
         loadedGun <- name
 
@@ -122,13 +122,7 @@ type Renderer(gl: GL) =
         soldierIndexCount <- uint32 meshIndices.Length
         if meshIndices.Length > 0 then
             let vertices = GlUtil.flattenVertices meshVertices
-            gl.BindVertexArray soldierVao
-            gl.BindBuffer(BufferTargetARB.ArrayBuffer, soldierVertexBuffer)
-            use vertexPointer = fixed vertices
-            gl.BufferData(BufferTargetARB.ArrayBuffer, unativeint (vertices.Length * sizeof<float32>), NativePtr.toVoidPtr vertexPointer, BufferUsageARB.DynamicDraw)
-            gl.BindBuffer(BufferTargetARB.ElementArrayBuffer, soldierIndexBuffer)
-            use indexPointer = fixed meshIndices
-            gl.BufferData(BufferTargetARB.ElementArrayBuffer, unativeint (meshIndices.Length * sizeof<uint32>), NativePtr.toVoidPtr indexPointer, BufferUsageARB.DynamicDraw)
+            uploadMesh soldierVao soldierVertexBuffer soldierIndexBuffer vertices meshIndices BufferUsageARB.DynamicDraw
 
     let cameraMatrices (player: Player) (deathFall: float32) =
         // Death fall: the camera tips forward, slides a little in the facing
@@ -179,7 +173,7 @@ type Renderer(gl: GL) =
         if loadedLevel <> world.Level.Name || loadedLevelRevision <> world.Level.Revision then uploadLevel world.Level
         // Watch the player's health and time the first-person fall. Wall-clock
         // timing keeps the collapse consistent regardless of tick cadence.
-        if world.Player.Health <= Units.health 0.0f then
+        if world.Player.IsDead then
             if not deathWatching then
                 deathWatching <- true
                 deathStarted <- Stopwatch.GetTimestamp()
@@ -192,8 +186,6 @@ type Renderer(gl: GL) =
         gl.ClearColor(0.54f, 0.61f, 0.64f, 1.0f)
         if indexCount > 0u then
             let eye, viewProjection, fieldOfView, cameraPitch = cameraMatrices world.Player deathFall
-            let matrix = GlUtil.matrixArray viewProjection
-            let light = GlUtil.matrixArray lightMatrix
             uploadActors world
             let noOffset = NativePtr.nullPtr<byte> |> NativePtr.toVoidPtr
             gl.BindFramebuffer(FramebufferTarget.Framebuffer, shadowFramebuffer)
@@ -201,8 +193,7 @@ type Renderer(gl: GL) =
             gl.Clear ClearBufferMask.DepthBufferBit
             gl.CullFace TriangleFace.Front
             gl.UseProgram shadowProgram
-            use lightPointer = fixed light
-            gl.UniformMatrix4(gl.GetUniformLocation(shadowProgram, "uLightViewProjection"), 1u, false, lightPointer)
+            setMatrix shadowProgram "uLightViewProjection" lightMatrix
             gl.BindVertexArray vao
             gl.DrawElements(PrimitiveType.Triangles, indexCount, DrawElementsType.UnsignedInt, noOffset)
             if soldierIndexCount > 0u then
@@ -215,27 +206,26 @@ type Renderer(gl: GL) =
             gl.Disable EnableCap.DepthTest
             gl.Disable EnableCap.CullFace
             gl.UseProgram skyProgram
-            gl.Uniform1(gl.GetUniformLocation(skyProgram, "uYaw"), world.Player.Yaw)
-            gl.Uniform1(gl.GetUniformLocation(skyProgram, "uPitch"), cameraPitch)
-            gl.Uniform1(gl.GetUniformLocation(skyProgram, "uAspect"), float32 width / float32 (max 1 height))
-            gl.Uniform1(gl.GetUniformLocation(skyProgram, "uTanHalfFov"), MathF.Tan(fieldOfView * 0.5f))
+            uniform1f skyProgram "uYaw" world.Player.Yaw
+            uniform1f skyProgram "uPitch" cameraPitch
+            uniform1f skyProgram "uAspect" (float32 width / float32 (max 1 height))
+            uniform1f skyProgram "uTanHalfFov" (MathF.Tan(fieldOfView * 0.5f))
             gl.BindVertexArray vao
             gl.DrawArrays(PrimitiveType.Triangles, 0, 3u)
             gl.Enable EnableCap.CullFace
             gl.Enable EnableCap.DepthTest
             gl.UseProgram program
-            gl.Uniform1(gl.GetUniformLocation(program, "uViewmodel"), 0)
-            gl.Uniform1(gl.GetUniformLocation(program, "uContrast"), settings.Contrast)
-            use matrixPointer = fixed matrix
-            gl.UniformMatrix4(gl.GetUniformLocation(program, "uViewProjection"), 1u, false, matrixPointer)
-            gl.UniformMatrix4(gl.GetUniformLocation(program, "uLightViewProjection"), 1u, false, lightPointer)
-            gl.Uniform3(gl.GetUniformLocation(program, "uCamera"), eye.X, eye.Y, eye.Z)
+            uniform1i program "uViewmodel" 0
+            uniform1f program "uContrast" settings.Contrast
+            setMatrix program "uViewProjection" viewProjection
+            setMatrix program "uLightViewProjection" lightMatrix
+            uniform3 program "uCamera" eye
             gl.ActiveTexture TextureUnit.Texture0
             gl.BindTexture(TextureTarget.Texture2D, shadowTexture)
-            gl.Uniform1(gl.GetUniformLocation(program, "uShadowMap"), 0)
-            let activeDecals = decals |> List.truncate 16
-            gl.Uniform1(gl.GetUniformLocation(program, "uImpactCount"), activeDecals.Length)
-            activeDecals
+            uniform1i program "uShadowMap" 0
+            // HandleEvents already caps decals at the 16 uImpacts slots.
+            uniform1i program "uImpactCount" decals.Length
+            decals
             |> List.iteri (fun index decal ->
                 gl.Uniform4(gl.GetUniformLocation(program, $"uImpacts[{index}]"), decal.X, decal.Y, decal.Z, decal.W))
             gl.BindVertexArray vao
@@ -263,7 +253,7 @@ type Renderer(gl: GL) =
                 // is in the way.
                 let playerEye = Ballistics.playerEyeOrigin world.Player
                 for soldier in world.Soldiers do
-                    if soldier.Health > Units.health 0.0f then
+                    if soldier.IsAlive then
                         let soldierEye = soldier.Position + Vector3(0.0f, 1.55f, 0.0f)
                         let clear = Ballistics.lineOfSight soldierEye playerEye world.Level
                         let color =
@@ -284,7 +274,7 @@ type Renderer(gl: GL) =
             // seconds of ticks covers any throw the player can make before the
             // grenade settles.
             particles.SetPreview(
-                if hudInfo.GrenadeCooking && world.Player.Health > Units.health 0.0f then
+                if hudInfo.GrenadeCooking && world.Player.IsAlive then
                     Grenades.predictPath world.Level (Tuning.TickRate * 2) world.Player
                 else [||])
             particles.Render viewProjection
@@ -341,14 +331,13 @@ type Renderer(gl: GL) =
                     * Matrix4x4.CreateRotationZ(-0.035f * (1.0f - ads) + reloadPose * 0.32f + boltPose * 0.22f)
                     * Matrix4x4.CreateTranslation position
                 let projection = Matrix4x4.CreatePerspectiveFieldOfView(55.0f * MathF.PI / 180.0f, float32 width / float32 (max 1 height), 0.03f, 8.0f)
-                let gunMatrix = GlUtil.matrixArray (model * projection)
+                let gunMatrix = model * projection
                 gl.Clear ClearBufferMask.DepthBufferBit
-                use gunMatrixPointer = fixed gunMatrix
-                gl.UniformMatrix4(gl.GetUniformLocation(program, "uViewProjection"), 1u, false, gunMatrixPointer)
-                gl.UniformMatrix4(gl.GetUniformLocation(program, "uLightViewProjection"), 1u, false, gunMatrixPointer)
-                gl.Uniform3(gl.GetUniformLocation(program, "uCamera"), 0.0f, 0.0f, 0.0f)
-                gl.Uniform1(gl.GetUniformLocation(program, "uViewmodel"), 1)
-                gl.Uniform1(gl.GetUniformLocation(program, "uImpactCount"), 0)
+                setMatrix program "uViewProjection" gunMatrix
+                setMatrix program "uLightViewProjection" gunMatrix
+                uniform3 program "uCamera" Vector3.Zero
+                uniform1i program "uViewmodel" 1
+                uniform1i program "uImpactCount" 0
                 gl.Disable EnableCap.CullFace
                 gl.BindVertexArray gunVao
                 gl.DrawElements(PrimitiveType.Triangles, gunIndexCount, DrawElementsType.UnsignedInt, noOffset)

@@ -129,7 +129,7 @@ module Grenades =
                 updated
                 |> Array.map (fun (soldier: Soldier) ->
                     match explosionDamageAt level position soldier.Position with
-                    | Some damage when soldier.Health > Units.health 0.0f ->
+                    | Some damage when soldier.IsAlive ->
                         let health = max (Units.health 0.0f) (soldier.Health - damage)
                         { soldier with Health = health; Behavior = if health <= Units.health 0.0f then Dying(Units.seconds 0.0f) else soldier.Behavior }
                     | _ -> soldier)
@@ -139,7 +139,7 @@ module Grenades =
         positions
         |> Array.fold (fun ((current: Player), (events: GameEvent list)) position ->
             match explosionDamageAt level position current.Position with
-            | Some damage when current.Health > Units.health 0.0f ->
+            | Some damage when current.IsAlive ->
                 let torso = current.Position + Vector3(0.0f, 1.0f, 0.0f)
                 let health = max (Units.health 0.0f) (current.Health - damage)
                 let direction = MathEx.normalizedOrZero (torso - position)

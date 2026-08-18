@@ -63,6 +63,10 @@ void main() {
 """
     let program = GlUtil.createProgram gl vertexSource fragmentSource
 
+    /// One stride-8 vertex: pos3 / color4 / point size.
+    let vtx (position: Vector3) (color: Vector4) (size: float32) =
+        [| position.X; position.Y; position.Z; color.X; color.Y; color.Z; color.W; size |]
+
     let addLine from' to' color lifetime =
         lines <- { From = from'; To = to'; Color = color; Remaining = lifetime; Lifetime = lifetime } :: lines
 
@@ -219,29 +223,22 @@ void main() {
     member _.Render(viewProjection: Matrix4x4) =
         if not lines.IsEmpty || not puffs.IsEmpty || preview.Length > 0 || debugLines.Count > 0 then
             let lineData =
-                lines
-                |> List.collect (fun line ->
-                    let alpha = line.Color.W * MathEx.clamp01 (line.Remaining / line.Lifetime)
-                    let color = Vector4(line.Color.X, line.Color.Y, line.Color.Z, alpha)
-                    [ line.From; line.To ]
-                    |> List.collect (fun position -> [ position.X; position.Y; position.Z; color.X; color.Y; color.Z; color.W; 1.0f ]))
-                |> List.toArray
-            let lineData =
-                let debugData =
-                    debugLines
-                    |> Seq.collect (fun struct (fromPoint, toPoint, color) ->
-                        seq {
-                            for position in [ fromPoint; toPoint ] do
-                                yield! [ position.X; position.Y; position.Z; color.X; color.Y; color.Z; color.W; 1.0f ]
-                        })
-                    |> Seq.toArray
-                Array.append lineData debugData
+                Seq.append
+                    (lines
+                     |> Seq.collect (fun line ->
+                         let alpha = line.Color.W * MathEx.clamp01 (line.Remaining / line.Lifetime)
+                         let color = Vector4(line.Color.X, line.Color.Y, line.Color.Z, alpha)
+                         Array.append (vtx line.From color 1.0f) (vtx line.To color 1.0f)))
+                    (debugLines
+                     |> Seq.collect (fun struct (fromPoint, toPoint, color) ->
+                         Array.append (vtx fromPoint color 1.0f) (vtx toPoint color 1.0f)))
+                |> Seq.toArray
             let puffData =
                 puffs
-                |> List.collect (fun puff ->
+                |> Seq.collect (fun puff ->
                     let alpha = puff.Color.W * MathEx.clamp01 (puff.Remaining / puff.Lifetime)
-                    [ puff.Position.X; puff.Position.Y; puff.Position.Z; puff.Color.X; puff.Color.Y; puff.Color.Z; alpha; puff.Size ])
-                |> List.toArray
+                    vtx puff.Position (Vector4(puff.Color.X, puff.Color.Y, puff.Color.Z, alpha)) puff.Size)
+                |> Seq.toArray
             // The arc tapers away from the hand and ends in a bright landing
             // marker, so the eye is drawn to where the grenade actually stops.
             let previewData =
@@ -251,19 +248,16 @@ void main() {
                     let landing = index = preview.Length - 1
                     let color = if landing then Vector4(1.0f, 0.85f, 0.45f, 0.95f) else Vector4(0.95f, 0.72f, 0.30f, 0.30f + progress * 0.45f)
                     let size = if landing then 22.0f else 4.0f + progress * 4.0f
-                    [| point.X; point.Y; point.Z; color.X; color.Y; color.Z; color.W; size |])
+                    vtx point color size)
                 |> Array.concat
-            let matrix = GlUtil.matrixArray viewProjection
             gl.UseProgram program
-            use matrixPointer = fixed matrix
-            gl.UniformMatrix4(gl.GetUniformLocation(program, "uViewProjection"), 1u, false, matrixPointer)
+            GlUtil.setMatrix gl program "uViewProjection" viewProjection
             gl.BindVertexArray vao
             gl.BindBuffer(BufferTargetARB.ArrayBuffer, buffer)
             gl.Enable EnableCap.Blend
             gl.BlendFunc(BlendingFactor.SrcAlpha, BlendingFactor.One)
             if lineData.Length > 0 then
-                use linePointer = fixed lineData
-                gl.BufferData(BufferTargetARB.ArrayBuffer, unativeint (lineData.Length * sizeof<float32>), NativePtr.toVoidPtr linePointer, BufferUsageARB.DynamicDraw)
+                GlUtil.upload gl BufferTargetARB.ArrayBuffer lineData BufferUsageARB.DynamicDraw
                 gl.Uniform1(gl.GetUniformLocation(program, "uPointPass"), 0)
                 gl.LineWidth 2.0f
                 gl.DrawArrays(PrimitiveType.Lines, 0, uint32 (lineData.Length / 8))
@@ -275,12 +269,10 @@ void main() {
                 // brief sparks; obvious once smoke is large and long-lived.
                 gl.DepthMask false
                 if puffData.Length > 0 then
-                    use puffPointer = fixed puffData
-                    gl.BufferData(BufferTargetARB.ArrayBuffer, unativeint (puffData.Length * sizeof<float32>), NativePtr.toVoidPtr puffPointer, BufferUsageARB.DynamicDraw)
+                    GlUtil.upload gl BufferTargetARB.ArrayBuffer puffData BufferUsageARB.DynamicDraw
                     gl.DrawArrays(PrimitiveType.Points, 0, uint32 (puffData.Length / 8))
                 if previewData.Length > 0 then
-                    use previewPointer = fixed previewData
-                    gl.BufferData(BufferTargetARB.ArrayBuffer, unativeint (previewData.Length * sizeof<float32>), NativePtr.toVoidPtr previewPointer, BufferUsageARB.DynamicDraw)
+                    GlUtil.upload gl BufferTargetARB.ArrayBuffer previewData BufferUsageARB.DynamicDraw
                     gl.DrawArrays(PrimitiveType.Points, 0, uint32 (previewData.Length / 8))
                 gl.DepthMask true
             gl.Disable EnableCap.Blend

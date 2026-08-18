@@ -6,12 +6,11 @@ open Ironsight.ProcGen
 open Xunit
 
 module CombatTests =
-    let private soldier position = TestKit.soldier 9 position
+    let private soldier = TestKit.soldier 9
 
-    let private soldierAt id position = TestKit.soldier id position
+    let private soldierAt = TestKit.soldier
 
-    let private openLevel =
-        LevelDsl.level "Range" [ LevelDsl.street 30.0f 10.0f Mud ] |> LevelCompile.compile
+    let private openLevel = TestKit.streetArenaSized "Range" 30.0f 10.0f
 
     [<Fact>]
     let ``level DSL compiles one source into collision render navigation cover and spawns`` () =
@@ -27,13 +26,10 @@ module CombatTests =
 
     [<Fact>]
     let ``compiled brush triangles wind toward their outward normals`` () =
-        let level = LevelDsl.level "Winding" [ LevelDsl.street 10.0f 5.0f Mud ] |> LevelCompile.compile
-        for triangle in 0..level.Indices.Length / 3 - 1 do
-            let a = level.Vertices[int level.Indices[triangle * 3]]
-            let b = level.Vertices[int level.Indices[triangle * 3 + 1]]
-            let c = level.Vertices[int level.Indices[triangle * 3 + 2]]
+        let level = TestKit.streetArenaSized "Winding" 10.0f 5.0f
+        for a, b, c in TestKit.triangles level.Vertices level.Indices do
             let geometricNormal = Vector3.Cross(b.Position - a.Position, c.Position - a.Position)
-            Assert.True(Vector3.Dot(geometricNormal, a.Normal) > 0.0f, $"Triangle {triangle} has reversed winding")
+            Assert.True(Vector3.Dot(geometricNormal, a.Normal) > 0.0f, "a compiled triangle has reversed winding")
 
     [<Fact>]
     let ``paintball arenas compile with nav cover and spawns for both teams`` () =
@@ -74,7 +70,7 @@ module CombatTests =
         Assert.Equal(Units.health 0.0f, kar98kUpdated[0].Health)
         let thompsonUpdated, _ =
             Ballistics.applyShot (Vector3(0.0f, 1.6f, 5.0f)) -Vector3.UnitZ Tuning.thompson.Damage 0.0f Tuning.thompson.HeadshotMultiplier openLevel [| soldier Vector3.Zero |]
-        Assert.True(thompsonUpdated[0].Health > Units.health 0.0f)
+        Assert.True(thompsonUpdated[0].IsAlive)
 
     [<Fact>]
     let ``kar98k penetrates thin wood with reduced damage`` () =
@@ -154,7 +150,7 @@ module CombatTests =
                 Pitch = -0.015f
                 Ads = 1.0f }
         let world = { world with Level = level; Player = player; Soldiers = [| soldierAt 44 (Vector3(0.0f, 0.0f, -3.0f)) |] }
-        let struct (_, events) = Sim.step { Sequence = 1L; Move = Vector2.Zero; Look = Vector2.Zero; Buttons = InputButtons.Fire } world
+        let struct (_, events) = Sim.step (TestKit.input 1L InputButtons.Fire Vector2.Zero) world
         Assert.Contains(events, function HitConfirmed(EntityId 44, _) -> true | _ -> false)
 
     [<Fact>]

@@ -76,17 +76,7 @@ module ClientTests =
 
     [<Fact>]
     let ``start menu supports keyboard map selection and the Fly server`` () =
-        let idle =
-            { Up = false
-              Down = false
-              Left = false
-              Right = false
-              Activate = false
-              Back = false
-              Backspace = false
-              TextInput = ""
-              Pointer = None
-              Clicked = false }
+        let idle = TestKit.idleMenuInput
         let activate = { idle with Activate = true }
         let struct (mapChoice, noAction) = StartMenu.update 1280 720 activate { StartMenu.initial with Selected = 2 }
         Assert.Equal(OfflineMaps, mapChoice.Page)
@@ -199,10 +189,7 @@ module ClientTests =
                       Vector2(0.11f, 0.14f); Vector2(0.02f, 0.17f) |]
                    Metal |]
         for mesh in meshes do
-            for triangle in 0..mesh.Indices.Length / 3 - 1 do
-                let a = mesh.Vertices[int mesh.Indices[triangle * 3]]
-                let b = mesh.Vertices[int mesh.Indices[triangle * 3 + 1]]
-                let c = mesh.Vertices[int mesh.Indices[triangle * 3 + 2]]
+            for a, b, c in TestKit.triangles mesh.Vertices mesh.Indices do
                 let geometric = Vector3.Cross(b.Position - a.Position, c.Position - a.Position)
                 Assert.True(Vector3.Dot(geometric, a.Normal) > 0.0f)
 
@@ -222,12 +209,9 @@ module ClientTests =
         // near the top — a hole or an inward-wound dome both fail this.
         let origin = Vector3(0.0f, 3.0f, -0.025f)
         let topHit =
-            [ for triangle in 0 .. indices.Length / 3 - 1 do
-                let a = vertices[int indices[triangle * 3]].Position
-                let b = vertices[int indices[triangle * 3 + 1]].Position
-                let c = vertices[int indices[triangle * 3 + 2]].Position
-                match MathEx.rayTriangle origin -Vector3.UnitY a b c with
-                | ValueSome distance when Vector3.Cross(b - a, c - a).Y > 0.0f -> yield 3.0f - distance
+            [ for a, b, c in TestKit.triangles vertices indices do
+                match MathEx.rayTriangle origin -Vector3.UnitY a.Position b.Position c.Position with
+                | ValueSome distance when Vector3.Cross(b.Position - a.Position, c.Position - a.Position).Y > 0.0f -> yield 3.0f - distance
                 | _ -> () ]
             |> function [] -> 0.0f | hits -> List.max hits
         Assert.True(topHit > 1.9f, $"highest upward-facing surface over the head is at {topHit}, expected a closed crown above 1.9")
@@ -299,8 +283,7 @@ module ClientTests =
         // exactly where continuous local prediction landed — including through a
         // jump. Without velocity on the wire this fails by design.
         let world = Sim.createTrainingWorld 700UL
-        let inputAt sequence buttons =
-            { Sequence = sequence; Move = Vector2.UnitY; Look = Vector2.Zero; Buttons = buttons }
+        let inputAt sequence buttons = TestKit.input sequence buttons Vector2.UnitY
         let inputs =
             [ for sequence in 1L..30L ->
                 inputAt sequence (if sequence = 10L then InputButtons.Jump else InputButtons.None) ]

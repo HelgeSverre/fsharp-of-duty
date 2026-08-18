@@ -156,7 +156,7 @@ type Hud(gl: GL) =
             solid (centerX - 0.5f) (centerY - radius) 1.0f (radius * 2.0f) reticle
             solid (centerX - 2.0f) (centerY - 2.0f) 4.0f 4.0f reticle
         else
-            if world.Player.Health > Units.health 0.0f then
+            if world.Player.IsAlive then
                 let spread = 7.0f + (weapon.Class.HipSpread + (weapon.Class.AdsSpread - weapon.Class.HipSpread) * world.Player.Ads) * 220.0f
                 solid (centerX - spread - 8.0f) (centerY - 1.0f) 8.0f 2.0f white
                 solid (centerX + spread) (centerY - 1.0f) 8.0f 2.0f white
@@ -318,7 +318,7 @@ type Hud(gl: GL) =
             let x = centerX + Vector3.Dot(horizontal, right) * 125.0f
             let y = centerY - Vector3.Dot(horizontal, forward) * 82.0f
             solid (x - 18.0f) (y - 3.0f) 36.0f 6.0f (Vector4(0.85f, 0.03f, 0.02f, 0.88f)))
-        if world.Player.Health <= Units.health 0.0f && info.Online.IsNone then
+        if world.Player.IsDead && info.Online.IsNone then
             solid (centerX - 250.0f) (centerY - 45.0f) 500.0f 90.0f (Vector4(0.0f, 0.0f, 0.0f, 0.72f))
             addText (centerX - 92.0f) (centerY - 24.0f) 1.6f white "YOU WERE KILLED"
             let restart = if world.Round.IsSome then "NEXT ROUND..." else "PRESS R TO RESTART"
@@ -413,8 +413,7 @@ type Hud(gl: GL) =
             gl.Uniform2(gl.GetUniformLocation(program, "uFontTexel"), 1.0f / float32 font.Width, 1.0f / float32 font.Height)
             gl.BindVertexArray vao
             gl.BindBuffer(BufferTargetARB.ArrayBuffer, buffer)
-            use pointer = fixed data
-            gl.BufferData(BufferTargetARB.ArrayBuffer, unativeint (data.Length * sizeof<float32>), NativePtr.toVoidPtr pointer, BufferUsageARB.DynamicDraw)
+            GlUtil.upload gl BufferTargetARB.ArrayBuffer data BufferUsageARB.DynamicDraw
             gl.DrawArrays(PrimitiveType.Triangles, 0, uint32 (data.Length / 8))
             gl.Disable EnableCap.Blend
             gl.Enable EnableCap.CullFace

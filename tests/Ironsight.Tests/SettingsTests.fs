@@ -6,17 +6,7 @@ open Ironsight.Shell
 open Xunit
 
 module SettingsTests =
-    let idleInput =
-        { Up = false
-          Down = false
-          Left = false
-          Right = false
-          Activate = false
-          Back = false
-          Backspace = false
-          TextInput = ""
-          Pointer = None
-          Clicked = false }
+    let idleInput = TestKit.idleMenuInput
 
     let private selectRow label (state: SettingsUi.State) =
         let index = SettingsUi.rows state.Settings |> Array.findIndex (fun row -> row.Label = label)
