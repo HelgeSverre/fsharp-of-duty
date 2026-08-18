@@ -52,12 +52,12 @@ training: _sdk
 stalingrad: _sdk
     {{ dotnet }} run --project {{ client }} -- --stalingrad
 
-# Connect TDM to the configured server (Fly.io by default).
+# Connect TDM to the configured server (the official server by default).
 [group('run')]
 online name="Player" weapon="Thompson": _sdk
     {{ dotnet }} run --project {{ client }} -- --online --name "{{ name }}" --weapon "{{ weapon }}"
 
-# Connect FFA to the configured server (Fly.io by default).
+# Connect FFA to the configured server (the official server by default).
 [group('run')]
 ffa name="Player" weapon="Thompson": _sdk
     {{ dotnet }} run --project {{ client }} -- --online --ffa --name "{{ name }}" --weapon "{{ weapon }}"

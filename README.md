@@ -25,7 +25,7 @@ unions model gameplay.
 - Navgraph/A* bot navigation, cover behavior, suppression, and automatic reloads.
 - Authoritative 8v8-capable multiplayer with TDM and FFA rooms, prediction,
   interpolation, reconciliation, lag-compensated hits, and reconnect tokens.
-- A live Fly.io server and deliberately overqualified project website at
+- A live public server and project website at
   [fsharp-of-duty.fly.dev](https://fsharp-of-duty.fly.dev/).
 
 ## Requirements
@@ -62,7 +62,7 @@ dotnet run --project src/Ironsight/Ironsight.fsproj
 ```
 
 Launching without flags opens the menu. Set your callsign, choose Quick Play or
-an offline map, or select the Fly.io server and an online loadout.
+an offline map, or select the official server and an online loadout.
 
 ## Common commands
 
@@ -75,8 +75,8 @@ just stalingrad                  # launch Stalingrad Street directly
 just battlefield                 # launch the large generated battlefield
 just server                      # run a local Paintball server
 just online-local Player         # connect to the local server
-just online Player               # connect to Fly.io TDM
-just ffa Player                  # connect to Fly.io FFA
+just online Player               # connect to the official TDM server
+just ffa Player                  # connect to the official FFA server
 just check                       # format check, build, and all tests
 just docker-build                # build the headless server image
 just fly-validate                # validate fly.toml

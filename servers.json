@@ -1,5 +1,5 @@
 {
   "servers": [
-    { "name": "Official Fly.io", "url": "wss://fsharp-of-duty.fly.dev/play" }
+    { "name": "IRONSIGHT Official", "url": "wss://fsharp-of-duty.fly.dev/play" }
   ]
 }

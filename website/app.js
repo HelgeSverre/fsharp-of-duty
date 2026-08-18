@@ -81,7 +81,7 @@
     const httpRoot = (ws) => ws.replace(/^ws/, "http").replace(/\/play\/?$/, "");
 
     async function loadServers() {
-      const fallback = [{ name: "Official Fly.io", url: apiRoot || "https://fsharp-of-duty.fly.dev" }];
+      const fallback = [{ name: "IRONSIGHT Official", url: apiRoot || "https://fsharp-of-duty.fly.dev" }];
       try {
         const response = await fetch(MASTER_LIST, { cache: "no-store", signal: AbortSignal.timeout(3000) });
         const list = (await response.json()).servers

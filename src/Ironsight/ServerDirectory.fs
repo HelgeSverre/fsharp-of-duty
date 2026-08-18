@@ -97,7 +97,7 @@ module ServerDirectory =
               readFileEntries (userListPath ())
               remoteEntries ()
               readFileEntries (packagedListPath ())
-              [ { Name = "Official Fly.io"; Url = Uri DefaultServer } ] ]
+              [ { Name = "IRONSIGHT Official"; Url = Uri DefaultServer } ] ]
 
     /// Probe every server in parallel: one leaderboard GET per server yields
     /// both the ping and the per-room player counts. Unreachable servers still

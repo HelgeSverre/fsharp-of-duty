@@ -329,7 +329,7 @@ module Program =
                                         selectedServerUri <- server
                                         reconnectAfter <- DateTimeOffset.MinValue
                                         setScreen Screen.Playing
-                                        window.Title <- "IRONSIGHT — CONNECTING TO FLY.IO"
+                                        window.Title <- "IRONSIGHT — CONNECTING"
                                     | OpenSettings ->
                                         screen <- Screen.Menu(home, nextMenu, Some(SettingsUi.create settings))
                                     | ExitGame -> window.Close())
