@@ -90,6 +90,17 @@ module AiBrain =
                     node <- previous[node]
                 result |> Seq.rev |> Seq.toList
 
+    /// Deterministic per-soldier trait in [0,1): squads mix personalities
+    /// instead of acting in lockstep (Quake III style character aggression).
+    let private aggression (EntityId id) = float32 (abs (id * 73) % 100) / 100.0f
+
+    // Fighting is the default; cover is earned by being hurt, dry, or under
+    // fire — the Quake III BotWantsToRetreat shape, not cover-by-default.
+    let private wantsCover (soldier: Soldier) =
+        soldier.Health < Units.health 50.0f
+        || soldier.Weapon.InMag = 0
+        || soldier.Suppression >= 1.5f
+
     let private closestCover target (level: Level) (soldier: Soldier) =
         level.Cover
         |> Array.filter (fun cover ->
@@ -98,18 +109,25 @@ module AiBrain =
         |> Array.sortBy (fun cover -> Vector3.DistanceSquared(cover.Pos, soldier.Position) + Vector3.DistanceSquared(cover.Pos, target) * 0.2f)
         |> Array.tryHead
 
-    let private moveTowards dt (level: Level) target (soldier: Soldier) =
+    let private moveWith (speed: float32) (weave: float32) dt (level: Level) target (soldier: Soldier) =
         let offset = MathEx.horizontal (target - soldier.Position)
         let distance = offset.Length()
         if distance < 0.05f then soldier, true
         else
             let direction = offset / distance
-            let step = min distance (2.2f * Units.raw dt)
+            // Attack movement: weave laterally while closing so an assault is
+            // not a straight-line conga toward the muzzle. Facing stays on the
+            // route; only the body jinks.
+            let side = Vector3(-direction.Z, 0.0f, direction.X)
+            let moveDirection = MathEx.normalizedOrZero (direction + side * (MathF.Sin(soldier.AnimPhase * 1.6f) * weave))
+            let step = min distance (speed * Units.raw dt)
             let facing = MathF.Atan2(direction.X, -direction.Z)
-            let requested = soldier.Position + direction * step
+            let requested = soldier.Position + moveDirection * step
             let position = Movement.resolveAgent level soldier.Position requested
             let travelled = Vector3.Distance(soldier.Position, position)
             { soldier with Position = position; Facing = facing; AnimPhase = soldier.AnimPhase + travelled * 3.0f }, distance <= 0.2f
+
+    let private moveTowards dt (level: Level) target (soldier: Soldier) = moveWith 2.2f 0.0f dt level target soldier
 
     let private followRoute dt level goal (soldier: Soldier) =
         let route =
@@ -205,37 +223,52 @@ module AiBrain =
                                       Owner = Some perceived.Team }
                                 { perceived with Facing = facing; Behavior = InCover(cover, Units.seconds 1.1f) }
                             else
+                                let aggressive = aggression perceived.Id
+                                // Healthy soldiers assault at speed with a lateral
+                                // weave; only cover-seekers plod in a straight line.
+                                let mover = if wantsCover perceived then moveTowards else moveWith 2.9f 0.55f
                                 match perceived.Behavior with
                                 | Idle ->
-                                    let (EntityId soldierId) = perceived.Id
-                                    if hasCoveringFire && contactAge > Units.seconds 0.65f && soldierId % 4 = 0 then
+                                    if wantsCover perceived then
+                                        match closestCover lastKnown level perceived with
+                                        | Some cover -> { perceived with Behavior = AdvancingTo(cover.Pos, findPath level perceived.Position cover.Pos) }
+                                        | None -> { perceived with Behavior = AdvancingTo(lastKnown, findPath level perceived.Position lastKnown) }
+                                    elif hasCoveringFire && aggressive >= 0.6f then
+                                        let (EntityId soldierId) = perceived.Id
                                         let toward = MathEx.horizontal (lastKnown - perceived.Position) |> MathEx.normalizedOrZero
                                         let side = Vector3(-toward.Z, 0.0f, toward.X) * (if soldierId % 2 = 0 then 9.0f else -9.0f)
                                         let flankPoint = lastKnown + side
                                         { perceived with Behavior = Flanking(updatedPlayer.Id, findPath level perceived.Position flankPoint) }
                                     else
-                                        match closestCover lastKnown level perceived with
-                                        | Some cover -> { perceived with Behavior = AdvancingTo(cover.Pos, findPath level perceived.Position cover.Pos) }
-                                        | None -> { perceived with Behavior = AdvancingTo(lastKnown, findPath level perceived.Position lastKnown) }
+                                        { perceived with Behavior = AdvancingTo(lastKnown, findPath level perceived.Position lastKnown) }
                                 | AdvancingTo(waypoint, path) ->
                                     match path with
                                     | nextNode :: remaining ->
-                                        let moved, arrived = moveTowards dt level nextNode perceived
+                                        let moved, arrived = mover dt level nextNode perceived
                                         { moved with Behavior = AdvancingTo(waypoint, if arrived then remaining else path) }
                                     | [] ->
-                                        let moved, arrived = moveTowards dt level waypoint perceived
+                                        let moved, arrived = mover dt level waypoint perceived
                                         if arrived then
-                                            match closestCover lastKnown level moved with
-                                            | Some cover -> { moved with Behavior = InCover(cover, Units.seconds 0.0f) }
-                                            | None -> { moved with Behavior = AdvancingTo(lastKnown, findPath level moved.Position lastKnown) }
+                                            if wantsCover moved then
+                                                match closestCover lastKnown level moved with
+                                                | Some cover -> { moved with Behavior = InCover(cover, Units.seconds 0.0f) }
+                                                | None -> { moved with Behavior = AdvancingTo(lastKnown, findPath level moved.Position lastKnown) }
+                                            else
+                                                // Keep pressing the live contact point.
+                                                { moved with Behavior = AdvancingTo(lastKnown, []) }
                                         else moved
                                 | InCover(cover, phase) ->
+                                    // Cover is a pause, not a career: after a few
+                                    // peek cycles a recovered soldier rejoins the
+                                    // assault. Aggressive types leave sooner.
                                     let nextPhase = phase + dt
-                                    { perceived with
-                                        Position = cover.Pos
-                                        Behavior = InCover(cover, if nextPhase >= Units.seconds 1.8f then Units.seconds 0.0f else nextPhase) }
+                                    let dwell = Units.seconds (1.8f * (2.0f + 2.0f * (1.0f - aggressive)))
+                                    if nextPhase >= dwell && not (wantsCover perceived) then
+                                        { perceived with Behavior = AdvancingTo(lastKnown, findPath level perceived.Position lastKnown) }
+                                    else
+                                        { perceived with Position = cover.Pos; Behavior = InCover(cover, nextPhase) }
                                 | Flanking(target, nextNode :: remaining) ->
-                                    let moved, arrived = moveTowards dt level nextNode perceived
+                                    let moved, arrived = mover dt level nextNode perceived
                                     { moved with Behavior = Flanking(target, if arrived then remaining else nextNode :: remaining) }
                                 | Flanking(_, []) ->
                                     { perceived with Behavior = AdvancingTo(lastKnown, findPath level perceived.Position lastKnown) }
@@ -245,7 +278,11 @@ module AiBrain =
                             visible && Set.contains tactical.Id engagementSlots
                             && (isSuppressor
                                 || match tactical.Behavior with
-                                   | InCover(_, phase) -> phase >= Units.seconds 0.55f && phase <= Units.seconds 1.25f
+                                   | InCover(_, phase) ->
+                                       // The phase accumulates across peek cycles;
+                                       // fire during the exposed part of each one.
+                                       let cycle = phase % Units.seconds 1.8f
+                                       cycle >= Units.seconds 0.55f && cycle <= Units.seconds 1.25f
                                    | AdvancingTo _ -> true
                                    | Flanking _ -> true
                                    | _ -> false)

@@ -48,6 +48,26 @@ module CombatTests =
             Assert.True(Vector3.Dot(geometricNormal, a.Normal) > 0.0f, $"Triangle {triangle} has reversed winding")
 
     [<Fact>]
+    let ``paintball arenas compile with nav cover and spawns for both teams`` () =
+        for level in [ Levels.scrapDepot; Levels.canalYard ] do
+            Assert.NotEmpty level.Nav
+            Assert.NotEmpty level.Cover
+            let team wanted = level.Spawns |> Array.filter (fun struct (owner, _) -> owner = Some wanted)
+            Assert.True((team Allies).Length >= 8, $"{level.Name}: too few Allies spawns")
+            Assert.True((team Axis).Length >= 8, $"{level.Name}: too few Axis spawns")
+        let depot = Sim.createScrapDepotWorld 11UL
+        Assert.True(depot.Round.IsSome)
+        Assert.Equal(5, depot.Soldiers |> Array.filter (fun soldier -> soldier.Team = Axis) |> Array.length)
+        let canal = Sim.createCanalYardWorld 11UL
+        Assert.True(canal.Round.IsSome)
+        Assert.Equal(5, canal.Soldiers |> Array.filter (fun soldier -> soldier.Team = Axis) |> Array.length)
+        // Axis spawns on the raised canal bank must snap onto the bank surface.
+        let bankSpawns =
+            Levels.canalYard.Spawns
+            |> Array.filter (fun struct (owner, position) -> owner = Some Axis && position.X >= 12.0f)
+        Assert.All(bankSpawns, fun struct (_, position) -> Assert.True(position.Y > 1.0f))
+
+    [<Fact>]
     let ``head capsule applies lethal multiplier`` () =
         let targets = [| soldier Vector3.Zero |]
         let updated, events =

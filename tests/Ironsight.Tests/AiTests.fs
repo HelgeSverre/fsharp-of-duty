@@ -45,6 +45,9 @@ module AiTests =
                 Position = Vector3(0.0f, 0.0f, -5.0f)
                 Facing = MathF.PI
                 Behavior = Idle
+                // Cover is only sought when hurt, dry, or suppressed; wound the
+                // soldier so it wants the barricade at all.
+                Health = Units.health 40.0f
                 Contacts = Map.ofList [ player.Id, struct (player.Position, Units.seconds 0.0f) ] }
         let mutable rng = Rng.create 1202UL
         let mutable soldiers = [| enemy |]
@@ -57,6 +60,28 @@ module AiTests =
             | _ -> ()
         Assert.True(occupied.IsSome, "AI never occupied the owned barricade")
         Assert.True(occupied.Value.Pos.Z < -0.55f, $"AI crossed to the exposed side at z={occupied.Value.Pos.Z}")
+
+    [<Fact>]
+    let ``a healthy soldier leaves cover to assault instead of camping`` () =
+        let level = LevelDsl.level "Assault lane" [ LevelDsl.street 30.0f 10.0f Mud ] |> LevelCompile.compile
+        let baseline = Sim.createTrainingWorld 1301UL
+        let player = { baseline.Player with Position = Vector3(0.0f, 0.0f, 8.0f) }
+        let template = baseline.Soldiers |> Array.find (fun soldier -> soldier.Team = Axis)
+        let cover = { Pos = Vector3(0.0f, 0.0f, -5.0f); PeekDir = Vector3.UnitZ; Crouch = true; Owner = Some Axis }
+        let camper =
+            { template with
+                Position = cover.Pos
+                Facing = MathF.PI
+                Health = Units.health 100.0f
+                Suppression = 0.0f
+                // Phase far past the maximum dwell: any personality must leave.
+                Behavior = InCover(cover, Units.seconds 30.0f)
+                Contacts = Map.ofList [ player.Id, struct (player.Position, Units.seconds 0.0f) ] }
+        let mutable rng = Rng.create 1302UL
+        let _, next, _ = AiBrain.step Tuning.TickDuration &rng level Map.empty player [| camper |]
+        match next[0].Behavior with
+        | InCover _ -> Assert.Fail "healthy soldier kept camping in cover"
+        | _ -> ()
 
     [<Fact>]
     let ``a direct hit suppresses the target soldier`` () =

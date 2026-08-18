@@ -134,6 +134,8 @@ module Program =
             | value when String.Equals(value, "stalingrad", StringComparison.OrdinalIgnoreCase) -> Ironsight.ProcGen.Levels.stalingradStreet
             | value when String.Equals(value, "training", StringComparison.OrdinalIgnoreCase) -> Ironsight.ProcGen.Levels.trainingYard
             | value when String.Equals(value, "battlefield", StringComparison.OrdinalIgnoreCase) -> Ironsight.ProcGen.Levels.battlefield
+            | value when String.Equals(value, "depot", StringComparison.OrdinalIgnoreCase) -> Ironsight.ProcGen.Levels.scrapDepot
+            | value when String.Equals(value, "canal", StringComparison.OrdinalIgnoreCase) -> Ironsight.ProcGen.Levels.canalYard
             | _ -> Ironsight.ProcGen.Levels.paintballArena
         let matches = MatchDirectory(matchLevel)
         builder.Services.AddSingleton matches |> ignore

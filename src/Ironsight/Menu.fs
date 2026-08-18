@@ -42,7 +42,7 @@ module StartMenu =
         match state.Page with
         | Main -> [| $"CALLSIGN  {state.PlayerName}"; "QUICK PLAY"; "OFFLINE PLAY / MAP SELECT"; "JOIN ONLINE"; "SETTINGS"; "QUIT" |]
         | NameEntry -> [| $"> {state.PlayerName}_" |]
-        | OfflineMaps -> [| "PAINTBALL KILLHOUSE"; "TRAINING YARD"; "STALINGRAD STREET"; "NORMANDY BATTLEFIELD"; "BACK" |]
+        | OfflineMaps -> [| "PAINTBALL KILLHOUSE"; "SCRAP DEPOT"; "CANAL YARD"; "TRAINING YARD"; "STALINGRAD STREET"; "NORMANDY BATTLEFIELD"; "BACK" |]
         | ServerList -> [| "FLY.IO  -  FSHARP-OF-DUTY.FLY.DEV"; "BACK" |]
         | OnlineLoadout ->
             Array.append (Tuning.onlineWeapons |> Array.map (fun weapon -> weapon.Name.ToUpperInvariant())) [| "BACK" |]
@@ -107,9 +107,11 @@ module StartMenu =
                 let playerName = if System.String.IsNullOrWhiteSpace sanitized then "Soldier" else sanitized
                 struct({ next with Page = Main; Selected = 0; PlayerName = playerName }, None)
             | OfflineMaps, 0 -> struct(next, Some(StartOffline "paintball"))
-            | OfflineMaps, 1 -> struct(next, Some(StartOffline "training"))
-            | OfflineMaps, 2 -> struct(next, Some(StartOffline "stalingrad"))
-            | OfflineMaps, 3 -> struct(next, Some(StartOffline "battlefield"))
+            | OfflineMaps, 1 -> struct(next, Some(StartOffline "depot"))
+            | OfflineMaps, 2 -> struct(next, Some(StartOffline "canal"))
+            | OfflineMaps, 3 -> struct(next, Some(StartOffline "training"))
+            | OfflineMaps, 4 -> struct(next, Some(StartOffline "stalingrad"))
+            | OfflineMaps, 5 -> struct(next, Some(StartOffline "battlefield"))
             | OfflineMaps, _ -> struct({ next with Page = Main; Selected = 0 }, None)
             | ServerList, 0 -> struct({ next with Page = OnlineLoadout; Selected = 0 }, None)
             | ServerList, _ -> struct({ next with Page = Main; Selected = 0 }, None)

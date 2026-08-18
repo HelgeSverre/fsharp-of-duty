@@ -25,7 +25,6 @@ module Sim =
         let soldiers =
             world.Soldiers
             |> Array.filter (fun soldier -> soldier.Team = Axis)
-            |> Array.truncate 4
             |> Array.mapi (fun index soldier ->
                 let position = if index < enemySpawns.Length then enemySpawns[index] else soldier.Position
                 { soldier with
@@ -323,14 +322,16 @@ module Sim =
 
     let createTrainingWorld seed = createWorld Levels.trainingYard "Clear the training yard" seed
 
-    let createPaintballWorld seed =
-        let world = createWorld Levels.paintballArena "Win the round" seed
+    /// Round-based paintball world: only the first `bots` Axis soldiers stay,
+    /// re-armed with a rifle/SMG mix, and the round loop drives resets.
+    let private createRoundWorld level bots seed =
+        let world = createWorld level "Win the round" seed
         let soldiers =
             world.Soldiers
             |> Array.filter (fun soldier -> soldier.Team = Axis)
-            |> Array.truncate 4
+            |> Array.truncate bots
             |> Array.mapi (fun index soldier ->
-                let weaponClass = if index = 1 then Tuning.thompson else Tuning.kar98k
+                let weaponClass = if index % 3 = 1 then Tuning.thompson else Tuning.kar98k
                 { soldier with
                     Weapon =
                         { Tuning.weaponSlot weaponClass 4 with
@@ -345,6 +346,12 @@ module Sim =
                       EnemyScore = 0
                       ResetIn = None
                       LastResult = None } }
+
+    let createPaintballWorld seed = createRoundWorld Levels.paintballArena 4 seed
+
+    let createScrapDepotWorld seed = createRoundWorld Levels.scrapDepot 5 seed
+
+    let createCanalYardWorld seed = createRoundWorld Levels.canalYard 5 seed
 
     let createStalingradWorld seed =
         createWorld Levels.stalingradStreet "Clear the MG nest at the end of the street" seed
