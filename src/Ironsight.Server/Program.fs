@@ -51,9 +51,22 @@ module Program =
         if not context.WebSockets.IsWebSocketRequest then
             context.Response.StatusCode <- StatusCodes.Status400BadRequest
         else
-            use! socket = context.WebSockets.AcceptWebSocketAsync()
+            // Ping/pong keepalive (mirrors NetworkClient): a dead peer aborts
+            // the socket in ~30s, so its pending receive throws and the finally
+            // below frees the player slot instead of waiting out TCP timeouts.
+            let acceptContext = WebSocketAcceptContext(KeepAliveInterval = TimeSpan.FromSeconds 10.0, KeepAliveTimeout = TimeSpan.FromSeconds 20.0)
+            use! socket = context.WebSockets.AcceptWebSocketAsync acceptContext
             let cancellationToken = context.RequestAborted
-            let! hello = receiveMessage socket cancellationToken
+            // A connection that never says hello must not hold a socket open.
+            use helloTimeout = CancellationTokenSource.CreateLinkedTokenSource cancellationToken
+            helloTimeout.CancelAfter(TimeSpan.FromSeconds 10.0)
+            let! hello = task {
+                try
+                    return! receiveMessage socket helloTimeout.Token
+                with
+                | :? OperationCanceledException -> return None
+                | :? WebSocketException -> return None
+            }
             match hello with
             | None -> ()
             | Some document ->
@@ -154,10 +167,16 @@ module Program =
         builder.Services.AddHostedService(fun _ ->
             { new BackgroundService() with
                 override _.ExecuteAsync cancellationToken = task {
+                    // A sim fault must not stop the other match, or the host:
+                    // an unhandled BackgroundService exception shuts the
+                    // process down (StopHost is the default).
+                    let tickSafely name (host: MatchHost) =
+                        try host.AdvanceTick()
+                        with ex -> eprintfn $"[{name}] AdvanceTick failed: {ex}"
                     use timer = new PeriodicTimer(TimeSpan.FromSeconds(1.0 / float Tuning.TickRate))
                     while! timer.WaitForNextTickAsync cancellationToken do
-                        matches.TeamDeathmatch.AdvanceTick()
-                        matches.FreeForAll.AdvanceTick()
+                        tickSafely "tdm" matches.TeamDeathmatch
+                        tickSafely "ffa" matches.FreeForAll
                 } }) |> ignore
         let app = builder.Build()
         app.UseDefaultFiles() |> ignore

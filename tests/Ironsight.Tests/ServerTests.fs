@@ -346,3 +346,21 @@ module ServerTests =
         let bundled = System.Text.Json.Nodes.JsonNode.Parse(html[start .. html.IndexOf("</script>", start) - 1])
         let live = System.Text.Json.JsonSerializer.SerializeToNode(Protocol.arsenal ())
         Assert.Equal(live["weapons"].ToJsonString(), bundled["weapons"].ToJsonString())
+
+    [<Fact>]
+    let ``match returns to waiting once every player slot has expired`` () =
+        // Zero grace: removed players expire on the very next tick instead of
+        // after the production 30 s reconnect window.
+        let host = MatchHost(TeamDeathmatch, disconnectGrace = TimeSpan.Zero)
+        let first, _ = host.TryAddPlayer("First").Value
+        let second, _ = host.TryAddPlayer("Second").Value
+        TestKit.readyUp host [ first; second ]
+        Assert.Equal(Playing, host.Snapshot().Phase)
+        host.RemovePlayer first
+        host.RemovePlayer second
+        host.AdvanceTick()
+        let state = host.Snapshot()
+        Assert.Equal(Waiting, state.Phase)
+        Assert.True state.Players.IsEmpty
+        Assert.Equal(0, state.AlliesScore)
+        Assert.Equal(0, state.AxisScore)

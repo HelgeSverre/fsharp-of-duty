@@ -5,8 +5,11 @@ open System.Numerics
 open System.Text.Json
 open Ironsight
 
-type MatchHost(mode: GameMode, ?matchLevel: Level) =
+type MatchHost(mode: GameMode, ?matchLevel: Level, ?disconnectGrace: TimeSpan) =
     let gate = obj ()
+    // How long a disconnected player's slot (and session token) is reserved
+    // for resume. Overridable so tests need not wait out wall-clock time.
+    let disconnectGrace = defaultArg disconnectGrace (TimeSpan.FromSeconds 30.0)
     let level = defaultArg matchLevel (Sim.createTrainingWorld 0xF5A4D3UL).Level
     let mutable nextPlayerId = 1
     let mutable state = { Multiplayer.create mode with LevelName = level.Name }
@@ -73,7 +76,9 @@ type MatchHost(mode: GameMode, ?matchLevel: Level) =
                     |> Array.forall (fun enemy ->
                         not (Ballistics.lineOfSight (candidate + Vector3(0.0f, 1.0f, 0.0f)) (enemy.Position + Vector3(0.0f, 1.0f, 0.0f)) level)))
             let choices = if safe.Length > 0 then safe else candidates
-            choices[(int tick + id) % choices.Length]
+            // int64 modulo: int tick would overflow negative after ~14 months
+            // of uptime at 60Hz and crash on a negative index.
+            choices[int ((tick + int64 id) % int64 choices.Length)]
 
     let freshSpawn tick id (player: NetworkPlayer) =
         { player with
@@ -109,7 +114,7 @@ type MatchHost(mode: GameMode, ?matchLevel: Level) =
                 |> Option.bind (fun token -> Map.tryFind token sessionOwners |> Option.map (fun id -> token, id))
                 |> Option.bind (fun (token, id) ->
                     match Map.tryFind id disconnectedSince, Map.tryFind id state.Players with
-                    | Some since, Some player when DateTimeOffset.UtcNow - since <= TimeSpan.FromSeconds 30.0 ->
+                    | Some since, Some player when DateTimeOffset.UtcNow - since <= disconnectGrace ->
                         let selected = selectedWeapon player.Team weaponName
                         let weapon =
                             if player.Weapon.Class.Name = selected.Name then player.Weapon
@@ -238,7 +243,7 @@ type MatchHost(mode: GameMode, ?matchLevel: Level) =
             let expired =
                 disconnectedSince
                 |> Map.toArray
-                |> Array.choose (fun (id, since) -> if DateTimeOffset.UtcNow - since > TimeSpan.FromSeconds 30.0 then Some id else None)
+                |> Array.choose (fun (id, since) -> if DateTimeOffset.UtcNow - since > disconnectGrace then Some id else None)
             for id in expired do
                 state <- { state with Players = Map.remove id state.Players }
                 disconnectedSince <- Map.remove id disconnectedSince
@@ -248,6 +253,17 @@ type MatchHost(mode: GameMode, ?matchLevel: Level) =
             let readyPlayers = state.Players |> Map.toSeq |> Seq.filter (fun (_, player) -> player.Connected && player.Ready) |> Seq.length
             let lifecycleState =
                 match state.Phase with
+                // Everyone gone (and past the 30s reconnect expiry, which acts
+                // as the debounce for a brief mass disconnect): back to Waiting
+                // so the ready gate applies to the next group, not just the
+                // first one after boot.
+                | phase when phase <> Waiting && state.Players.IsEmpty ->
+                    { state with
+                        Phase = Waiting
+                        PhaseRemaining = Units.seconds 0.0f
+                        AlliesScore = 0
+                        AxisScore = 0
+                        Grenades = [||] }
                 | Waiting when readyPlayers >= 2 -> { state with Phase = Warmup; PhaseRemaining = Units.seconds 10.0f }
                 | Waiting -> state
                 | Warmup when state.PhaseRemaining <= Tuning.TickDuration ->
