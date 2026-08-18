@@ -201,7 +201,15 @@ module ClientTests =
 
     [<Fact>]
     let ``procedural weapon primitives use outward counterclockwise winding`` () =
-        let meshes = [| MeshGen.box (Vector3.One) Wood; MeshGen.cylinder 10 0.2f 1.0f Metal |]
+        // The lathe sample is the real helmet profile: it shipped upside down
+        // and holed precisely because nothing asserted its winding or closure.
+        let meshes =
+            [| MeshGen.box (Vector3.One) Wood
+               MeshGen.cylinder 10 0.2f 1.0f Metal
+               MeshGen.lathe 12
+                   [| Vector2(0.19f, -0.035f); Vector2(0.19f, 0.01f); Vector2(0.17f, 0.08f)
+                      Vector2(0.11f, 0.14f); Vector2(0.02f, 0.17f) |]
+                   Metal |]
         for mesh in meshes do
             for triangle in 0..mesh.Indices.Length / 3 - 1 do
                 let a = mesh.Vertices[int mesh.Indices[triangle * 3]]
@@ -209,6 +217,44 @@ module ClientTests =
                 let c = mesh.Vertices[int mesh.Indices[triangle * 3 + 2]]
                 let geometric = Vector3.Cross(b.Position - a.Position, c.Position - a.Position)
                 Assert.True(Vector3.Dot(geometric, a.Normal) > 0.0f)
+
+    [<Fact>]
+    let ``a standing soldier wears a closed helmet crown, dome up`` () =
+        // Regression for the see-through helmet: the crown must be the highest
+        // surface, upward-facing (outward-wound, not culled), and closed. This
+        // fails independently on the upside-down rotation, the missing lathe
+        // caps, and any winding flip.
+        let soldier =
+            { Id = EntityId 1
+              Team = Axis
+              Position = Vector3.Zero
+              Facing = 0.7f
+              Stance = Standing
+              Health = Units.health 100.0f
+              Behavior = Idle
+              Weapon = Tuning.weaponSlot Tuning.kar98k 2
+              Squad = 1
+              Contacts = Map.empty
+              Suppression = 0.0f
+              AnimPhase = 0.3f }
+        let vertices, indices = Humanoid.mesh [| soldier |]
+        let highest = vertices |> Array.maxBy (fun vertex -> vertex.Position.Y)
+        // The top of the model is helmet, not bare head poking through a hole.
+        Assert.Equal(Materials.id UniformFeldgrau, highest.MaterialId)
+        Assert.InRange(highest.Position.Y, 1.9f, 2.05f)
+        // Looking straight down at the crown must hit an upward-facing surface
+        // near the top — a hole or an inward-wound dome both fail this.
+        let origin = Vector3(0.0f, 3.0f, -0.025f)
+        let topHit =
+            [ for triangle in 0 .. indices.Length / 3 - 1 do
+                let a = vertices[int indices[triangle * 3]].Position
+                let b = vertices[int indices[triangle * 3 + 1]].Position
+                let c = vertices[int indices[triangle * 3 + 2]].Position
+                match MathEx.rayTriangle origin -Vector3.UnitY a b c with
+                | ValueSome distance when Vector3.Cross(b - a, c - a).Y > 0.0f -> yield 3.0f - distance
+                | _ -> () ]
+            |> function [] -> 0.0f | hits -> List.max hits
+        Assert.True(topHit > 1.9f, $"highest upward-facing surface over the head is at {topHit}, expected a closed crown above 1.9")
 
     [<Fact>]
     let ``online reconciliation drops acknowledged inputs and replays newer movement`` () =

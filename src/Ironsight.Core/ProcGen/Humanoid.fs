@@ -37,7 +37,9 @@ module Humanoid =
             [| Vector2(0.03f, -0.17f); Vector2(0.13f, -0.13f); Vector2(0.16f, -0.02f)
                Vector2(0.15f, 0.10f); Vector2(0.09f, 0.17f); Vector2(0.02f, 0.19f) |]
             Skin
-        |> MeshGen.rotateX (MathF.PI * 0.5f)
+        // System.Numerics is row-vector: CreateRotationX(+pi/2) maps the lathe
+        // axis +Z to -Y and builds the dome upside down. -pi/2 maps +Z to +Y.
+        |> MeshGen.rotateX (-MathF.PI * 0.5f)
         |> MeshGen.translate center
 
     let private helmet material center =
@@ -45,7 +47,8 @@ module Humanoid =
             [| Vector2(0.19f, -0.035f); Vector2(0.19f, 0.01f); Vector2(0.17f, 0.08f)
                Vector2(0.11f, 0.14f); Vector2(0.02f, 0.17f) |]
             material
-        |> MeshGen.rotateX (MathF.PI * 0.5f)
+        // Same row-vector convention as the head: -pi/2 puts the crown on top.
+        |> MeshGen.rotateX (-MathF.PI * 0.5f)
         |> MeshGen.translate center
 
     let pose (soldier: Soldier) =

@@ -74,13 +74,24 @@ module MeshGen =
             let count = max 3 segments
             let vertices = ResizeArray<MeshVertex>()
             let indices = ResizeArray<uint32>()
+            // Normal at each ring follows the profile slope (the revolved
+            // perpendicular of the local segment), not the bare radial. A
+            // radial-only normal shades a near-flat dome like a vertical wall,
+            // which read as a dark band across helmet crowns.
+            let slopeNormal ring =
+                let before = profile[max 0 (ring - 1)]
+                let after = profile[min (profile.Length - 1) (ring + 1)]
+                let delta = after - before
+                let n = Vector2(delta.Y, -delta.X)
+                if n.LengthSquared() < 0.000001f then Vector2(1.0f, 0.0f) else Vector2.Normalize n
             for ring in 0..profile.Length - 1 do
+                let n = slopeNormal ring
                 for segment in 0..count - 1 do
                     let angle = float32 segment / float32 count * MathF.Tau
                     let radial = Vector3(MathF.Cos angle, MathF.Sin angle, 0.0f)
                     vertices.Add
                         { Position = Vector3(radial.X * profile[ring].X, radial.Y * profile[ring].X, profile[ring].Y)
-                          Normal = radial
+                          Normal = MathEx.normalizedOrZero (radial * n.X + Vector3.UnitZ * n.Y)
                           MaterialId = Materials.id material }
             for ring in 0..profile.Length - 2 do
                 for segment in 0..count - 1 do
@@ -91,6 +102,33 @@ module MeshGen =
                     let d = uint32 ((ring + 1) * count + segment)
                     indices.Add a; indices.Add b; indices.Add c
                     indices.Add a; indices.Add c; indices.Add d
+            // End caps, like cylinder's: without them every lathe part is an
+            // open tube whose interior is back-face culled, so helmet crowns
+            // and torso tops were literal see-through holes.
+            let cap (ringIndex: int) (outward: Vector3) =
+                let radius = profile[ringIndex].X
+                if radius > 0.001f then
+                    let z = profile[ringIndex].Y
+                    let centre = uint32 vertices.Count
+                    vertices.Add { Position = Vector3(0.0f, 0.0f, z); Normal = outward; MaterialId = Materials.id material }
+                    for segment in 0..count - 1 do
+                        let angle = float32 segment / float32 count * MathF.Tau
+                        vertices.Add
+                            { Position = Vector3(MathF.Cos angle * radius, MathF.Sin angle * radius, z)
+                              Normal = outward
+                              MaterialId = Materials.id material }
+                    for segment in 0..count - 1 do
+                        let next = (segment + 1) % count
+                        indices.Add centre
+                        // Wind so the face is CCW seen from along `outward`.
+                        if outward.Z > 0.0f then
+                            indices.Add(centre + 1u + uint32 segment)
+                            indices.Add(centre + 1u + uint32 next)
+                        else
+                            indices.Add(centre + 1u + uint32 next)
+                            indices.Add(centre + 1u + uint32 segment)
+            cap 0 -Vector3.UnitZ
+            cap (profile.Length - 1) Vector3.UnitZ
             { Vertices = vertices.ToArray(); Indices = indices.ToArray() }
 
     let tube segments outerRadius length material = cylinder segments outerRadius length material
@@ -125,7 +163,6 @@ module MeshGen =
     let rotateY angle mesh = transform (Matrix4x4.CreateRotationY angle) mesh
     let rotateZ angle mesh = transform (Matrix4x4.CreateRotationZ angle) mesh
     let scale (amount: Vector3) mesh = transform (Matrix4x4.CreateScale amount) mesh
-    let mirrorX mesh = transform (Matrix4x4.CreateScale(-1.0f, 1.0f, 1.0f)) mesh
     let paint material (mesh: ProceduralMesh) =
         { mesh with Vertices = mesh.Vertices |> Array.map (fun vertex -> { vertex with MaterialId = Materials.id material }) }
 
