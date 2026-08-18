@@ -55,19 +55,14 @@ module CoreTests =
         Assert.All(reset.Soldiers, fun soldier -> Assert.True(soldier.Health > Units.health 0.0f))
 
     [<Fact>]
-    let ``generated battlefield contains terrain settlements and hundreds of troops`` () =
-        let world = Sim.createBattlefieldWorld 44UL
-        Assert.Equal("Normandy Battlefield", world.Level.Name)
-        Assert.True(world.Level.Brushes.Length > 1000)
-        Assert.True(world.Level.BrushGrid.Cells.Count > 1000)
-        Assert.True(world.Soldiers.Length >= 220)
-        Assert.True(world.Level.Nav.Length > 1000)
-        Assert.NotEmpty(world.Level.MountedGuns)
-        Assert.Contains(world.Soldiers, fun soldier -> soldier.Weapon.Class.Name = "MG42")
-
-    [<Fact>]
     let ``mounted gun crew remains at its generated emplacement`` () =
-        let mutable world = Sim.createStalingradWorld 144UL
+        let nest =
+            LevelDsl.level "MG nest"
+                [ LevelDsl.street 40.0f 16.0f Mud
+                  LevelDsl.mg42 (Vector3(0.0f, 0.0f, -12.0f)) MathF.PI Axis
+                  LevelDsl.spawnSquad Allies 1 (Vector3(0.0f, 0.0f, 14.0f)) ]
+            |> LevelCompile.compile
+        let mutable world = Sim.createWorld nest "Silence the gun" 144UL
         let gunner = world.Soldiers |> Array.find (fun soldier -> soldier.Weapon.Class.Name = "MG42")
         let initialPosition = gunner.Position
         for tick in 1L..180L do
@@ -157,8 +152,32 @@ module CoreTests =
         world <- let struct (next, _) = Sim.step (input 1L InputButtons.Weapon2 Vector2.Zero) world in next
         for sequence in 2L..24L do
             world <- let struct (next, _) = Sim.step (input sequence InputButtons.None Vector2.Zero) world in next
-        Assert.Equal(1, world.Player.Active)
+        Assert.Equal(3, world.Player.Active)
         Assert.Equal("Thompson", world.Player.Slots[world.Player.Active].Class.Name)
+
+    [<Fact>]
+    let ``pressing the same weapon key cycles within its category`` () =
+        // Category 1 holds Kar98k -> Garand -> Lee-Enfield -> wraps to Kar98k.
+        let mutable world = Sim.createTrainingWorld 29UL
+        Assert.Equal(0, world.Player.Active)
+        let mutable sequence = 1L
+        let press () =
+            world <- let struct (next, _) = Sim.step (input sequence InputButtons.Weapon1 Vector2.Zero) world in next
+            sequence <- sequence + 1L
+            for _ in 1..24 do
+                world <- let struct (next, _) = Sim.step (input sequence InputButtons.None Vector2.Zero) world in next
+                sequence <- sequence + 1L
+        press ()
+        Assert.Equal("M1 Garand", world.Player.Slots[world.Player.Active].Class.Name)
+        press ()
+        Assert.Equal("Lee-Enfield", world.Player.Slots[world.Player.Active].Class.Name)
+        press ()
+        Assert.Equal("Kar98k", world.Player.Slots[world.Player.Active].Class.Name)
+
+    [<Fact>]
+    let ``every online weapon resolves by name`` () =
+        for weapon in Tuning.onlineWeapons do
+            Assert.Equal(Some weapon, Tuning.weaponByName weapon.Name)
 
     [<Fact>]
     let ``fourth slot equips a scoped high damage sniper rifle`` () =
@@ -167,7 +186,7 @@ module CoreTests =
         for sequence in 2L..24L do
             world <- let struct (next, _) = Sim.step (input sequence InputButtons.None Vector2.Zero) world in next
         let sniper = world.Player.Slots[world.Player.Active].Class
-        Assert.Equal(3, world.Player.Active)
+        Assert.Equal(7, world.Player.Active)
         Assert.Equal("Kar98k Sniper", sniper.Name)
         Assert.True(sniper.Damage > Tuning.kar98k.Damage)
 
@@ -184,7 +203,7 @@ module CoreTests =
             |> List.filter (function ShotFired(Some(EntityId 1), _, _, "M1897 Trench Gun") -> true | _ -> false)
         let mutable rng = Rng.create 91UL
         let struct (_, pellets) = Weapons.step Tuning.TickDuration 0.0f true false 0.0f &rng (Tuning.weaponSlot Tuning.m1897 5)
-        Assert.Equal(4, world.Player.Active)
+        Assert.Equal(9, world.Player.Active)
         Assert.Equal("M1897 Trench Gun", world.Player.Slots[world.Player.Active].Class.Name)
         Assert.Equal(1, shots.Length)
         Assert.Equal(8, pellets.Length)
@@ -268,7 +287,7 @@ module CoreTests =
         let makePlayer id team =
             { Id = EntityId id; Name = string id; Team = team; Position = Vector3.Zero; Velocity = Vector3.Zero
               Yaw = 0.0f; Pitch = 0.0f; Stance = Standing; CrouchLatched = false; CrouchPrevHeld = false; Sprinting = false; Ads = 0.0f
-              Health = Units.health 100.0f; RegenIn = Units.seconds 0.0f; Weapon = Tuning.weaponSlot Tuning.kar98k 2
+              Health = Units.health 100.0f; RegenIn = Units.seconds 0.0f; Weapon = Tuning.weaponSlot Tuning.kar98k 2; RequestedWeapon = None
               Grenade = GrenadeIdle 3; Connected = true; Ready = true; Alive = true; RespawnIn = Units.seconds 0.0f; SpawnProtection = Units.seconds 0.0f
               Kills = 0; Deaths = 0; LastInputSequence = 0L }
         let state =
@@ -283,7 +302,7 @@ module CoreTests =
         let makePlayer id team =
             { Id = EntityId id; Name = string id; Team = team; Position = Vector3.Zero; Velocity = Vector3.Zero
               Yaw = 0.0f; Pitch = 0.0f; Stance = Standing; CrouchLatched = false; CrouchPrevHeld = false; Sprinting = false; Ads = 0.0f
-              Health = Units.health 100.0f; RegenIn = Units.seconds 0.0f; Weapon = Tuning.weaponSlot Tuning.kar98k 2
+              Health = Units.health 100.0f; RegenIn = Units.seconds 0.0f; Weapon = Tuning.weaponSlot Tuning.kar98k 2; RequestedWeapon = None
               Grenade = GrenadeIdle 3; Connected = true; Ready = true; Alive = true; RespawnIn = Units.seconds 0.0f; SpawnProtection = Units.seconds 0.0f
               Kills = 0; Deaths = 0; LastInputSequence = 0L }
         let state =

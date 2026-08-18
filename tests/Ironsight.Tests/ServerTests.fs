@@ -252,6 +252,52 @@ module ServerTests =
         Assert.Single wire.grenades |> ignore
 
     [<Fact>]
+    let ``loadout change applies instantly outside live play and stages during it`` () =
+        let host = MatchHost TeamDeathmatch
+        let playerId, _ = host.TryAddPlayer("Switcher").Value
+        // Waiting phase: swap on the spot, full ammunition.
+        host.SetLoadout(playerId, "STG-44")
+        Assert.Equal("STG-44", host.Snapshot().Players[playerId].Weapon.Class.Name)
+        // Unknown weapon names are ignored.
+        host.SetLoadout(playerId, "Raygun")
+        Assert.Equal("STG-44", host.Snapshot().Players[playerId].Weapon.Class.Name)
+        let otherId, _ = host.TryAddPlayer("Other").Value
+        host.SetReady playerId
+        host.SetReady otherId
+        for _ in 1..721 do host.AdvanceTick()
+        Assert.Equal(Playing, host.Snapshot().Phase)
+        // Live round: the request must not re-roll the weapon in hand.
+        host.SetLoadout(playerId, "BAR")
+        Assert.Equal("STG-44", host.Snapshot().Players[playerId].Weapon.Class.Name)
+
+    [<Fact>]
+    let ``mid-round loadout request arms on the next spawn`` () =
+        let arena = LevelDsl.level "Loadout range" [ LevelDsl.street 50.0f 20.0f Mud ] |> LevelCompile.compile
+        let host = MatchHost(FreeForAll, arena)
+        let subject, _ = host.TryAddPlayer("Subject").Value
+        let witness, _ = host.TryAddPlayer("Witness").Value
+        host.SetReady subject
+        host.SetReady witness
+        for _ in 1..721 do host.AdvanceTick()
+        host.SetLoadout(subject, "BAR")
+        let mutable sequence = 1L
+        // Two grenades cooked to detonation in hand kill the subject.
+        for _ in 1..520 do
+            applyCustom sequence 0.0f 0.0f (int InputButtons.Grenade) host subject
+            host.AdvanceTick()
+            sequence <- sequence + 1L
+        Assert.False(host.Snapshot().Players[subject].Alive)
+        Assert.Equal("Thompson", host.Snapshot().Players[subject].Weapon.Class.Name)
+        for _ in 1..320 do
+            applyCustom sequence 0.0f 0.0f 0 host subject
+            host.AdvanceTick()
+            sequence <- sequence + 1L
+        let respawned = host.Snapshot().Players[subject]
+        Assert.True(respawned.Alive)
+        Assert.Equal("BAR", respawned.Weapon.Class.Name)
+        Assert.Equal(Tuning.bar.MagSize, respawned.Weapon.InMag)
+
+    [<Fact>]
     let ``session token reclaims reserved identity after disconnect`` () =
         let host = MatchHost TeamDeathmatch
         let playerId, token = host.TryAddPlayer("Original").Value

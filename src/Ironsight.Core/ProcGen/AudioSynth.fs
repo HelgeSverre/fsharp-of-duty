@@ -29,6 +29,19 @@ module AudioSynth =
             let body = MathF.Sin(MathF.Tau * (if deep then 72.0f else 96.0f) * time) * MathF.Exp(-time * 13.0f)
             MathF.Tanh((transient * 1.35f + body * 0.58f) * 1.5f) * 0.72f)
 
+    /// The M1 Garand's en-bloc clip ejecting: a bright metallic ring of
+    /// inharmonic partials over a short noise transient.
+    let garandPing () =
+        render 0.38f 3141 (fun time white ->
+            let partial frequency decay gain = MathF.Sin(MathF.Tau * frequency * time) * MathF.Exp(-time * decay) * gain
+            let ring =
+                partial 2380.0f 9.0f 0.42f
+                + partial 3160.0f 12.0f 0.30f
+                + partial 4270.0f 16.0f 0.20f
+                + partial 5480.0f 22.0f 0.12f
+            let transient = white * MathF.Exp(-time * 90.0f) * 0.25f
+            (ring + transient) * 0.8f)
+
     let explosion () =
         let mutable brown = 0.0f
         render 0.72f 77191 (fun time white ->

@@ -222,9 +222,16 @@ type OnlineClient(serverUri: Uri, playerName: string, requestedMode: GameMode, w
             cancellation.Cancel()
     }
 
+    // Loadout requests ride the sender loop so the socket never sees two
+    // concurrent SendAsync calls. null = nothing pending.
+    let mutable pendingLoadout: string = null
+
     let senderLoop () = task {
         try
             while! inputChannel.Reader.WaitToReadAsync(cancellation.Token) do
+                match Interlocked.Exchange(&pendingLoadout, null) with
+                | null -> ()
+                | weapon -> do! sendJson {| ``type`` = "loadout"; version = 1; weapon = weapon |}
                 let mutable input = Unchecked.defaultof<InputFrame>
                 while inputChannel.Reader.TryRead(&input) do
                     let payload =
@@ -289,6 +296,10 @@ type OnlineClient(serverUri: Uri, playerName: string, requestedMode: GameMode, w
     }
 
     member _.QueueInput(input: InputFrame) = inputChannel.Writer.TryWrite input |> ignore
+
+    /// Ask the server to change loadout; applied server-side on next spawn (or
+    /// immediately outside live play). Sent on the next sender-loop pass.
+    member _.RequestLoadout(weaponName: string) = Interlocked.Exchange(&pendingLoadout, weaponName) |> ignore
 
     member _.TryLatestSnapshot() =
         lock snapshotGate (fun () -> if snapshots.Count = 0 then None else Some(snapshots |> Seq.last))

@@ -19,11 +19,15 @@ type HudInfo =
       HitMarker: float32
       HitMarkerLethal: bool
       Subtitle: string option
+      /// Show the weapon category list (recent switch activity).
+      ShowInventory: bool
       /// Whether the local player is holding a grenade ready to throw, which
       /// drives the trajectory preview. Decided by the caller rather than read
       /// from World.Player.Grenade: online the client never advances the hand
       /// state, so the world would always report idle.
       GrenadeCooking: bool
+      /// In-game loadout picker: Some selectedIndex while open.
+      LoadoutScreen: int option
       Menu: StartMenuState option
       Settings: GameSettings
       SettingsScreen: SettingsUi.State option }
@@ -184,26 +188,59 @@ type Hud(gl: GL) =
             solid (centerX - reach) (centerY + reach - arm) thick arm hit
             solid (centerX + reach - arm) (centerY + reach - thick) arm thick hit
             solid (centerX + reach - thick) (centerY + reach - arm) thick arm hit
-        let ammoText = $"{weapon.InMag} / {weapon.Reserve}"
-        addText (float32 width - float32 ammoText.Length * 16.0f - 26.0f) (float32 height - 56.0f) 2.0f shadow ammoText
-        addText (float32 width - float32 ammoText.Length * 16.0f - 28.0f) (float32 height - 58.0f) 2.0f white ammoText
+        // ---- Bottom-right weapon panel: name, magazine, reserve, grenades ----
+        let panelBack = Vector4(0.015f, 0.022f, 0.018f, 0.66f)
+        let accent = Vector4(0.82f, 0.22f, 0.08f, 0.92f)
+        let label = Vector4(0.70f, 0.74f, 0.67f, 0.95f)
+        let weaponPanelWidth, weaponPanelHeight = 226.0f, 66.0f
+        let weaponPanelX = float32 width - weaponPanelWidth - 20.0f
+        let weaponPanelY = float32 height - weaponPanelHeight - 18.0f
+        solid weaponPanelX weaponPanelY weaponPanelWidth weaponPanelHeight panelBack
+        solid weaponPanelX weaponPanelY weaponPanelWidth 3.0f accent
+        let weaponName = weapon.Class.Name.ToUpperInvariant()
+        addText (weaponPanelX + 14.0f) (weaponPanelY + 10.0f) 1.0f label weaponName
+        let magText = $"{weapon.InMag}"
+        addText (weaponPanelX + 14.0f) (weaponPanelY + 28.0f) 2.2f white magText
+        addText (weaponPanelX + 18.0f + float32 magText.Length * 17.6f) (weaponPanelY + 40.0f) 1.1f label $"/ {weapon.Reserve}"
+        let grenadeCount = match world.Player.Grenade with GrenadeIdle count -> count | Cooking(_, count) -> count
+        addText (weaponPanelX + weaponPanelWidth - 74.0f) (weaponPanelY + 40.0f) 1.1f label $"GREN {grenadeCount}"
+        // Half-Life-style category list, shown briefly after switch activity.
+        if info.ShowInventory && world.Player.Slots.Length > 1 then
+            let dim = Vector4(0.62f, 0.66f, 0.60f, 0.62f)
+            let highlight = Vector4(1.0f, 0.86f, 0.30f, 0.98f)
+            Sim.weaponCategories
+            |> Array.iteri (fun category members ->
+                let active = members |> Array.contains world.Player.Active
+                let shown = if active then world.Player.Active else members[0]
+                let extras = if members.Length > 1 then " " + String.replicate (members.Length - 1) "." else ""
+                let row = $"{category + 1}  {world.Player.Slots[shown].Class.Name.ToUpperInvariant()}{extras}"
+                let y = float32 height - 224.0f + float32 category * 20.0f
+                let x = float32 width - float32 row.Length * 8.0f - 28.0f
+                solid (x - 6.0f) (y - 3.0f) (float32 row.Length * 8.0f + 12.0f) 18.0f (Vector4(0.0f, 0.0f, 0.0f, if active then 0.55f else 0.34f))
+                addText x y 1.0f (if active then highlight else dim) row)
         match weapon.State with
         | Reloading remaining ->
             let progress = MathEx.clamp01 (1.0f - Units.raw remaining / max 0.01f (Units.raw weapon.Class.ReloadTime))
-            let barWidth = 174.0f
-            let barLeft = float32 width - barWidth - 28.0f
-            let barTop = float32 height - 82.0f
-            let percentage = int (progress * 100.0f)
-            let reloadText = sprintf "RELOADING %d%%" percentage
+            let barWidth = weaponPanelWidth
+            let barLeft = weaponPanelX
+            let barTop = weaponPanelY - 16.0f
+            let reloadText = sprintf "RELOADING %d%%" (int (progress * 100.0f))
             solid (barLeft - 2.0f) (barTop - 2.0f) (barWidth + 4.0f) 12.0f (Vector4(0.0f, 0.0f, 0.0f, 0.72f))
             solid barLeft barTop barWidth 8.0f (Vector4(0.16f, 0.18f, 0.16f, 0.92f))
             solid barLeft barTop (barWidth * progress) 8.0f (Vector4(0.92f, 0.55f, 0.14f, 1.0f))
-            addText (barLeft - float32 reloadText.Length * 8.0f - 12.0f) (barTop - 4.0f) 1.0f shadow reloadText
-            addText (barLeft - float32 reloadText.Length * 8.0f - 14.0f) (barTop - 6.0f) 1.0f white reloadText
+            addText (barLeft - float32 reloadText.Length * 8.0f - 14.0f) (barTop - 3.0f) 1.0f white reloadText
         | _ -> ()
-        let healthText = $"HP {int (Units.raw world.Player.Health)}"
-        addText 24.0f (float32 height - 48.0f) 1.5f shadow healthText
-        addText 22.0f (float32 height - 50.0f) 1.5f white healthText
+        // ---- Bottom-left health panel with a color-shifting bar ----
+        let healthPanelWidth, healthPanelHeight = 196.0f, 48.0f
+        let healthPanelX, healthPanelY = 20.0f, float32 height - 48.0f - 18.0f
+        solid healthPanelX healthPanelY healthPanelWidth healthPanelHeight panelBack
+        solid healthPanelX healthPanelY healthPanelWidth 3.0f accent
+        let healthRatio = MathEx.clamp01 (Units.raw world.Player.Health / 100.0f)
+        let healthFill = Vector4(0.85f - 0.42f * healthRatio, 0.16f + 0.52f * healthRatio, 0.12f + 0.20f * healthRatio, 0.95f)
+        addText (healthPanelX + 14.0f) (healthPanelY + 10.0f) 1.0f label "HEALTH"
+        addText (healthPanelX + healthPanelWidth - 14.0f - float32 ($"{int (Units.raw world.Player.Health)}").Length * 11.2f) (healthPanelY + 8.0f) 1.4f white $"{int (Units.raw world.Player.Health)}"
+        solid (healthPanelX + 14.0f) (healthPanelY + 30.0f) (healthPanelWidth - 28.0f) 9.0f (Vector4(0.10f, 0.12f, 0.10f, 0.9f))
+        solid (healthPanelX + 14.0f) (healthPanelY + 30.0f) ((healthPanelWidth - 28.0f) * healthRatio) 9.0f healthFill
         let heading = ((world.Player.Yaw * 180.0f / MathF.PI) % 360.0f + 360.0f) % 360.0f
         let directions = [| "N"; "NE"; "E"; "SE"; "S"; "SW"; "W"; "NW" |]
         let direction = directions[(int (MathF.Round(heading / 45.0f))) % directions.Length]
@@ -292,6 +329,43 @@ type Hud(gl: GL) =
             addText (centerX - 92.0f) (centerY - 24.0f) 1.6f white "YOU WERE KILLED"
             let restart = if world.Round.IsSome then "NEXT ROUND..." else "PRESS R TO RESTART"
             addText (centerX - float32 restart.Length * 5.0f) (centerY + 10.0f) 1.0f white restart
+        info.LoadoutScreen
+        |> Option.iter (fun selected ->
+            let weapons = Tuning.onlineWeapons
+            let rowHeight = 30.0f
+            let panelWidth = min 640.0f (float32 width - 48.0f)
+            let panelHeight = 150.0f + rowHeight * float32 weapons.Length
+            let panelLeft = centerX - panelWidth * 0.5f
+            let panelTop = centerY - panelHeight * 0.5f
+            solid panelLeft panelTop panelWidth panelHeight (Vector4(0.025f, 0.040f, 0.034f, 0.94f))
+            solid panelLeft panelTop panelWidth 5.0f accent
+            addText (panelLeft + 26.0f) (panelTop + 20.0f) 2.0f white "LOADOUT"
+            let hint = if info.Online.IsSome then "ARMS ON YOUR NEXT SPAWN" else "SWAPS IMMEDIATELY"
+            addText (panelLeft + panelWidth - 26.0f - float32 hint.Length * 8.0f) (panelTop + 30.0f) 1.0f label hint
+            addText (panelLeft + 40.0f) (panelTop + 62.0f) 0.95f label "WEAPON"
+            addText (panelLeft + 320.0f) (panelTop + 62.0f) 0.95f label "DMG"
+            addText (panelLeft + 400.0f) (panelTop + 62.0f) 0.95f label "RPM"
+            addText (panelLeft + 480.0f) (panelTop + 62.0f) 0.95f label "MAG"
+            weapons
+            |> Array.iteri (fun index weaponClass ->
+                let y = panelTop + 88.0f + float32 index * rowHeight
+                let isSelected = index = selected
+                let isCurrent = weaponClass.Name = weapon.Class.Name
+                if isSelected then
+                    solid (panelLeft + 18.0f) (y - 6.0f) (panelWidth - 36.0f) 26.0f (Vector4(0.47f, 0.17f, 0.07f, 0.88f))
+                    solid (panelLeft + 18.0f) (y - 6.0f) 5.0f 26.0f (Vector4(1.0f, 0.74f, 0.30f, 1.0f))
+                let color =
+                    if isSelected then Vector4(1.0f, 0.91f, 0.64f, 1.0f)
+                    elif isCurrent then Vector4(1.0f, 0.86f, 0.30f, 0.95f)
+                    else white
+                addText (panelLeft + 40.0f) y 1.15f color (weaponClass.Name.ToUpperInvariant())
+                let pellets = if weaponClass.Pellets > 1 then $"x{weaponClass.Pellets}" else ""
+                addText (panelLeft + 320.0f) y 1.0f color $"{int (Units.raw weaponClass.Damage)}{pellets}"
+                addText (panelLeft + 400.0f) y 1.0f color $"{int weaponClass.RoundsPerMin}"
+                addText (panelLeft + 480.0f) y 1.0f color $"{weaponClass.MagSize}"
+                if isCurrent then addText (panelLeft + 540.0f) y 1.0f color "<")
+            let prompt = "UP/DOWN SELECT   ENTER EQUIP   ESC CLOSE"
+            addText (centerX - float32 prompt.Length * 3.6f) (panelTop + panelHeight - 30.0f) 0.9f (Vector4(0.64f, 0.67f, 0.61f, 1.0f)) prompt)
         info.Menu
         |> Option.iter (fun menu ->
             let options = StartMenu.items menu

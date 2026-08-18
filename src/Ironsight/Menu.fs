@@ -28,6 +28,26 @@ type StartMenuAction =
     | OpenSettings
     | ExitGame
 
+/// In-game loadout picker (B key): every weapon, no restrictions, no economy.
+/// Offline it swaps the carried slot instantly; online it sends a loadout
+/// request that the server arms on the next spawn.
+[<RequireQualifiedAccess>]
+module LoadoutMenu =
+    type Choice =
+        | Browsing
+        | Closed
+        | Chosen of weaponName: string
+
+    let update (input: MenuInput) (selected: int) =
+        let count = Tuning.onlineWeapons.Length
+        let next =
+            if input.Up then (selected + count - 1) % count
+            elif input.Down then (selected + 1) % count
+            else selected
+        if input.Back then struct (next, Closed)
+        elif input.Activate then struct (next, Chosen Tuning.onlineWeapons[next].Name)
+        else struct (next, Browsing)
+
 [<RequireQualifiedAccess>]
 module StartMenu =
     let create playerName =
@@ -42,7 +62,7 @@ module StartMenu =
         match state.Page with
         | Main -> [| $"CALLSIGN  {state.PlayerName}"; "QUICK PLAY"; "OFFLINE PLAY / MAP SELECT"; "JOIN ONLINE"; "SETTINGS"; "QUIT" |]
         | NameEntry -> [| $"> {state.PlayerName}_" |]
-        | OfflineMaps -> [| "PAINTBALL KILLHOUSE"; "SCRAP DEPOT"; "CANAL YARD"; "TRAINING YARD"; "STALINGRAD STREET"; "NORMANDY BATTLEFIELD"; "BACK" |]
+        | OfflineMaps -> [| "PAINTBALL KILLHOUSE"; "SCRAP DEPOT"; "CANAL YARD"; "OMAHA DRAW"; "BACK" |]
         | ServerList -> [| "FLY.IO  -  FSHARP-OF-DUTY.FLY.DEV"; "BACK" |]
         | OnlineLoadout ->
             Array.append (Tuning.onlineWeapons |> Array.map (fun weapon -> weapon.Name.ToUpperInvariant())) [| "BACK" |]
@@ -109,9 +129,7 @@ module StartMenu =
             | OfflineMaps, 0 -> struct(next, Some(StartOffline "paintball"))
             | OfflineMaps, 1 -> struct(next, Some(StartOffline "depot"))
             | OfflineMaps, 2 -> struct(next, Some(StartOffline "canal"))
-            | OfflineMaps, 3 -> struct(next, Some(StartOffline "training"))
-            | OfflineMaps, 4 -> struct(next, Some(StartOffline "stalingrad"))
-            | OfflineMaps, 5 -> struct(next, Some(StartOffline "battlefield"))
+            | OfflineMaps, 3 -> struct(next, Some(StartOffline "omaha"))
             | OfflineMaps, _ -> struct({ next with Page = Main; Selected = 0 }, None)
             | ServerList, 0 -> struct({ next with Page = OnlineLoadout; Selected = 0 }, None)
             | ServerList, _ -> struct({ next with Page = Main; Selected = 0 }, None)

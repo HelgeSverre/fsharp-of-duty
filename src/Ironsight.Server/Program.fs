@@ -102,6 +102,9 @@ module Program =
                                             match Protocol.tryString "type" message with
                                             | Some "input" -> host.ApplyInput(playerId, message)
                                             | Some "ready" -> host.SetReady playerId
+                                            | Some "loadout" ->
+                                                Protocol.tryString "weapon" message
+                                                |> Option.iter (fun weapon -> host.SetLoadout(playerId, weapon))
                                             | Some "leave" -> connected <- false
                                             | _ -> ()
                                         if connected then pendingReceive <- receiveMessage socket cancellationToken
@@ -127,9 +130,7 @@ module Program =
         builder.WebHost.UseUrls($"http://0.0.0.0:{port}") |> ignore
         let matchLevel =
             match Environment.GetEnvironmentVariable "IRONSIGHT_LEVEL" with
-            | value when String.Equals(value, "stalingrad", StringComparison.OrdinalIgnoreCase) -> Ironsight.ProcGen.Levels.stalingradStreet
             | value when String.Equals(value, "training", StringComparison.OrdinalIgnoreCase) -> Ironsight.ProcGen.Levels.trainingYard
-            | value when String.Equals(value, "battlefield", StringComparison.OrdinalIgnoreCase) -> Ironsight.ProcGen.Levels.battlefield
             | value when String.Equals(value, "depot", StringComparison.OrdinalIgnoreCase) -> Ironsight.ProcGen.Levels.scrapDepot
             | value when String.Equals(value, "canal", StringComparison.OrdinalIgnoreCase) -> Ironsight.ProcGen.Levels.canalYard
             | value when String.Equals(value, "omaha", StringComparison.OrdinalIgnoreCase) -> Ironsight.ProcGen.Levels.omahaDraw

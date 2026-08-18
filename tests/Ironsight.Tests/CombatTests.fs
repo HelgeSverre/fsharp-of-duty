@@ -27,13 +27,13 @@ module CombatTests =
 
     [<Fact>]
     let ``level DSL compiles one source into collision render navigation cover and spawns`` () =
-        let level = Levels.stalingradStreet
+        let level = Levels.canalYard
         Assert.NotEmpty level.Brushes
         Assert.NotEmpty level.Vertices
         Assert.NotEmpty level.Indices
         Assert.NotEmpty level.Nav
         Assert.NotEmpty level.Cover
-        Assert.Equal(10, level.Spawns.Length)
+        Assert.Equal(16, level.Spawns.Length)
         Assert.Equal(0, level.Vertices.Length % 24)
         Assert.Equal(0, level.Indices.Length % 36)
 

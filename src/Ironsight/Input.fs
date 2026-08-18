@@ -14,6 +14,7 @@ type InputSampler(context: IInputContext) =
     let mutable fireLatched = false
     let mutable reloadLatched = false
     let mutable escapeLatched = false
+    let mutable loadoutLatched = false
     let mutable menuActive = false
     let mutable menuUp = false
     let mutable menuDown = false
@@ -25,6 +26,7 @@ type InputSampler(context: IInputContext) =
     let mutable menuText = ""
     let mutable menuClick = false
     let mutable mousePosition = Vector2.Zero
+    let mutable lastMenuPointer = Vector2(System.Single.NaN, System.Single.NaN)
     let mutable lookSensitivity = 1.0f
     let mutable adsToggleEnabled = false
     let mutable adsLatched = false
@@ -44,7 +46,8 @@ type InputSampler(context: IInputContext) =
                     elif key = Key.Backspace then menuBackspace <- true
                 else
                     if key = Key.Escape then escapeLatched <- true
-                    elif key = Key.R then reloadLatched <- true)
+                    elif key = Key.R then reloadLatched <- true
+                    elif key = Key.B then loadoutLatched <- true)
             device.add_KeyChar(fun _ character ->
                 if menuActive && character >= ' ' && character <= '~' then
                     menuText <- menuText + string character))
@@ -117,6 +120,11 @@ type InputSampler(context: IInputContext) =
         adsPrevHeld <- false
 
     member _.ConsumeMenuInput() =
+        // Report the pointer only when the mouse moved (or clicked). A cursor
+        // resting over the option list must not pin the hover selection every
+        // frame, or arrow-key navigation can never move off the hovered row.
+        let pointerMoved = (mousePosition - lastMenuPointer).LengthSquared() > 4.0f
+        if pointerMoved then lastMenuPointer <- mousePosition
         let value =
             { Up = menuUp
               Down = menuDown
@@ -126,7 +134,7 @@ type InputSampler(context: IInputContext) =
               Back = menuBack
               Backspace = menuBackspace
               TextInput = menuText
-              Pointer = Some mousePosition
+              Pointer = if pointerMoved || menuClick then Some mousePosition else None
               Clicked = menuClick }
         menuUp <- false
         menuDown <- false
@@ -142,5 +150,10 @@ type InputSampler(context: IInputContext) =
     member _.ConsumeEscape() =
         let value = escapeLatched
         escapeLatched <- false
+        value
+
+    member _.ConsumeLoadoutToggle() =
+        let value = loadoutLatched
+        loadoutLatched <- false
         value
     member _.ScoreboardHeld = keyboard |> Option.exists (fun device -> device.IsKeyPressed Key.Tab)

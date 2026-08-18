@@ -25,10 +25,33 @@ type AudioSystem() =
     let blast = upload (AudioSynth.explosion ())
     let step = upload (AudioSynth.footstep ())
     let reload = upload (AudioSynth.reloadClick ())
+    let ping = upload (AudioSynth.garandPing ())
     let heartbeat = upload (AudioSynth.heartbeat ())
     let radio = upload (AudioSynth.radio ())
     let wind = upload (AudioSynth.wind ())
-    let buffers = [| rifle; smg; blast; step; reload; heartbeat; radio; wind |]
+    let buffers = [| rifle; smg; blast; step; reload; ping; heartbeat; radio; wind |]
+
+    // Two synthesized shot samples cover the arsenal; per-weapon pitch keeps
+    // the guns within each bucket from sounding identical.
+    let shotSample weapon =
+        match weapon with
+        | "Thompson" | "MG42" | "MP40" | "STG-44" | "FG42" | "BAR" -> smg
+        | _ -> rifle
+
+    let shotPitch weapon =
+        match weapon with
+        | "M1911" -> 1.18f
+        | "MP40" -> 1.10f
+        | "Thompson" -> 1.0f
+        | "STG-44" -> 0.92f
+        | "FG42" -> 0.86f
+        | "BAR" -> 0.80f
+        | "MG42" -> 0.78f
+        | "M1 Garand" -> 1.06f
+        | "Lee-Enfield" -> 0.96f
+        | "M1897 Trench Gun" -> 0.84f
+        | "Kar98k Sniper" -> 0.90f
+        | _ -> 1.0f
 
     let play (buffer: uint32) (position: Vector3) (gain: float32) (pitch: float32) =
         let source = sources[sourceIndex]
@@ -62,8 +85,7 @@ type AudioSystem() =
         for event in events do
             match event with
             | ShotFired(_, position, _, weapon) ->
-                let automatic = weapon = "Thompson" || weapon = "MG42"
-                play (if automatic then smg else rifle) position 0.88f (0.97f + float32 sourceIndex * 0.004f)
+                play (shotSample weapon) position 0.88f (shotPitch weapon * (0.97f + float32 sourceIndex * 0.004f))
             | Explosion(position, _) ->
                 play blast position 1.0f 1.0f
                 // A second, lower and quieter copy reads as the blast rolling off
@@ -74,6 +96,7 @@ type AudioSystem() =
             | _ -> ()
 
     member _.PlayReload(position: Vector3) = play reload position 0.48f 1.0f
+    member _.PlayPing(position: Vector3) = play ping position 0.55f 1.0f
     member _.PlayHeartbeat(position: Vector3) = play heartbeat position 0.62f 1.0f
     member _.PlayDistantShot(position: Vector3) = play rifle position 0.20f 0.72f
 

@@ -18,8 +18,8 @@ TDM match when all slots are active.
   selection of all five weapons.
 
 Campaign and bot matches remain local-authoritative. The default online level is
-Paintball Killhouse; the server can instead select Training Yard, Stalingrad
-Street, or Normandy Battlefield with `IRONSIGHT_LEVEL`.
+Paintball Killhouse; `IRONSIGHT_LEVEL` selects another: `training`, `depot`,
+`canal`, or `omaha`.
 
 ## Authority and timing
 
@@ -76,7 +76,10 @@ The server answers with `welcome`, containing `playerId`, `sessionToken`,
 }
 ```
 
-Implemented client message types are `hello`, `ready`, `input`, and `leave`.
+Implemented client message types are `hello`, `ready`, `input`, `loadout`, and
+`leave`. A `loadout` message (`{"type":"loadout","weapon":"STG-44"}`) changes the
+player's weapon with no restrictions: instantly outside live play, otherwise on
+the next spawn.
 Implemented server message types are `welcome` and `snapshot`; combat events are
 carried inside snapshots with monotonically increasing IDs.
 

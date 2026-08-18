@@ -52,13 +52,16 @@ module Program =
         let mutable onlineSnapshot: OnlineSnapshot option = None
         let mutable predictedFireCooldown = 0.0f
         let mutable predictedFireHeld = false
-        // Sampled during update, read when the HUD info is built for render.
-        let mutable grenadeButtonHeld = false
         let mutable subtitle: struct (string * float32<s>) option = None
         let mutable damageDirection: struct (System.Numerics.Vector3 * float32<s>) option = None
         let mutable hitMarkerRemaining = Units.seconds 0.0f
         let hitMarkerDuration lethal = Units.seconds (if lethal then 0.34f else 0.22f)
         let mutable hitMarkerLethal = false
+        let mutable inventoryShow = Units.seconds 0.0f
+        let mutable lastActiveWeaponName = ""
+        let mutable lastActiveInMag = -1
+        let mutable grenadeButtonHeld = false
+        let mutable loadoutScreen: int option = None
         let mutable lastHeartbeatTick = -1L
         let mutable lastDistantTick = -1L
         let mutable settings =
@@ -75,9 +78,7 @@ module Program =
             | "omaha" -> Sim.createOmahaWorld 0x1A0B3CUL
             | _ -> Sim.createPaintballWorld 0x1A0B3CUL
         let requestedMap =
-            if args |> Array.contains "--stalingrad" then Some "stalingrad"
-            elif args |> Array.contains "--training" then Some "training"
-            elif args |> Array.contains "--battlefield" then Some "battlefield"
+            if args |> Array.contains "--training" then Some "training"
             else None
         let mutable initialWorld = createOfflineWorld (requestedMap |> Option.defaultValue "paintball")
         let mutable menu = if onlineRequested || requestedMap.IsSome then None else Some(StartMenu.create playerName)
@@ -113,6 +114,7 @@ module Program =
             reconciledTick <- -1L
             predictedFireHeld <- false
             settingsScreen <- None
+            loadoutScreen <- None
             menu <- Some(StartMenu.create playerName)
             inputSampler.SetMenuActive true
             window.Title <- "IRONSIGHT — F# of Duty"
@@ -160,6 +162,7 @@ module Program =
                         if next > Units.seconds 0.0f then Some(struct (direction, next)) else None)
                 hitMarkerRemaining <- max (Units.seconds 0.0f) (hitMarkerRemaining - Tuning.TickDuration)
                 if hitMarkerRemaining <= Units.seconds 0.0f then hitMarkerLethal <- false
+                inventoryShow <- max (Units.seconds 0.0f) (inventoryShow - Tuning.TickDuration)
                 predictedFireCooldown <- max 0.0f (predictedFireCooldown - float32 fixedStep)
                 match reconnectTask with
                 | Some attempt when attempt.IsCompleted ->
@@ -221,8 +224,45 @@ module Program =
                                     settingsScreen <- Some(SettingsUi.create settings)
                                 | ExitGame -> window.Close())
                     | None ->
+                        if inputSampler.ConsumeLoadoutToggle() && loadoutScreen.IsNone then
+                            loadoutScreen <- Some 0
+                            inputSampler.SetMenuActive true
+                        match loadoutScreen with
+                        | Some selected ->
+                            let struct (nextSelected, choice) = LoadoutMenu.update (inputSampler.ConsumeMenuInput()) selected
+                            match choice with
+                            | LoadoutMenu.Browsing -> loadoutScreen <- Some nextSelected
+                            | LoadoutMenu.Closed ->
+                                loadoutScreen <- None
+                                inputSampler.SetMenuActive false
+                            | LoadoutMenu.Chosen weaponName ->
+                                loadoutScreen <- None
+                                inputSampler.SetMenuActive false
+                                match onlineClient with
+                                | Some client when client.Connected ->
+                                    selectedOnlineWeapon <- weaponName
+                                    client.RequestLoadout weaponName
+                                | _ ->
+                                    current.Player.Slots
+                                    |> Array.tryFindIndex (fun slot -> slot.Class.Name = weaponName)
+                                    |> Option.iter (fun index ->
+                                        if index <> current.Player.Active then
+                                            current <- { current with Player = { current.Player with Active = index; Ads = 0.0f } }
+                                            previous <- current)
+                        | None -> ()
                         if inputSampler.ConsumeEscape() then returnToMenu inputSampler
-                        let inputFrame = inputSampler.Sample()
+                        let sampledFrame = inputSampler.Sample()
+                        // While the loadout picker is open the world keeps
+                        // simulating, but the player stands idle (CS buy-menu
+                        // feel); online the server coasts us the same way.
+                        let inputFrame =
+                            if loadoutScreen.IsSome then
+                                { sampledFrame with Move = System.Numerics.Vector2.Zero; Look = System.Numerics.Vector2.Zero; Buttons = InputButtons.None }
+                            else sampledFrame
+                        let weaponKeys =
+                            InputButtons.Weapon1 ||| InputButtons.Weapon2 ||| InputButtons.Weapon3
+                            ||| InputButtons.Weapon4 ||| InputButtons.Weapon5
+                        if inputFrame.Buttons &&& weaponKeys <> InputButtons.None then inventoryShow <- Units.seconds 2.5f
                         grenadeButtonHeld <- inputFrame.Buttons.HasFlag InputButtons.Grenade
                         previous <- current
                         match onlineClient with
@@ -252,7 +292,7 @@ module Program =
                                 if snapshot.LevelName <> current.Level.Name then
                                     let level =
                                         Ironsight.ProcGen.Levels.byName snapshot.LevelName
-                                        |> Option.defaultValue Ironsight.ProcGen.Levels.battlefield
+                                        |> Option.defaultValue Ironsight.ProcGen.Levels.paintballArena
                                     current <- { current with Level = level }
                                 let networkEvents =
                                     snapshot.Events
@@ -338,6 +378,14 @@ module Program =
                                     hitMarkerRemaining <- hitMarkerDuration lethal
                                 | None -> ()
                 | None -> ()
+                let activeSlot = current.Player.Slots[current.Player.Active]
+                if activeSlot.Class.Name <> lastActiveWeaponName then
+                    if lastActiveWeaponName <> "" then inventoryShow <- Units.seconds 2.5f
+                elif activeSlot.Class.Name = "M1 Garand" && activeSlot.InMag = 0 && lastActiveInMag > 0 then
+                    // The Garand's en-bloc clip ejects with its famous ping.
+                    audio |> Option.iter (fun value -> value.PlayPing current.Player.Position)
+                lastActiveWeaponName <- activeSlot.Class.Name
+                lastActiveInMag <- activeSlot.InMag
                 renderer |> Option.iter (fun value -> value.StepEffects(float32 fixedStep))
                 renderer |> Option.iter (fun value -> value.StepViewmodel(float32 fixedStep))
                 audio |> Option.iter (fun value -> value.UpdateListener current.Player)
@@ -362,6 +410,7 @@ module Program =
                   HitMarker = MathEx.clamp01 (hitMarkerRemaining / hitMarkerDuration hitMarkerLethal)
                   HitMarkerLethal = hitMarkerLethal
                   Subtitle = subtitleText
+                  ShowInventory = inventoryShow > Units.seconds 0.0f
                   GrenadeCooking =
                     (match current.Player.Grenade with Cooking _ -> true | _ -> false)
                     // Online the hand state is never advanced locally, so fall back
@@ -371,6 +420,7 @@ module Program =
                     || (onlineClient.IsSome && grenadeButtonHeld && not current.Player.Sprinting && current.Player.Health > Units.health 0.0f)
                   Menu = if settingsScreen.IsSome then None else menu
                   Settings = settings
+                  LoadoutScreen = loadoutScreen
                   SettingsScreen = settingsScreen }
             renderer |> Option.iter (fun value -> value.Render(renderedWorld, hudInfo)))
         window.add_FramebufferResize(fun _ ->

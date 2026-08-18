@@ -60,6 +60,16 @@ module ClientTests =
         Assert.True(rifle.Indices.Length > 100)
         Assert.True(sniper.Vertices.Length > rifle.Vertices.Length)
         Assert.True(shotgun.Vertices.Length > 100)
+        // Every selectable weapon must have a substantial dedicated mesh; the
+        // Kar98k comparison guards against silently falling back to it.
+        for weapon in Tuning.onlineWeapons do
+            let mesh = Guns.forWeapon weapon.Name
+            Assert.True(mesh.Vertices.Length > 100, $"{weapon.Name} viewmodel too small")
+            if weapon.Name <> "Kar98k" then
+                Assert.True(mesh.Vertices.Length <> rifle.Vertices.Length, $"{weapon.Name} fell back to the Kar98k mesh")
+        let ping = AudioSynth.garandPing ()
+        Assert.True(ping.Samples.Length > 5000)
+        Assert.Contains(ping.Samples, fun sample -> abs (int sample) > 1000)
         Assert.Equal(AudioSynth.SampleRate, shot.SampleRate)
         Assert.True(shot.Samples.Length > 10000)
         Assert.Contains(shot.Samples, fun sample -> abs (int sample) > 1000)
