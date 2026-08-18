@@ -210,7 +210,7 @@ module AiBrain =
                     events.Add(ShotFired(Some positioned.Id, origin, direction, weapon.Class.Name))
                     let hitSoldiers, hitEvents =
                         Ballistics.applyShotFiltered (fun candidate -> candidate.Team = enemyTeam) origin direction
-                            (request.Damage * damageScale) request.Penetration request.HeadshotMultiplier level soldiers
+                            (request.Damage * damageScale) request.Penetration request.HeadshotMultiplier request.Kind level soldiers
                     soldiers <- hitSoldiers
                     events.AddRange(hitEvents |> List.filter (function HitConfirmed _ -> false | _ -> true))
                 soldiers, true
@@ -307,7 +307,8 @@ module AiBrain =
                 events.Add(ShotFired(Some armed.Id, origin, direction, weapon.Class.Name))
                 match playerHitDistance origin direction updatedPlayer with
                 | Some hitDistance when hitDistance < staticHitDistance origin direction level ->
-                    let hurt, hurtEvent = Damage.hurtPlayer (request.Damage * Tuning.EnemyDamageScale) (-direction) updatedPlayer
+                    let hurt, hurtEvent =
+                        Damage.hurtPlayer (request.Damage * Tuning.EnemyDamageScale * Tuning.damageFalloff request.Kind hitDistance) (-direction) updatedPlayer
                     updatedPlayer <- hurt
                     events.Add hurtEvent
                 | _ -> ()

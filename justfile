@@ -156,6 +156,11 @@ map-preview level="paintball": _sdk
     {{ dotnet }} build src/Ironsight.Core/Ironsight.Core.fsproj --nologo -v quiet
     {{ dotnet }} fsi tools/map-preview.fsx "{{ level }}"
 
+# Regenerate the bundled arsenal JSON in website/arsenal.html from Tuning.
+[group('tools')]
+arsenal-sync: _sdk
+    {{ dotnet }} run --project {{ server_project }} -- --sync-arsenal
+
 # Build the Fly-compatible dedicated-server image.
 [group('container')]
 docker-build:

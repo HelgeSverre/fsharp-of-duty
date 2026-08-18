@@ -47,6 +47,26 @@ module Tuning =
     let BodyPenetrationCost = 3.0f
     let BodyDamageRetention = 0.6f
 
+    /// Fraction of base damage retained at a hit `distance` metres from the
+    /// muzzle, by weapon class (the CoD4/BF1 sidearm pattern): pistols, SMGs,
+    /// and shotguns keep their full close-range punch and pay for it over
+    /// distance, while rifles and machine guns carry.
+    /// Falloff window per class: full damage inside `near` metres, ramping down
+    /// to the `retained` fraction at `far`. A retained fraction of 1 means the
+    /// class has no falloff.
+    let falloffWindow kind =
+        match kind with
+        | Pistol -> struct (12.0f, 35.0f, 0.5f)
+        | Smg -> struct (15.0f, 40.0f, 0.65f)
+        | Shotgun -> struct (8.0f, 22.0f, 0.35f)
+        | Rifle | SniperRifle | MachineGun -> struct (0.0f, 0.0f, 1.0f)
+
+    let damageFalloff kind (distance: float32) =
+        let struct (near, far, retained) = falloffWindow kind
+        if retained >= 1.0f || distance <= near then 1.0f
+        elif distance >= far then retained
+        else 1.0f - (1.0f - retained) * (distance - near) / (far - near)
+
     let kar98k =
         { Name = "Kar98k"
           Mode = BoltAction

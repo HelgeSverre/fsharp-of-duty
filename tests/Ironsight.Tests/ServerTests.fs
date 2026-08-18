@@ -335,3 +335,14 @@ module ServerTests =
         Assert.Equal(8, shotgun.projectilesPerShot)
         Assert.Equal(128.0f, shotgun.maximumDamagePerShot)
         Assert.Equal("Mounted weapon", mg42.availability)
+
+    [<Fact>]
+    let ``bundled arsenal fallback in the website matches live tuning`` () =
+        // Guards the checked-in snapshot against drift; regenerate with
+        // `just arsenal-sync` when tuning changes.
+        let html = IO.File.ReadAllText(IO.Path.Combine(AppContext.BaseDirectory, "wwwroot", "arsenal.html"))
+        let openTag = "<script id=\"arsenal-fallback\" type=\"application/json\">"
+        let start = html.IndexOf openTag + openTag.Length
+        let bundled = System.Text.Json.Nodes.JsonNode.Parse(html[start .. html.IndexOf("</script>", start) - 1])
+        let live = System.Text.Json.JsonSerializer.SerializeToNode(Protocol.arsenal ())
+        Assert.Equal(live["weapons"].ToJsonString(), bundled["weapons"].ToJsonString())

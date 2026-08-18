@@ -166,14 +166,23 @@
     document.addEventListener("visibilitychange", () => { if (!document.hidden) refresh(); });
   }
 
-  function weaponStyle(name, mode) {
+  function weaponStyle(kind, mode) {
     const classes = [];
-    if (name.includes("Sniper")) classes.push("sniper");
-    if (name.includes("Trench")) classes.push("shotgun");
-    if (name.includes("M1911") || name.includes("Luger")) classes.push("pistol");
+    if (kind === "SniperRifle") classes.push("sniper");
+    if (kind === "Shotgun") classes.push("shotgun");
+    if (kind === "Pistol") classes.push("pistol");
     if (mode === "FullAuto") classes.push("auto");
     return classes.join(" ");
   }
+
+  const kindSections = [
+    ["Rifle", "RIFLES"],
+    ["SniperRifle", "SNIPERS"],
+    ["Smg", "SUBMACHINE GUNS"],
+    ["Pistol", "PISTOLS"],
+    ["Shotgun", "SHOTGUNS"],
+    ["MachineGun", "MACHINE GUNS"],
+  ];
 
   function initializeArsenal() {
     const dossier = byId("weapon-dossier");
@@ -215,7 +224,7 @@
       visual.dataset.index = String(selected + 1).padStart(2, "0");
       const title = document.createElement("h2"); text(title, weapon.name);
       const silhouette = document.createElement("div");
-      silhouette.className = `weapon-silhouette ${weaponStyle(weapon.name, weapon.fireMode)}`;
+      silhouette.className = `weapon-silhouette ${weaponStyle(weapon.kind, weapon.fireMode)}`;
       ["body", "long-barrel", "wood", "grip"].forEach((className) => { const part = document.createElement("i"); part.className = className; silhouette.append(part); });
       const availability = document.createElement("p"); text(availability, `${weapon.availability} // ${weapon.fireMode}`);
       visual.append(title, silhouette, availability);
@@ -235,30 +244,54 @@
         stat("Reload", format(weapon.reloadSeconds, 2), "SECONDS", 100 - weapon.reloadSeconds * 18),
         stat("Aim-down-sight", format(weapon.aimDownSightSeconds * 1000), "MS", 100 - weapon.aimDownSightSeconds * 350),
         stat("ADS spread", format(weapon.aimDownSightSpread, 5), "RAD", 100 - weapon.aimDownSightSpread * 2500),
-        stat("Penetration budget", format(weapon.penetration), "UNITS", weapon.penetration * 4)
+        stat("Hipfire spread", format(weapon.hipSpread, 3), "RAD", 100 - weapon.hipSpread * 900),
+        stat("Penetration budget", format(weapon.penetration), "UNITS", weapon.penetration * 4),
+        stat("Damage at range", format(weapon.minimumDamagePerProjectile), "HP", weapon.minimumDamagePerProjectile / 1.2)
       );
       const note = document.createElement("div"); note.className = "damage-note";
-      text(note, weapon.projectilesPerShot > 1
+      const projectiles = weapon.projectilesPerShot > 1
         ? `${weapon.projectilesPerShot} independently traced projectiles per trigger pull. Maximum damage assumes every pellet hits.`
-        : "One projectile is traced per trigger pull. Regional multipliers and penetration loss are resolved during impact.");
+        : "One projectile is traced per trigger pull. Regional multipliers and penetration loss are resolved during impact.";
+      const falloff = weapon.falloffEndMetres > 0
+        ? ` Damage falls from ${format(weapon.damagePerProjectile)} HP at ${format(weapon.falloffStartMetres)} m to ${format(weapon.minimumDamagePerProjectile)} HP at ${format(weapon.falloffEndMetres)} m.`
+        : " No distance falloff — full damage at any range.";
+      text(note, projectiles + falloff);
       panel.append(header, stats, note);
       grid.append(visual, panel);
       dossier.append(grid);
     }
 
-    function loadPayload(payload, isOffline = false) {
-      weapons = Array.isArray(payload.weapons) ? payload.weapons : [];
-      text(byId("arsenal-status"), isOffline ? "BUNDLED DATA" : "LIVE DATA");
-      text(byId("arsenal-source"), payload.generatedFrom);
-      weapons.forEach((weapon, index) => {
-        const button = document.createElement("button");
-        button.className = "weapon-tab";
-        button.setAttribute("role", "tab");
-        button.setAttribute("aria-selected", String(index === 0));
-        text(button, weapon.name);
-        button.addEventListener("click", () => { selected = index; render(); });
-        tabs.append(button);
-      });
+    function loadPayload(payload) {
+      const loaded = Array.isArray(payload.weapons) ? payload.weapons : [];
+      // Group into kind sections; `weapons` is rebuilt in section order so the
+      // flat selection index stays aligned with the rendered buttons.
+      const known = new Set(kindSections.map(([kind]) => kind));
+      const sections = kindSections
+        .map(([kind, label]) => [label, loaded.filter((weapon) => weapon.kind === kind)])
+        .concat([["OTHER", loaded.filter((weapon) => !known.has(weapon.kind))]])
+        .filter(([, members]) => members.length > 0);
+      weapons = sections.flatMap(([, members]) => members);
+      let index = 0;
+      for (const [label, members] of sections) {
+        const group = document.createElement("div");
+        group.className = "weapon-tab-group";
+        const caption = document.createElement("span");
+        caption.className = "weapon-tab-group-label";
+        text(caption, label);
+        group.append(caption);
+        for (const weapon of members) {
+          const at = index;
+          const button = document.createElement("button");
+          button.className = "weapon-tab";
+          button.setAttribute("role", "tab");
+          button.setAttribute("aria-selected", String(at === 0));
+          text(button, weapon.name);
+          button.addEventListener("click", () => { selected = at; render(); });
+          group.append(button);
+          index += 1;
+        }
+        tabs.append(group);
+      }
       render();
     }
 
@@ -268,10 +301,10 @@
       .catch(() => {
         const fallback = byId("arsenal-fallback");
         try {
-          loadPayload(JSON.parse(fallback?.textContent ?? "{}"), true);
+          loadPayload(JSON.parse(fallback?.textContent ?? "{}"));
         } catch {
-          text(byId("arsenal-status"), "DATA UNAVAILABLE");
-          text(byId("arsenal-source"), "Could not load weapon data");
+          // The dossier keeps its loading placeholder if even the bundled
+          // snapshot is unreadable.
         }
       });
   }

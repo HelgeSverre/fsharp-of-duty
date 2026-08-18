@@ -108,6 +108,7 @@ type LeaderboardResponse =
 [<CLIMutable>]
 type ArsenalWeapon =
     { name: string
+      kind: string
       fireMode: string
       damagePerProjectile: float32
       projectilesPerShot: int
@@ -119,6 +120,9 @@ type ArsenalWeapon =
       hipSpread: float32
       aimDownSightSpread: float32
       penetration: float32
+      falloffStartMetres: float32
+      falloffEndMetres: float32
+      minimumDamagePerProjectile: float32
       availability: string }
 
 [<CLIMutable>]
@@ -276,7 +280,9 @@ module Protocol =
           weapons =
             weapons
             |> Array.map (fun weapon ->
+                let struct (falloffStart, falloffEnd, retained) = Tuning.falloffWindow weapon.Kind
                 { name = weapon.Name
+                  kind = string weapon.Kind
                   fireMode = string weapon.Mode
                   damagePerProjectile = Units.raw weapon.Damage
                   projectilesPerShot = weapon.Pellets
@@ -288,4 +294,7 @@ module Protocol =
                   hipSpread = weapon.HipSpread
                   aimDownSightSpread = weapon.AdsSpread
                   penetration = weapon.Penetration
+                  falloffStartMetres = falloffStart
+                  falloffEndMetres = falloffEnd
+                  minimumDamagePerProjectile = Units.raw weapon.Damage * retained
                   availability = if Set.contains weapon.Name onlineNames then "Player loadout" else "Mounted weapon" }) }

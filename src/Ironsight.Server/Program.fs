@@ -195,12 +195,43 @@ module Program =
             branch.Run(fun context -> handleSocket matches context) |> ignore)) |> ignore
         app
 
+    /// Rewrite the bundled fallback JSON inside arsenal.html from the live
+    /// Tuning-driven arsenal, so the offline page can never drift from the game.
+    let private syncArsenal (path: string) =
+        let weapons =
+            (Protocol.arsenal ()).weapons
+            |> Array.map JsonSerializer.Serialize
+            |> String.concat ",\n      "
+        let json =
+            "\n    {\"generatedFrom\":\"Bundled snapshot of Ironsight.Core.Tuning (offline mode)\",\"weapons\":[\n      "
+            + weapons
+            + "\n    ]}\n  "
+        let html = IO.File.ReadAllText path
+        let openTag = "<script id=\"arsenal-fallback\" type=\"application/json\">"
+        let start = html.IndexOf openTag
+        if start < 0 then failwith $"{path} has no arsenal-fallback script block"
+        let contentStart = start + openTag.Length
+        let contentEnd = html.IndexOf("</script>", contentStart)
+        IO.File.WriteAllText(path, html[.. contentStart - 1] + json + html[contentEnd ..])
+
     [<EntryPoint>]
     let main args =
-        let port =
-            Environment.GetEnvironmentVariable "PORT"
-            |> Option.ofObj
-            |> Option.bind (fun value -> match Int32.TryParse value with true, parsed -> Some parsed | _ -> None)
-            |> Option.defaultValue 8080
-        (build args port).Run()
-        0
+        match args with
+        // dotnet run's working directory is the project dir, so the default
+        // resolves from the source tree like build's web root does.
+        | [| "--sync-arsenal" |] | [| "--sync-arsenal"; _ |] ->
+            let path =
+                match args with
+                | [| _; explicit |] -> explicit
+                | _ -> IO.Path.GetFullPath("../../website/arsenal.html", __SOURCE_DIRECTORY__)
+            syncArsenal path
+            printfn $"Wrote {(Protocol.arsenal ()).weapons.Length} weapons to {path}"
+            0
+        | _ ->
+            let port =
+                Environment.GetEnvironmentVariable "PORT"
+                |> Option.ofObj
+                |> Option.bind (fun value -> match Int32.TryParse value with true, parsed -> Some parsed | _ -> None)
+                |> Option.defaultValue 8080
+            (build args port).Run()
+            0

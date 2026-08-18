@@ -81,7 +81,10 @@ button, input { font: inherit; }
 .server-badge b, .data-source b { display: inline-block; vertical-align: middle; font-size: 10px; letter-spacing: .12em; }
 .server-badge small, .data-source small { display: block; font-size: 10px; letter-spacing: .12em; }
 .server-badge small, .data-source small { margin: 6px 0 0 16px; color: var(--muted); }
-.weapon-tabs { display: flex; gap: 4px; overflow-x: auto; }
+.weapon-tabs { display: flex; gap: 14px; overflow-x: auto; align-items: flex-start; }
+.weapon-tab-group { display: flex; flex-direction: column; gap: 4px; flex: 1; min-width: 150px; }
+.weapon-tab-group-label { padding-bottom: 4px; border-bottom: 1px solid var(--line); color: var(--muted); font-size: 9px; font-weight: 900; letter-spacing: .18em; white-space: nowrap; }
+.weapon-tab { text-align: left; }
 .weapon-tab { padding: 13px 20px; border: 1px solid var(--line); color: var(--muted); background: #0b0d0a; cursor: pointer; white-space: nowrap; text-transform: uppercase; font-size: 10px; font-weight: 900; letter-spacing: .12em; }
 .weapon-tab.active { color: var(--paper); border-color: var(--signal); background: #37170d; }
 .leaderboard-frame { border: 1px solid var(--line); background: var(--panel); box-shadow: 16px 16px 0 rgba(0,0,0,.3); }

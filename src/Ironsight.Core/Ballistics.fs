@@ -140,7 +140,7 @@ module Ballistics =
     let traceFiltered canHit origin direction (level: Level) (soldiers: Soldier array) =
         traceFilteredExcluding canHit Set.empty origin direction level soldiers
 
-    let applyShotFiltered canHit (origin: Vector3) (direction: Vector3) (damage: float32<hp>) (penetration: float32) (headshotMultiplier: float32) (level: Level) (soldiers: Soldier array) =
+    let applyShotFiltered canHit (origin: Vector3) (direction: Vector3) (damage: float32<hp>) (penetration: float32) (headshotMultiplier: float32) (kind: WeaponKind) (level: Level) (soldiers: Soldier array) =
         let mutable currentOrigin = origin
         let mutable budget = penetration
         let mutable currentDamage = damage
@@ -155,8 +155,10 @@ module Ballistics =
             | None -> tracing <- false
             | Some(SoldierHit(distance, index, region)) when distance <= remainingRange ->
                 let multiplier = match region with Head -> headshotMultiplier | Torso -> 1.0f | Legs -> 0.65f
+                // Distance from the muzzle, not from the last penetration exit.
+                let travelled = 200.0f - remainingRange + distance
                 let victim = updated[index]
-                let health = max (Units.health 0.0f) (victim.Health - currentDamage * multiplier)
+                let health = max (Units.health 0.0f) (victim.Health - currentDamage * multiplier * Tuning.damageFalloff kind travelled)
                 let lethal = health <= Units.health 0.0f
                 let headshot = region = Head
                 let deathBehavior = if headshot then DyingHeadshot(Units.seconds 0.0f) else Dying(Units.seconds 0.0f)
@@ -189,8 +191,8 @@ module Ballistics =
             | _ -> tracing <- false
         updated, List.ofSeq events
 
-    let applyShot origin direction damage penetration headshotMultiplier level soldiers =
-        applyShotFiltered (fun _ -> true) origin direction damage penetration headshotMultiplier level soldiers
+    let applyShot origin direction damage penetration headshotMultiplier kind level soldiers =
+        applyShotFiltered (fun _ -> true) origin direction damage penetration headshotMultiplier kind level soldiers
 
     let lineOfSight (origin: Vector3) (target: Vector3) (level: Level) =
         let offset = target - origin

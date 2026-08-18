@@ -49,7 +49,8 @@ module Weapons =
                     { DirectionOffset = Vector2(MathF.Cos angle * radius, MathF.Sin angle * radius)
                       Damage = current.Class.Damage
                       Penetration = current.Class.Penetration
-                      HeadshotMultiplier = current.Class.HeadshotMultiplier }
+                      HeadshotMultiplier = current.Class.HeadshotMultiplier
+                      Kind = current.Class.Kind }
             let recoil = current.Class.Recoil
             let kick = if recoil.Length = 0 then 0.0f else MathF.Abs recoil[min current.BurstIx (recoil.Length - 1)].Y
             let nextBloom = min Tuning.BloomMax (bloom + kick * Tuning.BloomPerShot)

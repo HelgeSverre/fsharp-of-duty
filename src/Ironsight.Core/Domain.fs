@@ -258,4 +258,5 @@ type ShotRequest =
     { DirectionOffset: Vector2
       Damage: float32<hp>
       Penetration: float32
-      HeadshotMultiplier: float32 }
+      HeadshotMultiplier: float32
+      Kind: WeaponKind }

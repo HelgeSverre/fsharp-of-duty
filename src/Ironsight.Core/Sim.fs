@@ -230,7 +230,7 @@ module Sim =
             shotEvents.Add(ShotFired(Some armedPlayer.Id, origin, direction, result.Weapon.Class.Name))
         for struct (origin, direction, shot) in result.Shots do
             let hitSoldiers, hitEvents =
-                Ballistics.applyShotFiltered (fun soldier -> soldier.Team = Axis) origin direction shot.Damage shot.Penetration shot.HeadshotMultiplier world.Level soldiers
+                Ballistics.applyShotFiltered (fun soldier -> soldier.Team = Axis) origin direction shot.Damage shot.Penetration shot.HeadshotMultiplier shot.Kind world.Level soldiers
             let hitIds =
                 hitEvents
                 |> List.choose (function HitConfirmed(victim, _) -> Some victim | _ -> None)
