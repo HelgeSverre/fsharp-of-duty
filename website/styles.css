@@ -82,6 +82,7 @@ button, input { font: inherit; }
 .leaderboard-frame { border: 1px solid var(--line); background: var(--panel); box-shadow: 16px 16px 0 rgba(0,0,0,.3); }
 .table-wrap { position: relative; min-height: 260px; overflow-x: auto; }
 .table-wrap + .table-wrap { border-top: 1px solid var(--line); }
+.table-wrap:has(#server-body) { min-height: 0; }
 #server-body tr { cursor: pointer; }
 #server-body tr:hover { background: rgba(68,75,49,.2); }
 #server-body tr.selected { background: rgba(216,74,32,.14); box-shadow: inset 3px 0 0 var(--signal); }
