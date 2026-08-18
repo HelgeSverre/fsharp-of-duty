@@ -17,18 +17,79 @@ module ServerTests =
     let private applyInput sequence host id = applyCustom sequence 1.0f 0.0f 4 host id
 
     [<Fact>]
-    let ``input flooding cannot advance movement faster than server ticks`` () =
+    let ``burst inputs are buffered and applied at the server tick rate`` () =
         let host = MatchHost TeamDeathmatch
         let playerId, _ = host.TryAddPlayer("Runner").Value
         let before = host.Snapshot().Players[playerId].Position
+        let maxTickDistance = Tuning.WalkSpeed * Tuning.SprintMultiplier / float32 Tuning.TickRate + 0.001f
         applyInput 1 host playerId
         applyInput 2 host playerId
         applyInput 3 host playerId
         host.AdvanceTick()
+        let afterOne = host.Snapshot().Players[playerId]
+        // The fresh player has a single input credit, so one tick applies one
+        // frame; the rest stay buffered instead of being dropped and falsely
+        // acknowledged.
+        Assert.InRange(Vector3.Distance(before, afterOne.Position), 0.0f, maxTickDistance)
+        Assert.Equal(1L, afterOne.LastInputSequence)
+        host.AdvanceTick()
+        host.AdvanceTick()
+        let drained = host.Snapshot().Players[playerId]
+        Assert.Equal(3L, drained.LastInputSequence)
+        Assert.InRange(Vector3.Distance(before, drained.Position), 0.0f, 3.0f * maxTickDistance)
+
+    [<Fact>]
+    let ``sustained input flooding cannot exceed one applied frame per tick`` () =
+        let host = MatchHost TeamDeathmatch
+        let playerId, _ = host.TryAddPlayer("Flooder").Value
+        let before = host.Snapshot().Players[playerId].Position
+        let maxTickDistance = Tuning.WalkSpeed * Tuning.SprintMultiplier / float32 Tuning.TickRate + 0.001f
+        let mutable sequence = 1L
+        for _ in 1..30 do
+            // Two frames arrive every tick — double the legitimate rate.
+            applyInput sequence host playerId
+            applyInput (sequence + 1L) host playerId
+            host.AdvanceTick()
+            sequence <- sequence + 2L
         let player = host.Snapshot().Players[playerId]
-        let distance = Vector3.Distance(before, player.Position)
-        Assert.InRange(distance, 0.0f, Tuning.WalkSpeed * Tuning.SprintMultiplier / float32 Tuning.TickRate + 0.001f)
-        Assert.Equal(3L, player.LastInputSequence)
+        // 30 ticks grant 30 credits (plus the startup bank), so at most 31 of
+        // the 60 sent frames may have moved the player: no speed advantage.
+        Assert.InRange(Vector3.Distance(before, player.Position), 0.0f, 31.0f * maxTickDistance)
+
+    [<Fact>]
+    let ``player keeps simulating while the input stream stalls`` () =
+        let host = MatchHost TeamDeathmatch
+        let playerId, _ = host.TryAddPlayer("Jumper").Value
+        applyCustom 1L 0.0f 0.0f (int InputButtons.Jump) host playerId
+        host.AdvanceTick()
+        Assert.True(host.Snapshot().Players[playerId].Position.Y > 0.0f)
+        // No further input: gravity must still bring the player back down
+        // instead of freezing them mid-air until the next packet.
+        for _ in 1..120 do host.AdvanceTick()
+        Assert.True(host.Snapshot().Players[playerId].Position.Y <= 0.01f)
+
+    [<Fact>]
+    let ``disconnected reserved player is not a hittable ghost`` () =
+        let arena = LevelDsl.level "Ghost range" [ LevelDsl.street 50.0f 20.0f Mud ] |> LevelCompile.compile
+        let host = MatchHost(FreeForAll, arena)
+        let thrower, _ = host.TryAddPlayer("Thrower").Value
+        let ghost, _ = host.TryAddPlayer("Ghost").Value
+        host.SetReady thrower
+        host.SetReady ghost
+        for _ in 1..721 do host.AdvanceTick()
+        Assert.Equal(Playing, host.Snapshot().Phase)
+        // Both spawned at the arena origin. Disconnect the ghost, then cook a
+        // grenade until it pops in hand right next to the reserved body.
+        host.RemovePlayer ghost
+        let mutable sequence = 1L
+        for _ in 1..260 do
+            applyCustom sequence 0.0f 0.0f (int InputButtons.Grenade) host thrower
+            host.AdvanceTick()
+            sequence <- sequence + 1L
+        let state = host.Snapshot()
+        Assert.True(state.Players[ghost].Alive)
+        Assert.Equal(0, state.Players[ghost].Deaths)
+        Assert.Equal(0, state.Players[thrower].Kills)
 
     [<Fact>]
     let ``stale input sequence is rejected after a newer sequence`` () =
@@ -88,13 +149,8 @@ module ServerTests =
             applyCustom sequence 0.0f 0.0f 2 host axisId
             host.AdvanceTick()
             sequence <- sequence + 1L
-        applyCustom sequence 0.0f 0.0f 3 host axisId
-        host.AdvanceTick()
-        sequence <- sequence + 1L
-        for _ in 1..85 do
-            applyCustom sequence 0.0f 0.0f 2 host axisId
-            host.AdvanceTick()
-            sequence <- sequence + 1L
+        // Shots trace from the eye, so a level shot at an equal-height target
+        // lands at head height: one Kar98k headshot is lethal.
         applyCustom sequence 0.0f 0.0f 3 host axisId
         host.AdvanceTick()
         let result = host.Snapshot()

@@ -79,7 +79,9 @@ module AiTests =
             { world.Player with
                 Position = Vector3(0.0f, 0.0f, 5.0f)
                 Yaw = 0.0f
-                Pitch = 0.0f }
+                // The eye-origin trace means a level shot lands at head height;
+                // pitch down so this hit lands on the torso.
+                Pitch = -0.09f }
         let world = { world with Level = level; Player = player; Soldiers = [| target |] }
         let struct (after, events) = Sim.step { Sequence = 1L; Move = Vector2.Zero; Look = Vector2.Zero; Buttons = InputButtons.Fire } world
         Assert.Contains(events, function HitConfirmed(EntityId 44, false) -> true | _ -> false)

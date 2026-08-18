@@ -40,7 +40,7 @@ module StartMenu =
 
     let items state =
         match state.Page with
-        | Main -> [| $"CALLSIGN  {state.PlayerName}"; "QUICK PLAY"; "OFFLINE PLAY / MAP SELECT"; "JOIN ONLINE"; "SETTINGS" |]
+        | Main -> [| $"CALLSIGN  {state.PlayerName}"; "QUICK PLAY"; "OFFLINE PLAY / MAP SELECT"; "JOIN ONLINE"; "SETTINGS"; "QUIT" |]
         | NameEntry -> [| $"> {state.PlayerName}_" |]
         | OfflineMaps -> [| "PAINTBALL KILLHOUSE"; "TRAINING YARD"; "STALINGRAD STREET"; "NORMANDY BATTLEFIELD"; "BACK" |]
         | ServerList -> [| "FLY.IO  -  FSHARP-OF-DUTY.FLY.DEV"; "BACK" |]
@@ -87,7 +87,9 @@ module StartMenu =
         let activate = input.Activate || (input.Clicked && fromPointer.IsSome)
         if input.Back then
             match state.Page with
-            | Main -> struct(next, Some ExitGame)
+            // Escape never quits: quitting is the explicit QUIT item. On the
+            // root page there is nothing to back out of, so it does nothing.
+            | Main -> struct(next, None)
             | NameEntry -> struct({ next with Page = Main; Selected = 0 }, None)
             | OnlineLoadout -> struct({ next with Page = ServerList; Selected = 0 }, None)
             | _ -> struct({ next with Page = Main; Selected = 0 }, None)
@@ -98,7 +100,8 @@ module StartMenu =
             | Main, 1 -> struct(next, Some(StartOffline "paintball"))
             | Main, 2 -> struct({ next with Page = OfflineMaps; Selected = 0 }, None)
             | Main, 3 -> struct({ next with Page = ServerList; Selected = 0 }, None)
-            | Main, _ -> struct(next, Some OpenSettings)
+            | Main, 4 -> struct(next, Some OpenSettings)
+            | Main, _ -> struct(next, Some ExitGame)
             | NameEntry, _ ->
                 let sanitized = Multiplayer.sanitizeName next.PlayerName
                 let playerName = if System.String.IsNullOrWhiteSpace sanitized then "Soldier" else sanitized

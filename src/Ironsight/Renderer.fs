@@ -41,6 +41,7 @@ type Renderer(gl: GL) =
     let mutable decals: Vector4 list = []
     let mutable recoil = 0.0f
     let mutable recoilVelocity = 0.0f
+    let mutable sprintBlend = 0.0f
     let mutable viewSway = Vector2.Zero
     let mutable lastView = Vector2.Zero
     let mutable deathWatching = false
@@ -210,7 +211,7 @@ type Renderer(gl: GL) =
         // Death fall: the camera tips forward, slides a little in the facing
         // direction, and drops to ground level over the fall duration.
         let eased = deathFall * deathFall * (3.0f - 2.0f * deathFall)
-        let stanceEye = match player.Stance with Standing -> 1.62f | Crouched -> 1.15f | Prone -> 0.52f
+        let stanceEye = Ballistics.eyeHeight player.Stance
         let eyeHeight = stanceEye + (0.15f - stanceEye) * eased
         let pitch = player.Pitch + recoil * 0.18f - eased * 0.95f
         let eye =
@@ -347,18 +348,31 @@ type Renderer(gl: GL) =
                     match activeSlot.State with
                     | Switching(_, remaining) -> 1.0f - MathEx.clamp01 (Units.raw remaining / 0.35f)
                     | _ -> 0.0f
+                // Bolt rifles and the pump shotgun visibly cycle during the
+                // post-shot cooldown: the weapon cants right and pulls back.
+                let boltPose =
+                    match activeSlot.State, activeSlot.Class.Mode with
+                    | Cooling remaining, BoltAction ->
+                        let total = 60.0f / activeSlot.Class.RoundsPerMin
+                        let progress = 1.0f - Units.raw remaining / max 0.01f total
+                        MathF.Sin(MathF.PI * MathEx.clamp01 ((progress - 0.12f) / 0.62f))
+                    | _ -> 0.0f
+                // Sprinting lowers the weapon across the chest.
+                sprintBlend <- sprintBlend + ((if world.Player.Sprinting then 1.0f else 0.0f) - sprintBlend) * 0.18f
                 let view = Vector2(world.Player.Yaw, world.Player.Pitch)
                 let viewDelta = view - lastView
                 lastView <- view
                 viewSway <- Vector2.Lerp(viewSway, Vector2(Math.Clamp(viewDelta.X * 2.5f, -0.06f, 0.06f), Math.Clamp(viewDelta.Y * 2.5f, -0.05f, 0.05f)), 0.22f)
                 let position =
                     Vector3(
-                        0.34f * (1.0f - ads) + MathF.Sin(phase) * 0.012f * bob - viewSway.X,
-                        -0.31f + ads * 0.10f + MathF.Abs(MathF.Cos phase) * 0.012f * bob + viewSway.Y - reloadPose * 0.20f - switchPose * 0.25f,
-                        -0.68f - ads * 0.05f)
+                        0.34f * (1.0f - ads) + MathF.Sin(phase) * 0.012f * bob - viewSway.X + sprintBlend * 0.10f,
+                        -0.31f + ads * 0.10f + MathF.Abs(MathF.Cos phase) * 0.012f * bob + viewSway.Y
+                        - reloadPose * 0.20f - switchPose * 0.25f - boltPose * 0.045f - sprintBlend * 0.14f,
+                        -0.68f - ads * 0.05f + recoil * 0.55f + boltPose * 0.07f)
                 let model =
-                    Matrix4x4.CreateRotationX(-recoil * 0.75f)
-                    * Matrix4x4.CreateRotationZ(-0.035f * (1.0f - ads) + reloadPose * 0.32f)
+                    Matrix4x4.CreateRotationX(-recoil * 0.75f + sprintBlend * 0.42f)
+                    * Matrix4x4.CreateRotationY(-sprintBlend * 0.38f)
+                    * Matrix4x4.CreateRotationZ(-0.035f * (1.0f - ads) + reloadPose * 0.32f + boltPose * 0.22f)
                     * Matrix4x4.CreateTranslation position
                 let projection = Matrix4x4.CreatePerspectiveFieldOfView(55.0f * MathF.PI / 180.0f, float32 width / float32 (max 1 height), 0.03f, 8.0f)
                 let gunMatrix = matrixArray (model * projection)

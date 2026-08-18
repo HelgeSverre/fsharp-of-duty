@@ -123,24 +123,36 @@ void main() {
                 let forward = MathEx.normalizedOrZero direction
                 let tangent = Vector3.Cross(forward, if abs forward.Y < 0.8f then Vector3.UnitY else Vector3.UnitX) |> MathEx.normalizedOrZero
                 let bitangent = Vector3.Cross(forward, tangent) |> MathEx.normalizedOrZero
-                let count = if headshot then 12 else 7
+                // Fine exit mist.
+                let count = if headshot then 22 else 13
                 for index in 0..count - 1 do
                     let angle = float32 index * 2.39996f
                     let radial = tangent * MathF.Cos(angle) + bitangent * MathF.Sin(angle)
-                    let velocity = forward * (1.5f + float32 (index % 4) * 0.42f) + radial * (0.35f + float32 (index % 3) * 0.18f)
+                    let velocity = forward * (1.6f + float32 (index % 4) * 0.5f) + radial * (0.4f + float32 (index % 3) * 0.24f)
                     let color = if index % 3 = 0 then dark else light
-                    addPuff position velocity color (if headshot then 15.0f else 10.0f) (0.42f + float32 (index % 3) * 0.08f) -7.5f
-                addLine position (position + forward * (if headshot then 0.75f else 0.42f)) lineColor 0.18f
+                    addPuff position velocity color (if headshot then 17.0f else 12.0f) (0.48f + float32 (index % 3) * 0.10f) -7.5f
+                // Heavy droplets that arc down and hang around a moment longer.
+                let drops = if headshot then 8 else 5
+                for index in 0..drops - 1 do
+                    let angle = float32 index * 2.39996f + 0.9f
+                    let radial = tangent * MathF.Cos(angle) + bitangent * MathF.Sin(angle)
+                    let velocity = forward * (0.9f + float32 (index % 3) * 0.4f) + radial * 0.7f + Vector3.UnitY * (0.8f + float32 (index % 2) * 0.5f)
+                    addPuff position velocity dark (8.0f + float32 (index % 3) * 3.0f) (0.75f + float32 (index % 3) * 0.12f) -12.0f
+                // Fanned spurt streaks along the exit direction.
+                for index in 0..2 do
+                    let spread = float32 (index - 1) * 0.22f
+                    let streak = MathEx.normalizedOrZero (forward + tangent * spread + bitangent * spread * 0.6f)
+                    addLine position (position + streak * ((if headshot then 0.85f else 0.55f) - abs spread * 0.4f)) lineColor 0.22f
             | HeadGib(position, direction) ->
                 let dark = Vector4(blood.X * 0.55f, blood.Y * 0.55f, blood.Z * 0.55f, 1.0f)
                 let light = Vector4(min 1.0f (blood.X * 1.15f), min 1.0f (blood.Y * 1.15f), min 1.0f (blood.Z * 1.15f), 1.0f)
                 let forward = MathEx.normalizedOrZero direction
-                for index in 0..7 do
-                    let angle = float32 index * MathF.Tau / 8.0f
+                for index in 0..11 do
+                    let angle = float32 index * MathF.Tau / 12.0f
                     let spray = Vector3(MathF.Cos angle, 0.35f + float32 (index % 3) * 0.22f, MathF.Sin angle)
                     let velocity = forward * 1.8f + spray * (1.2f + float32 (index % 2) * 0.55f)
                     let color = if index % 2 = 0 then dark else light
-                    addPuff position velocity color (20.0f + float32 (index % 3) * 5.0f) 0.72f -8.5f
+                    addPuff position velocity color (22.0f + float32 (index % 3) * 6.0f) 0.85f -8.5f
             | Explosion(position, radius) ->
                 let size = min 1.8f (radius * 0.22f)
                 for axis in [| Vector3.UnitX; Vector3.UnitY; Vector3.UnitZ |] do
@@ -156,7 +168,7 @@ void main() {
         // tick. Keep presentation bounded; simulation and hit results are not
         // affected by dropping the oldest tracers and smoke puffs.
         lines <- lines |> List.truncate 256
-        puffs <- puffs |> List.truncate 384
+        puffs <- puffs |> List.truncate 512
 
     member _.Step(dt: float32) =
         lines <- lines |> List.choose (fun line -> let remaining = line.Remaining - dt in if remaining > 0.0f then Some { line with Remaining = remaining } else None)

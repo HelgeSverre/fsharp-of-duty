@@ -93,14 +93,7 @@ module Sim =
                     { world with Round = Some nextRound }, events @ [ Subtitle("MARSHAL", result) ]
 
     let private shotDirection (player: Player) shot =
-        let forward =
-            Vector3(
-                MathF.Sin player.Yaw * MathF.Cos player.Pitch,
-                MathF.Sin player.Pitch,
-                -MathF.Cos player.Yaw * MathF.Cos player.Pitch)
-        let right = MathEx.yawRight player.Yaw
-        let up = Vector3.UnitY
-        MathEx.normalizedOrZero (forward + right * shot.DirectionOffset.X + up * shot.DirectionOffset.Y)
+        Ballistics.directionFromAngles player.Yaw player.Pitch shot.DirectionOffset
 
     let private surfaceBelow (level: Level) (position: Vector3) =
         LevelCompile.brushesNear position 0.5f level
@@ -159,11 +152,12 @@ module Sim =
         let shotEvents = ResizeArray<GameEvent>()
         let mutable soldiers = world.Soldiers
         if not shots.IsEmpty then
+            // Tracer starts at the muzzle; the hit trace below leaves the eye.
             let origin = Ballistics.playerMuzzleOrigin playerWithHand weapon.Class
             let direction = shotDirection playerWithHand shots.Head
             shotEvents.Add(ShotFired(Some playerWithHand.Id, origin, direction, weapon.Class.Name))
         for shot in shots do
-            let origin = Ballistics.playerMuzzleOrigin playerWithHand weapon.Class
+            let origin = Ballistics.playerEyeOrigin playerWithHand
             let direction = shotDirection playerWithHand shot
             let hitSoldiers, hitEvents =
                 Ballistics.applyShotFiltered (fun soldier -> soldier.Team = Axis) origin direction shot.Damage shot.Penetration shot.HeadshotMultiplier world.Level soldiers

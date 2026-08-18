@@ -55,6 +55,7 @@ module Program =
         let mutable subtitle: struct (string * float32<s>) option = None
         let mutable damageDirection: struct (System.Numerics.Vector3 * float32<s>) option = None
         let mutable hitMarkerRemaining = Units.seconds 0.0f
+        let hitMarkerDuration lethal = Units.seconds (if lethal then 0.34f else 0.22f)
         let mutable hitMarkerLethal = false
         let mutable lastHeartbeatTick = -1L
         let mutable lastDistantTick = -1L
@@ -229,6 +230,7 @@ module Program =
                             let triggerEdge = firePressed && not predictedFireHeld
                             let mayRepeat = localWeapon.Class.Mode = FullAuto && firePressed
                             if inLiveMatch && current.Player.Health > Units.health 0.0f && localWeapon.InMag > 0
+                               && not current.Player.Sprinting
                                && predictedFireCooldown <= 0.0f && (triggerEdge || mayRepeat) then
                                 let origin = Ballistics.playerMuzzleOrigin current.Player localWeapon.Class
                                 let direction = Ballistics.directionFromAngles current.Player.Yaw current.Player.Pitch System.Numerics.Vector2.Zero
@@ -245,10 +247,8 @@ module Program =
                             | Some snapshot when snapshot.Tick > reconciledTick ->
                                 if snapshot.LevelName <> current.Level.Name then
                                     let level =
-                                        if snapshot.LevelName = Ironsight.ProcGen.Levels.paintballArena.Name then Ironsight.ProcGen.Levels.paintballArena
-                                        elif snapshot.LevelName = Ironsight.ProcGen.Levels.stalingradStreet.Name then Ironsight.ProcGen.Levels.stalingradStreet
-                                        elif snapshot.LevelName = Ironsight.ProcGen.Levels.trainingYard.Name then Ironsight.ProcGen.Levels.trainingYard
-                                        else Ironsight.ProcGen.Levels.battlefield
+                                        Ironsight.ProcGen.Levels.byName snapshot.LevelName
+                                        |> Option.defaultValue Ironsight.ProcGen.Levels.battlefield
                                     current <- { current with Level = level }
                                 let networkEvents =
                                     snapshot.Events
@@ -271,7 +271,7 @@ module Program =
                                 match hitMarkerKind networkEvents with
                                 | Some lethal ->
                                     hitMarkerLethal <- lethal
-                                    hitMarkerRemaining <- Units.seconds (if lethal then 0.26f else 0.16f)
+                                    hitMarkerRemaining <- hitMarkerDuration lethal
                                 | None -> ()
                                 let reconciled, remaining = OnlineWorld.reconcile current.Level (pendingInputs |> Seq.toList) client.PlayerId current snapshot
                                 current <- reconciled
@@ -331,7 +331,7 @@ module Program =
                                 match hitMarkerKind events with
                                 | Some lethal ->
                                     hitMarkerLethal <- lethal
-                                    hitMarkerRemaining <- Units.seconds (if lethal then 0.26f else 0.16f)
+                                    hitMarkerRemaining <- hitMarkerDuration lethal
                                 | None -> ()
                 | None -> ()
                 renderer |> Option.iter (fun value -> value.StepEffects(float32 fixedStep))
@@ -355,7 +355,7 @@ module Program =
                   LocalPlayerId = onlineClient |> Option.map (fun client -> client.PlayerId)
                   ShowScoreboard = sampler |> Option.exists (fun input -> input.ScoreboardHeld)
                   DamageDirection = damageDirection |> Option.map (fun struct (direction, _) -> direction)
-                  HitMarker = hitMarkerRemaining > Units.seconds 0.0f
+                  HitMarker = MathEx.clamp01 (hitMarkerRemaining / hitMarkerDuration hitMarkerLethal)
                   HitMarkerLethal = hitMarkerLethal
                   Subtitle = subtitleText
                   Menu = if settingsScreen.IsSome then None else menu

@@ -14,7 +14,9 @@ type HudInfo =
       LocalPlayerId: int option
       ShowScoreboard: bool
       DamageDirection: Vector3 option
-      HitMarker: bool
+      /// 1.0 on the frame of the hit, decaying to 0.0; drives the marker's
+      /// pop-and-fade animation. 0.0 means no marker.
+      HitMarker: float32
       HitMarkerLethal: bool
       Subtitle: string option
       Menu: StartMenuState option
@@ -159,13 +161,24 @@ type Hud(gl: GL) =
                 solid (centerX + spread) (centerY - 1.0f) 8.0f 2.0f white
                 solid (centerX - 1.0f) (centerY - spread - 8.0f) 2.0f 8.0f white
                 solid (centerX - 1.0f) (centerY + spread) 2.0f 8.0f white
-        if info.HitMarker then
-            let hit = if info.HitMarkerLethal then Vector4(0.95f, 0.12f, 0.08f, 1.0f) else Vector4(1.0f, 0.86f, 0.30f, 0.95f)
-            let reach = if info.HitMarkerLethal then 14.0f else 11.0f
-            solid (centerX - reach) (centerY - reach + 3.0f) 8.0f 2.0f hit
-            solid (centerX + reach - 8.0f) (centerY - reach + 3.0f) 8.0f 2.0f hit
-            solid (centerX - reach) (centerY + reach - 5.0f) 8.0f 2.0f hit
-            solid (centerX + reach - 8.0f) (centerY + reach - 5.0f) 8.0f 2.0f hit
+        if info.HitMarker > 0.0f then
+            // Corner brackets that snap in tight and expand outward while
+            // fading — the pop reads as impact instead of four static dashes.
+            let strength = MathEx.clamp01 info.HitMarker
+            let pop = 1.0f + (1.0f - strength) * 0.6f
+            let alpha = 0.30f + 0.70f * strength
+            let hit = if info.HitMarkerLethal then Vector4(0.95f, 0.12f, 0.08f, alpha) else Vector4(1.0f, 0.86f, 0.30f, alpha)
+            let reach = (if info.HitMarkerLethal then 16.0f else 12.0f) * pop
+            let thick = if info.HitMarkerLethal then 3.0f else 2.0f
+            let arm = if info.HitMarkerLethal then 10.0f else 8.0f
+            solid (centerX - reach) (centerY - reach) arm thick hit
+            solid (centerX - reach) (centerY - reach) thick arm hit
+            solid (centerX + reach - arm) (centerY - reach) arm thick hit
+            solid (centerX + reach - thick) (centerY - reach) thick arm hit
+            solid (centerX - reach) (centerY + reach - thick) arm thick hit
+            solid (centerX - reach) (centerY + reach - arm) thick arm hit
+            solid (centerX + reach - arm) (centerY + reach - thick) arm thick hit
+            solid (centerX + reach - thick) (centerY + reach - arm) thick arm hit
         let ammoText = $"{weapon.InMag} / {weapon.Reserve}"
         addText (float32 width - float32 ammoText.Length * 16.0f - 26.0f) (float32 height - 56.0f) 2.0f shadow ammoText
         addText (float32 width - float32 ammoText.Length * 16.0f - 28.0f) (float32 height - 58.0f) 2.0f white ammoText

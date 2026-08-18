@@ -102,13 +102,16 @@ module ClientTests =
 
         let pointer =
             { idle with
-                Pointer = Some(Vector2(640.0f, 327.0f))
+                Pointer = Some(Vector2(640.0f, 300.0f))
                 Clicked = true }
         let struct (_, pointerAction) = StartMenu.update 1280 720 pointer StartMenu.initial
         Assert.Equal(Some(StartOffline "paintball"), pointerAction)
 
-        let struct (_, exitAction) = StartMenu.update 1280 720 { idle with Back = true } StartMenu.initial
-        Assert.Equal(Some ExitGame, exitAction)
+        // Escape on the root page does nothing; quitting is the explicit item.
+        let struct (_, backAction) = StartMenu.update 1280 720 { idle with Back = true } StartMenu.initial
+        Assert.Equal(None, backAction)
+        let struct (_, quitAction) = StartMenu.update 1280 720 activate { StartMenu.initial with Selected = 5 }
+        Assert.Equal(Some ExitGame, quitAction)
 
     [<Fact>]
     let ``lethal headshot pose removes head geometry`` () =

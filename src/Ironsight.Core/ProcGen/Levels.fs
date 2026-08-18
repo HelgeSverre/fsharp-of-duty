@@ -171,3 +171,7 @@ module Levels =
               LevelDsl.trigger (SquadDead 4) (Say("Sgt. Evans", "The gun is down. Finish clearing the street."))
               LevelDsl.trigger (ObjectiveDone 0) EndMission ]
         |> LevelCompile.compile
+
+    let all = [| paintballArena; battlefield; trainingYard; stalingradStreet |]
+
+    let byName name = all |> Array.tryFind (fun level -> level.Name = name)

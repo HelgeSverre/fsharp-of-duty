@@ -130,6 +130,26 @@ module CombatTests =
         Assert.Contains(events, function HitConfirmed(EntityId 2, false) -> true | _ -> false)
 
     [<Fact>]
+    let ``eye trace clears cover the camera can see over`` () =
+        // Chest-high sandbags between shooter and target: the eye (1.62) sees
+        // over the 1.5 lip, so the shot must connect. The old muzzle-origin
+        // trace started ~1.4 high and buried the round in the bags.
+        let wall =
+            { Bounds = { Min = Vector3(-3.0f, 0.0f, 2.5f); Max = Vector3(3.0f, 1.5f, 3.0f) }
+              Material = Sandbag }
+        let level = LevelCompile.rebuild (Array.append openLevel.Brushes [| wall |]) openLevel
+        let world = Sim.createTrainingWorld 21UL
+        let player =
+            { world.Player with
+                Position = Vector3(0.0f, 0.0f, 5.0f)
+                Yaw = 0.0f
+                Pitch = -0.015f
+                Ads = 1.0f }
+        let world = { world with Level = level; Player = player; Soldiers = [| soldierAt 44 (Vector3(0.0f, 0.0f, -3.0f)) |] }
+        let struct (_, events) = Sim.step { Sequence = 1L; Move = Vector2.Zero; Look = Vector2.Zero; Buttons = InputButtons.Fire } world
+        Assert.Contains(events, function HitConfirmed(EntityId 44, _) -> true | _ -> false)
+
+    [<Fact>]
     let ``standing muzzle origin sits at torso height`` () =
         let world = Sim.createTrainingWorld 3UL
         let standing = { world.Player with Stance = Standing; Ads = 0.0f }

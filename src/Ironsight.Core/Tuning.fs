@@ -140,6 +140,8 @@ module Tuning =
 
     let onlineWeapons = [| kar98k; thompson; m1911; kar98kSniper; m1897 |]
 
+    let defaultWeapon = function Allies -> thompson | Axis -> kar98k
+
     let weaponByName name =
         onlineWeapons
         |> Array.tryFind (fun weapon -> String.Equals(weapon.Name, name, StringComparison.OrdinalIgnoreCase))

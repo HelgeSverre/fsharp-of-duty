@@ -27,17 +27,28 @@ module Ballistics =
         | Crouched -> 0.34f
         | Prone -> 0.90f
 
+    /// Shared by the camera and the authoritative hit trace so what the player
+    /// sees over, the bullet clears.
+    let eyeHeight = function
+        | Standing -> 1.62f
+        | Crouched -> 1.15f
+        | Prone -> 0.52f
+
+    /// Authoritative shot origin: the eye/camera position. Hitscan games trace
+    /// from here ("if I can see it, I can hit it") and only draw tracers from
+    /// the muzzle; tracing from the barrel makes near cover eat shots the
+    /// player can clearly see over.
+    let playerEyeOrigin (player: Player) =
+        player.Position + Vector3.UnitY * eyeHeight player.Stance
+
+    /// Cosmetic shot origin: where tracers and muzzle flash appear to start.
+    /// Never used for hit detection.
     let playerMuzzleOrigin (player: Player) (weapon: WeaponClass) =
-        let eyeHeight =
-            match player.Stance with
-            | Standing -> 1.62f
-            | Crouched -> 1.18f
-            | Prone -> 0.55f
         let forward = directionFromAngles player.Yaw player.Pitch Vector2.Zero
         let right = MathEx.yawRight player.Yaw
         let hip = 1.0f - player.Ads
         player.Position
-        + Vector3.UnitY * (eyeHeight - 0.14f - 0.10f * hip)
+        + Vector3.UnitY * (eyeHeight player.Stance - 0.14f - 0.10f * hip)
         + right * (0.20f * hip)
         + forward * muzzleDistance weapon
 

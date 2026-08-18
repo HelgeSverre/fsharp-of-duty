@@ -7,11 +7,19 @@ open Ironsight.ProcGen
 [<RequireQualifiedAccess>]
 module Grenades =
     let private throwDirection (player: Player) =
-        Vector3(
-            MathF.Sin player.Yaw * MathF.Cos player.Pitch,
-            MathF.Sin player.Pitch,
-            -MathF.Cos player.Yaw * MathF.Cos player.Pitch)
-        |> MathEx.normalizedOrZero
+        Ballistics.directionFromAngles player.Yaw player.Pitch Vector2.Zero
+
+    [<Literal>]
+    let BlastRadius = 6.0f
+
+    /// Shared occlusion-and-falloff rule for every explosion consumer
+    /// (campaign soldiers, the campaign player, and the multiplayer server).
+    let explosionDamageAt (level: Level) (position: Vector3) (targetPosition: Vector3) =
+        let torso = targetPosition + Vector3(0.0f, 1.0f, 0.0f)
+        let distance = Vector3.Distance(position, torso)
+        if distance < BlastRadius && Ballistics.lineOfSight position torso level then
+            Some(Units.health (110.0f * (1.0f - distance / BlastRadius) ** 1.5f))
+        else None
 
     let stepHand dt held (player: Player) =
         match player.Grenade, held with
@@ -27,7 +35,9 @@ module Grenades =
             let grenade =
                 { Owner = player.Id
                   Position = player.Position + Vector3(0.0f, 1.45f, 0.0f) + direction * 0.35f
-                  Velocity = direction * 12.0f + Vector3.UnitY * 4.5f + player.Velocity * 0.35f
+                  // Horizontal launch speed sets the range; the vertical component
+                  // stays put so the arc height (and flight time) is unchanged.
+                  Velocity = direction * 18.0f + Vector3.UnitY * 4.5f + player.Velocity * 0.35f
                   Fuse = fuse }
             { player with Grenade = GrenadeIdle(count - 1) }, Some grenade
         | _ -> player, None
@@ -79,27 +89,24 @@ module Grenades =
         let mutable updated = Array.copy soldiers
         let events = ResizeArray<GameEvent>()
         for position in positions do
-            events.Add(Explosion(position, 6.0f))
+            events.Add(Explosion(position, BlastRadius))
             updated <-
                 updated
                 |> Array.map (fun (soldier: Soldier) ->
-                    let torso = soldier.Position + Vector3(0.0f, 1.0f, 0.0f)
-                    let distance = Vector3.Distance(position, torso)
-                    if soldier.Health > Units.health 0.0f && distance < 6.0f && Ballistics.lineOfSight position torso level then
-                        let damage = Units.health (110.0f * (1.0f - distance / 6.0f) ** 1.5f)
+                    match explosionDamageAt level position soldier.Position with
+                    | Some damage when soldier.Health > Units.health 0.0f ->
                         let health = max (Units.health 0.0f) (soldier.Health - damage)
                         { soldier with Health = health; Behavior = if health <= Units.health 0.0f then Dying(Units.seconds 0.0f) else soldier.Behavior }
-                    else soldier)
+                    | _ -> soldier)
         updated, List.ofSeq events
 
     let applyExplosionsToPlayer (level: Level) (positions: Vector3 array) (player: Player) =
         positions
         |> Array.fold (fun ((current: Player), (events: GameEvent list)) position ->
-            let torso = current.Position + Vector3(0.0f, 1.0f, 0.0f)
-            let distance = Vector3.Distance(position, torso)
-            if current.Health > Units.health 0.0f && distance < 6.0f && Ballistics.lineOfSight position torso level then
-                let damage = Units.health (110.0f * (1.0f - distance / 6.0f) ** 1.5f)
+            match explosionDamageAt level position current.Position with
+            | Some damage when current.Health > Units.health 0.0f ->
+                let torso = current.Position + Vector3(0.0f, 1.0f, 0.0f)
                 let health = max (Units.health 0.0f) (current.Health - damage)
                 let direction = MathEx.normalizedOrZero (torso - position)
                 { current with Health = health; RegenIn = Tuning.RegenDelay }, PlayerHurt(direction, health) :: events
-            else current, events) (player, ([]: GameEvent list))
+            | _ -> current, events) (player, ([]: GameEvent list))

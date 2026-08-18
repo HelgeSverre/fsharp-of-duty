@@ -24,7 +24,7 @@ module OnlineWorld =
     let private weaponFor (player: OnlinePlayer) =
         let weapon =
             Tuning.weaponByName player.WeaponName
-            |> Option.defaultValue (if player.Team = Allies then Tuning.thompson else Tuning.kar98k)
+            |> Option.defaultValue (Tuning.defaultWeapon player.Team)
         { Tuning.weaponSlot weapon 0 with InMag = player.Ammo; Reserve = player.Reserve }
 
     let private localPlayer previous (snapshot: OnlinePlayer) =

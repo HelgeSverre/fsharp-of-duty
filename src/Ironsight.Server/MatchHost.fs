@@ -10,7 +10,15 @@ type MatchHost(mode: GameMode, ?matchLevel: Level) =
     let level = defaultArg matchLevel (Sim.createTrainingWorld 0xF5A4D3UL).Level
     let mutable nextPlayerId = 1
     let mutable state = { Multiplayer.create mode with LevelName = level.Name }
-    let mutable pendingInputs: Map<EntityId, struct (InputFrame * int64)> = Map.empty
+    // Per-player FIFO of unapplied inputs. Buffering (instead of keeping only
+    // the newest frame) means a TCP burst no longer silently discards the
+    // overwritten frames — dropped fire clicks and jumps were the main source
+    // of client rubber-banding. Bounded so a flooder only overwrites himself.
+    let mutable pendingInputs: Map<EntityId, struct (InputFrame * int64) list> = Map.empty
+    // One credit accrues per tick (capped). Applying an input spends one, so a
+    // client can never average more than one input per server tick; credits
+    // banked during a network stall let a late burst catch up briefly.
+    let mutable inputCredits: Map<EntityId, int> = Map.empty
     let mutable positionHistory: Map<int64, Map<EntityId, Vector3>> = Map.empty
     // Session tokens are a convenience for reconnecting after a disconnect, not
     // a security boundary: the server does no authentication and a token simply
@@ -23,7 +31,7 @@ type MatchHost(mode: GameMode, ?matchLevel: Level) =
     let selectedWeapon team weaponName =
         weaponName
         |> Option.bind Tuning.weaponByName
-        |> Option.defaultValue (if team = Allies then Tuning.thompson else Tuning.kar98k)
+        |> Option.defaultValue (Tuning.defaultWeapon team)
 
     let toPlayer (networkPlayer: NetworkPlayer) =
         { Id = networkPlayer.Id
@@ -61,6 +69,18 @@ type MatchHost(mode: GameMode, ?matchLevel: Level) =
                         not (Ballistics.lineOfSight (candidate + Vector3(0.0f, 1.0f, 0.0f)) (enemy.Position + Vector3(0.0f, 1.0f, 0.0f)) level)))
             let choices = if safe.Length > 0 then safe else candidates
             choices[(int tick + id) % choices.Length]
+
+    let freshSpawn tick id (player: NetworkPlayer) =
+        { player with
+            Position = spawnFor player.Team id tick
+            Velocity = Vector3.Zero
+            Health = Units.health 100.0f
+            RegenIn = Units.seconds 0.0f
+            Weapon = Tuning.weaponSlot player.Weapon.Class 4
+            Grenade = GrenadeIdle 3
+            Alive = true
+            RespawnIn = Units.seconds 0.0f
+            SpawnProtection = Units.seconds 2.0f }
 
     let asSoldier (player: NetworkPlayer) =
         { Id = player.Id
@@ -103,7 +123,11 @@ type MatchHost(mode: GameMode, ?matchLevel: Level) =
             | None ->
                 let id = EntityId nextPlayerId
                 nextPlayerId <- nextPlayerId + 1
-                let team = if state.Players.Count % 2 = 0 then Allies else Axis
+                // Balance by live headcount, not join parity: parity drifts as
+                // soon as players leave, stacking one team.
+                let team =
+                    let count wanted = state.Players |> Map.filter (fun _ player -> player.Team = wanted) |> Map.count
+                    if count Allies <= count Axis then Allies else Axis
                 let spawn = spawnFor team id state.Tick
                 let player =
                     { Id = id
@@ -142,6 +166,7 @@ type MatchHost(mode: GameMode, ?matchLevel: Level) =
                 state <- { state with Players = Map.add id { player with Connected = false; Ready = false } state.Players }
                 disconnectedSince <- Map.add id DateTimeOffset.UtcNow disconnectedSince
                 pendingInputs <- Map.remove id pendingInputs
+                inputCredits <- Map.remove id inputCredits
             | None -> ())
 
     member _.SetReady id =
@@ -152,15 +177,20 @@ type MatchHost(mode: GameMode, ?matchLevel: Level) =
 
     member _.ApplyInput(id, message: JsonElement) =
         lock gate (fun () ->
+            let queuedAfter player =
+                Map.tryFind player pendingInputs
+                |> Option.defaultValue []
+                |> List.tryLast
+                |> Option.map (fun struct (input, _) -> input.Sequence)
             match Map.tryFind id state.Players, Protocol.tryInt64 "sequence" message with
             // Any newer sequence is accepted. The old "+120" ceiling was meant as
             // anti-flood armour, but a stalled server (GC pause, host migration)
             // leaves the client numbering far ahead and the window can never
             // close again: the player's inputs stay rejected for the rest of the
             // match, even after a session resume. Replays are still blocked by
-            // the lower bound, and flooding is capped by the per-tick application
+            // the lower bound, and flooding is capped by the input credits spent
             // in AdvanceTick plus the message rate limit.
-            | Some player, Some sequence when sequence > player.LastInputSequence ->
+            | Some player, Some sequence when sequence > defaultArg (queuedAfter id) player.LastInputSequence ->
                 if player.Alive then
                     let moveX = Protocol.tryFloat32 "moveX" message |> Option.defaultValue 0.0f |> clamp -1.0f 1.0f
                     let moveY = Protocol.tryFloat32 "moveY" message |> Option.defaultValue 0.0f |> clamp -1.0f 1.0f
@@ -172,11 +202,14 @@ type MatchHost(mode: GameMode, ?matchLevel: Level) =
                     let input = { Sequence = sequence; Move = Vector2(moveX, moveY); Look = Vector2(lookX, lookY); Buttons = buttons }
                     let requestedTick = Protocol.tryInt64 "estimatedServerTick" message |> Option.defaultValue state.Tick
                     let estimatedTick = Math.Clamp(requestedTick, state.Tick - 12L, state.Tick)
-                    // Only the latest input per tick is applied: applying every
-                    // queued frame would let a flooding client move and fire
-                    // faster than the server ticks. Unacknowledged frames are
-                    // replayed by the client during reconciliation.
-                    pendingInputs <- Map.add id (struct (input, estimatedTick)) pendingInputs
+                    let queue = Map.tryFind id pendingInputs |> Option.defaultValue []
+                    let bounded =
+                        let appended = queue @ [ struct (input, estimatedTick) ]
+                        // Oldest frames spill when a client outruns the buffer;
+                        // they are never acknowledged, so reconciliation replays
+                        // them client-side.
+                        if appended.Length > 4 then List.skip (appended.Length - 4) appended else appended
+                    pendingInputs <- Map.add id bounded pendingInputs
                 else
                     // The client keeps numbering input while dead. Acknowledge
                     // those no-op frames so respawn does not see a false jump.
@@ -193,6 +226,8 @@ type MatchHost(mode: GameMode, ?matchLevel: Level) =
             for id in expired do
                 state <- { state with Players = Map.remove id state.Players }
                 disconnectedSince <- Map.remove id disconnectedSince
+                pendingInputs <- Map.remove id pendingInputs
+                inputCredits <- Map.remove id inputCredits
                 sessionOwners <- sessionOwners |> Map.filter (fun _ owner -> owner <> id)
             let readyPlayers = state.Players |> Map.toSeq |> Seq.filter (fun (_, player) -> player.Connected && player.Ready) |> Seq.length
             let lifecycleState =
@@ -200,19 +235,7 @@ type MatchHost(mode: GameMode, ?matchLevel: Level) =
                 | Waiting when readyPlayers >= 2 -> { state with Phase = Warmup; PhaseRemaining = Units.seconds 10.0f }
                 | Waiting -> state
                 | Warmup when state.PhaseRemaining <= Tuning.TickDuration ->
-                    let resetPlayers =
-                        state.Players
-                        |> Map.map (fun id player ->
-                            { player with
-                                Position = spawnFor player.Team id state.Tick
-                                Velocity = Vector3.Zero
-                                Health = Units.health 100.0f
-                                RegenIn = Units.seconds 0.0f
-                                Weapon = Tuning.weaponSlot player.Weapon.Class 4
-                                Grenade = GrenadeIdle 3
-                                Alive = true
-                                RespawnIn = Units.seconds 0.0f
-                                SpawnProtection = Units.seconds 2.0f })
+                    let resetPlayers = state.Players |> Map.map (freshSpawn state.Tick)
                     { state with Phase = Playing; PhaseRemaining = state.TimeLimit; Players = resetPlayers; Grenades = [||] }
                 | Warmup -> { state with PhaseRemaining = state.PhaseRemaining - Tuning.TickDuration }
                 | Playing when state.PhaseRemaining <= Tuning.TickDuration || Multiplayer.hasWinner state ->
@@ -221,20 +244,11 @@ type MatchHost(mode: GameMode, ?matchLevel: Level) =
                 | Results when state.PhaseRemaining <= Tuning.TickDuration ->
                     let resetPlayers =
                         state.Players
-                        |> Map.map (fun id player ->
-                            { player with
-                                Position = spawnFor player.Team id state.Tick
-                                Velocity = Vector3.Zero
-                                Health = Units.health 100.0f
-                                Weapon = Tuning.weaponSlot player.Weapon.Class 4
-                                Alive = true
-                                Kills = 0
-                                Deaths = 0
-                                SpawnProtection = Units.seconds 2.0f })
+                        |> Map.map (fun id player -> { freshSpawn state.Tick id player with Kills = 0; Deaths = 0 })
                     { state with Phase = Warmup; PhaseRemaining = Units.seconds 10.0f; Players = resetPlayers; Grenades = [||]; AlliesScore = 0; AxisScore = 0 }
                 | Results -> { state with PhaseRemaining = state.PhaseRemaining - Tuning.TickDuration }
             let mutable rng = state.Rng
-            let shots = ResizeArray<EntityId * Vector3 * Vector3 * float32<hp> * float32 * float32 * int64 * bool>()
+            let shots = ResizeArray<EntityId * Vector3 * Vector3 * float32<hp> * float32 * float32 * int64>()
             let thrownGrenades = ResizeArray<Grenade>()
             let emitted = ResizeArray<struct (EntityId option * GameEvent)>()
             let emit event = emitted.Add(struct (None, event))
@@ -250,65 +264,84 @@ type MatchHost(mode: GameMode, ?matchLevel: Level) =
                             SpawnProtection = max (Units.seconds 0.0f) (player.SpawnProtection - Tuning.TickDuration) }
                     else
                         let remaining = player.RespawnIn - Tuning.TickDuration
-                        if remaining <= Units.seconds 0.0f then
-                            { player with
-                                Position = spawnFor player.Team id lifecycleState.Tick
-                                Velocity = Vector3.Zero
-                                Health = Units.health 100.0f
-                                RegenIn = Units.seconds 0.0f
-                                Weapon = Tuning.weaponSlot player.Weapon.Class 4
-                                Grenade = GrenadeIdle 3
-                                Alive = true
-                                RespawnIn = Units.seconds 0.0f
-                                SpawnProtection = Units.seconds 2.0f }
+                        if remaining <= Units.seconds 0.0f then freshSpawn lifecycleState.Tick id player
                         else { player with RespawnIn = remaining })
+            let stepFrame id (player: NetworkPlayer) (input: InputFrame) (estimatedTick: int64) acknowledge =
+                let moved = Movement.step Tuning.TickDuration input level (toPlayer player)
+                let canEngage = lifecycleState.Phase = Playing
+                let fire = canEngage && hasButton InputButtons.Fire input.Buttons && not moved.Sprinting
+                let reload = hasButton InputButtons.Reload input.Buttons
+                let moveSpeed = MathEx.horizontal moved.Velocity |> fun velocity -> velocity.Length()
+                let struct (weapon, requests) = Weapons.step Tuning.TickDuration moveSpeed fire reload moved.Ads &rng moved.Slots[0]
+                let grenadeHeld = canEngage && hasButton InputButtons.Grenade input.Buttons && not moved.Sprinting
+                let handPlayer, thrown = Grenades.stepHand Tuning.TickDuration grenadeHeld moved
+                thrown |> Option.iter thrownGrenades.Add
+                let horizontalSpeed = MathEx.horizontal handPlayer.Velocity |> fun velocity -> velocity.Length()
+                let footstepInterval = if handPlayer.Sprinting then 18L else 26L
+                if horizontalSpeed > 1.0f && handPlayer.Position.Y <= 0.06f && lifecycleState.Tick % footstepInterval = 0L then
+                    emit (FootStep(handPlayer.Position, Mud))
+                if not requests.IsEmpty then
+                    // Eye trace, muzzle visuals: the authoritative ray leaves the
+                    // camera so anything the player can see over, the bullet
+                    // clears; the tracer event still starts at the barrel.
+                    let muzzle = Ballistics.playerMuzzleOrigin handPlayer weapon.Class
+                    emit (ShotFired(Some id, muzzle, Ballistics.directionFromAngles moved.Yaw moved.Pitch Vector2.Zero, weapon.Class.Name))
+                    let eye = Ballistics.playerEyeOrigin handPlayer
+                    for request in requests do
+                        let direction = Ballistics.directionFromAngles moved.Yaw moved.Pitch request.DirectionOffset
+                        shots.Add(id, eye, direction, request.Damage, request.Penetration, request.HeadshotMultiplier, estimatedTick)
+                { player with
+                    Position = handPlayer.Position
+                    Velocity = handPlayer.Velocity
+                    Yaw = handPlayer.Yaw
+                    Pitch = handPlayer.Pitch
+                    Stance = handPlayer.Stance
+                    CrouchLatched = handPlayer.CrouchLatched
+                    CrouchPrevHeld = handPlayer.CrouchPrevHeld
+                    Sprinting = handPlayer.Sprinting
+                    Ads = handPlayer.Ads
+                    Weapon = weapon
+                    Grenade = handPlayer.Grenade
+                    SpawnProtection = if requests.IsEmpty && thrown.IsNone then player.SpawnProtection else Units.seconds 0.0f
+                    LastInputSequence = if acknowledge then input.Sequence else player.LastInputSequence }
+            let mutable leftoverInputs: Map<EntityId, struct (InputFrame * int64) list> = Map.empty
+            let mutable nextCredits: Map<EntityId, int> = Map.empty
             let movedPlayers =
-                pendingInputs
-                |> Map.fold (fun players id struct (input, estimatedTick) ->
-                    match Map.tryFind id players with
-                    | Some player when player.Alive && input.Sequence > player.LastInputSequence ->
-                        let moved = Movement.step Tuning.TickDuration input level (toPlayer player)
-                        let canEngage = lifecycleState.Phase = Playing
-                        let fire = canEngage && hasButton InputButtons.Fire input.Buttons && not moved.Sprinting
-                        let reload = hasButton InputButtons.Reload input.Buttons
-                        let moveSpeed = MathEx.horizontal moved.Velocity |> fun velocity -> velocity.Length()
-                        let struct (weapon, requests) = Weapons.step Tuning.TickDuration moveSpeed fire reload moved.Ads &rng moved.Slots[0]
-                        let grenadeHeld = canEngage && hasButton InputButtons.Grenade input.Buttons && not moved.Sprinting
-                        let handPlayer, thrown = Grenades.stepHand Tuning.TickDuration grenadeHeld moved
-                        thrown |> Option.iter thrownGrenades.Add
-                        let horizontalSpeed = MathEx.horizontal handPlayer.Velocity |> fun velocity -> velocity.Length()
-                        let footstepInterval = if handPlayer.Sprinting then 18L else 26L
-                        if horizontalSpeed > 1.0f && handPlayer.Position.Y <= 0.06f && lifecycleState.Tick % footstepInterval = 0L then
-                            emit (FootStep(handPlayer.Position, Mud))
-                        requests
-                        |> List.iteri (fun index request ->
-                            let origin = Ballistics.playerMuzzleOrigin handPlayer weapon.Class
-                            let direction = Ballistics.directionFromAngles moved.Yaw moved.Pitch request.DirectionOffset
-                            shots.Add(id, origin, direction, request.Damage, request.Penetration, request.HeadshotMultiplier, estimatedTick, (index = 0)))
-                        let updated =
-                            { player with
-                                Position = handPlayer.Position
-                                Velocity = handPlayer.Velocity
-                                Yaw = handPlayer.Yaw
-                                Pitch = handPlayer.Pitch
-                                Stance = handPlayer.Stance
-                                CrouchLatched = handPlayer.CrouchLatched
-                                CrouchPrevHeld = handPlayer.CrouchPrevHeld
-                                Sprinting = handPlayer.Sprinting
-                                Ads = handPlayer.Ads
-                                Weapon = weapon
-                                Grenade = handPlayer.Grenade
-                                SpawnProtection = if requests.IsEmpty && thrown.IsNone then player.SpawnProtection else Units.seconds 0.0f
-                                LastInputSequence = input.Sequence }
-                        Map.add id updated players
-                    | _ -> players) respawnedPlayers
-            pendingInputs <- Map.empty
+                respawnedPlayers
+                |> Map.map (fun id player ->
+                    if not player.Alive then player
+                    else
+                        let mutable current = player
+                        let mutable remaining = Map.tryFind id pendingInputs |> Option.defaultValue []
+                        let mutable credits = min 4 (1 + (Map.tryFind id inputCredits |> Option.defaultValue 0))
+                        let mutable applied = 0
+                        // At most two frames per tick: the live frame plus one
+                        // banked catch-up frame after network jitter. Credits cap
+                        // the long-run rate at one input per server tick.
+                        while not (List.isEmpty remaining) && credits > 0 && applied < 2 do
+                            let struct (input, estimatedTick) = List.head remaining
+                            remaining <- List.tail remaining
+                            if input.Sequence > current.LastInputSequence then
+                                current <- stepFrame id current input estimatedTick true
+                                credits <- credits - 1
+                                applied <- applied + 1
+                        if applied = 0 then
+                            // No input this tick: the player still coasts under
+                            // gravity and friction, weapons keep cycling, and a
+                            // pinned grenade keeps burning instead of freezing.
+                            let idleButtons = match current.Grenade with Cooking _ -> InputButtons.Grenade | _ -> InputButtons.None
+                            let idle = { Sequence = current.LastInputSequence; Move = Vector2.Zero; Look = Vector2.Zero; Buttons = idleButtons }
+                            current <- stepFrame id current idle lifecycleState.Tick false
+                        if not (List.isEmpty remaining) then leftoverInputs <- Map.add id remaining leftoverInputs
+                        nextCredits <- Map.add id credits nextCredits
+                        current)
+            pendingInputs <- leftoverInputs
+            inputCredits <- nextCredits
             let mutable combatState = { lifecycleState with Players = movedPlayers; Rng = rng }
             let authoritativeShots = if lifecycleState.Phase = Playing then shots :> seq<_> else Seq.empty
-            for shooterId, origin, direction, damage, penetration, headshotMultiplier, estimatedTick, isFirstPellet in authoritativeShots do
+            for shooterId, origin, direction, damage, penetration, headshotMultiplier, estimatedTick in authoritativeShots do
                 match Map.tryFind shooterId combatState.Players with
                 | Some shooter when shooter.Alive ->
-                    if isFirstPellet then emit (ShotFired(Some shooterId, origin, direction, shooter.Weapon.Class.Name))
                     let targets = combatState.Players |> Map.toArray
                     let historical = positionHistory |> Map.tryFind estimatedTick |> Option.defaultValue Map.empty
                     let soldiers =
@@ -321,7 +354,10 @@ type MatchHost(mode: GameMode, ?matchLevel: Level) =
                     let canHit (candidate: Soldier) =
                         match Map.tryFind candidate.Id combatState.Players with
                         | Some target ->
-                            target.Alive && target.SpawnProtection <= Units.seconds 0.0f
+                            // Disconnected players are reserved identities, not
+                            // bodies: they are invisible to clients and must not
+                            // block shots or hand out free kills.
+                            target.Connected && target.Alive && target.SpawnProtection <= Units.seconds 0.0f
                             && Multiplayer.areHostile combatState.Mode shooter target
                         | None -> false
                     let hitSoldiers, hitEvents = Ballistics.applyShotFiltered canHit origin direction damage penetration headshotMultiplier level soldiers
@@ -344,18 +380,16 @@ type MatchHost(mode: GameMode, ?matchLevel: Level) =
                 else [||], [||]
             combatState <- { combatState with Grenades = activeGrenades }
             for struct (ownerId, position) in explosions do
-                emit (Explosion(position, 6.0f))
+                emit (Explosion(position, Grenades.BlastRadius))
                 let targets = combatState.Players |> Map.toArray
                 for targetId, target in targets do
                     let canDamage =
-                        target.Alive && target.SpawnProtection <= Units.seconds 0.0f
+                        target.Connected && target.Alive && target.SpawnProtection <= Units.seconds 0.0f
                         && match Map.tryFind ownerId combatState.Players with
                            | Some owner -> targetId = ownerId || Multiplayer.areHostile combatState.Mode owner target
                            | None -> false
-                    let torso = target.Position + Vector3(0.0f, 1.0f, 0.0f)
-                    let distance = Vector3.Distance(position, torso)
-                    if canDamage && distance < 6.0f && Ballistics.lineOfSight position torso level then
-                        let damage = Units.health (110.0f * (1.0f - distance / 6.0f) ** 1.5f)
+                    match (if canDamage then Grenades.explosionDamageAt level position target.Position else None) with
+                    | Some damage ->
                         let health = max (Units.health 0.0f) (target.Health - damage)
                         combatState <-
                             { combatState with
@@ -374,6 +408,7 @@ type MatchHost(mode: GameMode, ?matchLevel: Level) =
                                                     RespawnIn = Units.seconds 5.0f
                                                     Velocity = Vector3.Zero }
                                                 combatState.Players }
+                    | None -> ()
             let finalState =
                 if combatState.Phase = Playing && Multiplayer.hasWinner combatState then
                     { combatState with Phase = Results; PhaseRemaining = Units.seconds 10.0f }

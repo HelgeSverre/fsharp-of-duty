@@ -67,8 +67,15 @@ type OnlineClient(serverUri: Uri, playerName: string, requestedMode: GameMode, w
     let mutable playerId = 0
     let requestedSessionToken = defaultArg resumeToken ""
     let mutable sessionToken = requestedSessionToken
-    let mutable latestArrival = DateTimeOffset.MinValue
+    // Estimated offset between the server tick counter and the local monotonic
+    // clock, in ticks. Smoothing it (instead of re-anchoring on every snapshot
+    // arrival) keeps the interpolation target advancing steadily through
+    // network jitter rather than jumping each time a snapshot lands.
+    let mutable clockOffsetTicks = nan
     let mutable latestServerTick = 0L
+
+    let localTicks () =
+        float (System.Diagnostics.Stopwatch.GetTimestamp()) / float System.Diagnostics.Stopwatch.Frequency * float Tuning.TickRate
     let mutable receiveTask: Task = Task.CompletedTask
     let mutable sendTask: Task = Task.CompletedTask
     let mutable closing = 0
@@ -191,7 +198,10 @@ type OnlineClient(serverUri: Uri, playerName: string, requestedMode: GameMode, w
             if snapshots.Count = 0 || snapshot.Tick > (snapshots |> Seq.last).Tick then
                 snapshots.Enqueue snapshot
                 while snapshots.Count > 32 do snapshots.Dequeue() |> ignore
-                latestArrival <- DateTimeOffset.UtcNow
+                let observed = float snapshot.Tick - localTicks ()
+                clockOffsetTicks <-
+                    if Double.IsNaN clockOffsetTicks then observed
+                    else clockOffsetTicks + 0.1 * (observed - clockOffsetTicks)
                 latestServerTick <- snapshot.Tick)
 
     let receiveLoop () = task {
@@ -289,9 +299,9 @@ type OnlineClient(serverUri: Uri, playerName: string, requestedMode: GameMode, w
             elif snapshots.Count = 1 then Some(snapshots.Peek())
             else
                 let history = snapshots.ToArray()
-                let newest = history[history.Length - 1]
-                let elapsedTicks = (DateTimeOffset.UtcNow - latestArrival).TotalSeconds * float Tuning.TickRate
-                let targetTick = float newest.Tick + elapsedTicks - 6.0
+                // Render ~100 ms (6 ticks) behind the estimated server clock so
+                // there is nearly always a newer snapshot to interpolate toward.
+                let targetTick = localTicks () + clockOffsetTicks - 6.0
                 let mutable first = history[0]
                 let mutable second = history[1]
                 for index in 1..history.Length - 1 do
@@ -307,7 +317,13 @@ type OnlineClient(serverUri: Uri, playerName: string, requestedMode: GameMode, w
                         match Map.tryFind player.Id firstById with
                         | Some previous -> interpolatePlayer amount previous player
                         | None -> player)
-                Some { second with Players = players })
+                let grenades =
+                    second.Grenades
+                    |> Array.mapi (fun index grenade ->
+                        if index < first.Grenades.Length && first.Grenades[index].OwnerId = grenade.OwnerId then
+                            { grenade with Position = Vector3.Lerp(first.Grenades[index].Position, grenade.Position, amount) }
+                        else grenade)
+                Some { second with Players = players; Grenades = grenades })
 
     member _.CloseAsync() = task {
         if Interlocked.CompareExchange(&closing, 1, 0) = 0 then

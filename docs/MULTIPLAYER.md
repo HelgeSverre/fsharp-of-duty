@@ -29,7 +29,11 @@ Clients send input intentions rather than positions or hit claims.
 
 - Simulation: fixed 60 Hz.
 - Snapshot transmission: approximately 20 Hz.
-- Client input: sampled at 60 Hz through a bounded latest-input channel.
+- Client input: sampled at 60 Hz. The server buffers up to four frames per
+  player and applies them at one per tick on average (a banked catch-up frame
+  absorbs network jitter), so bursty delivery no longer drops inputs. A player
+  whose stream stalls keeps coasting: gravity, friction, weapon timers, and a
+  cooking grenade continue.
 - Local player: predicted and reconciled from acknowledged input sequences.
 - Remote players: interpolated from a 32-snapshot history.
 - Hitscan rewind: estimated server ticks are clamped to 12 ticks (200 ms) of
