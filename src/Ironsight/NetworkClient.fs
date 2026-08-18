@@ -20,8 +20,6 @@ type OnlinePlayer =
       Yaw: float32
       Pitch: float32
       Stance: Stance
-      CrouchLatched: bool
-      CrouchPrevHeld: bool
       Health: float32
       Alive: bool
       Ready: bool
@@ -155,8 +153,6 @@ type OnlineClient(serverUri: Uri, playerName: string, requestedMode: GameMode, w
                   Yaw = getFloat "yaw" value
                   Pitch = getFloat "pitch" value
                   Stance = getString "stance" value |> parseStance
-                  CrouchLatched = getBool "crouchLatched" value
-                  CrouchPrevHeld = getBool "crouchPrevHeld" value
                   Health = getFloat "health" value
                   Alive = getBool "alive" value
                   Ready = getBool "ready" value

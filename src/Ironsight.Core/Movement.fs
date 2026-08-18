@@ -13,18 +13,13 @@ module Movement =
         | Crouched -> Tuning.CrouchedHeight
         | Prone -> Tuning.ProneHeight
 
-    let private requestedStance (player: Player) buttons =
-        let proneHeld = hasButton InputButtons.Prone buttons
-        let crouchHeld = hasButton InputButtons.Crouch buttons
-        let crouchPressed = crouchHeld && not player.CrouchPrevHeld
-        let latched = if crouchPressed then not player.CrouchLatched else player.CrouchLatched
-        let stance =
-            if proneHeld then Prone
-            elif latched then Crouched
-            elif player.Stance = Prone then Standing
-            elif player.Stance = Crouched then Standing
-            else player.Stance
-        stance, latched, crouchHeld
+    // Hold-based: the buttons ARE the stance. Toggle behaviour is an input-
+    // layer concern (InputSampler latches and keeps the button held), so the
+    // server never needs latch state and clients can pick either mode freely.
+    let private requestedStance buttons =
+        if hasButton InputButtons.Prone buttons then Prone
+        elif hasButton InputButtons.Crouch buttons then Crouched
+        else Standing
 
     let private collides (level: Level) (stance: Stance) (position: Vector3) =
         LevelCompile.trianglesNear position (Tuning.PlayerRadius + 0.6f) level
@@ -119,7 +114,7 @@ module Movement =
         let yaw = player.Yaw + input.Look.X
         let pitch = Math.Clamp(player.Pitch + input.Look.Y, -1.45f, 1.45f)
         let move = if input.Move.LengthSquared() > 1.0f then Vector2.Normalize input.Move else input.Move
-        let stance, crouchLatched, crouchPrevHeld = requestedStance player input.Buttons
+        let stance = requestedStance input.Buttons
         // Feet below the sea surface: wading. Applies on the server and in
         // client prediction alike, since both run this same step.
         let wading =
@@ -134,6 +129,21 @@ module Movement =
         let wishDirection = MathEx.normalizedOrZero (MathEx.yawRight yaw * move.X + MathEx.yawForward yaw * move.Y)
         let targetVelocity = wishDirection * targetSpeed
         let onGround = grounded level player.Position
+        // Air crouch-jump, Source-style: crouching mid-air tucks the legs up
+        // (feet rise by the stand/crouch height difference, head stays put),
+        // which is what lets a crouch-jump clear ledges a plain jump cannot.
+        // Standing back up mid-air lowers the feet again, but only into space.
+        let heightDelta = Tuning.StandingHeight - Tuning.CrouchedHeight
+        let basePosition, stance =
+            if onGround then player.Position, stance
+            else
+                match player.Stance, stance with
+                | Standing, Crouched -> player.Position + Vector3.UnitY * heightDelta, stance
+                | Crouched, Standing ->
+                    let lowered = player.Position - Vector3.UnitY * heightDelta
+                    if collides level Standing lowered then player.Position, Crouched
+                    else lowered, Standing
+                | _ -> player.Position, stance
         let acceleration = if onGround then Tuning.GroundAcceleration else Tuning.AirAcceleration
         let blend = 1.0f - MathF.Exp(-acceleration * seconds)
         let horizontalVelocity = Vector3.Lerp(MathEx.horizontal player.Velocity, targetVelocity, blend)
@@ -142,8 +152,8 @@ module Movement =
             elif onGround && player.Velocity.Y <= 0.0f then 0.0f
             else player.Velocity.Y - Tuning.Gravity * seconds
         let velocity = Vector3(horizontalVelocity.X, verticalVelocity, horizontalVelocity.Z)
-        let requested = player.Position + velocity * seconds
-        let position = resolveWorld level stance player.Position requested onGround
+        let requested = basePosition + velocity * seconds
+        let position = resolveWorld level stance basePosition requested onGround
         let blockedVelocity =
             let x = if abs (position.X - requested.X) > 0.0001f then 0.0f else velocity.X
             let y = if abs (position.Y - requested.Y) > 0.0001f then 0.0f else velocity.Y
@@ -160,7 +170,5 @@ module Movement =
             Yaw = yaw
             Pitch = pitch
             Stance = stance
-            CrouchLatched = crouchLatched
-            CrouchPrevHeld = crouchPrevHeld
             Sprinting = wantsSprint
             Ads = ads }

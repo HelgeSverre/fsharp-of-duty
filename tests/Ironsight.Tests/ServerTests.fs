@@ -310,16 +310,18 @@ module ServerTests =
         Assert.Equal("Returned", host.Snapshot().Players[playerId].Name)
 
     [<Fact>]
-    let ``crouch toggles online and survives the player round trip`` () =
+    let ``crouch is hold-based on the server`` () =
+        // Toggle mode is purely a client input-layer latch; the wire and the
+        // simulation only ever see "crouch button held right now".
         let host = MatchHost TeamDeathmatch
         let playerId, _ = host.TryAddPlayer("Croucher").Value
         applyCustom 1L 0.0f 0.0f (int InputButtons.Crouch) host playerId
         host.AdvanceTick()
         Assert.Equal(Crouched, host.Snapshot().Players[playerId].Stance)
-        applyCustom 2L 0.0f 0.0f 0 host playerId
+        applyCustom 2L 0.0f 0.0f (int InputButtons.Crouch) host playerId
         host.AdvanceTick()
         Assert.Equal(Crouched, host.Snapshot().Players[playerId].Stance)
-        applyCustom 3L 0.0f 0.0f (int InputButtons.Crouch) host playerId
+        applyCustom 3L 0.0f 0.0f 0 host playerId
         host.AdvanceTick()
         Assert.Equal(Standing, host.Snapshot().Players[playerId].Stance)
 

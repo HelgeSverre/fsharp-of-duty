@@ -32,6 +32,8 @@ type Particles(gl: GL) =
     /// Transient aiming geometry, replaced wholesale every frame rather than
     /// aged like particles. Currently the grenade trajectory preview.
     let mutable preview: Vector3 array = [||]
+    // One-frame debug overlay lines (LOS view); cleared after every Render.
+    let debugLines = ResizeArray<struct (Vector3 * Vector3 * Vector4)>()
     let vao = gl.GenVertexArray()
     let buffer = gl.GenBuffer()
 
@@ -217,6 +219,9 @@ void main() {
     /// profile clamps glLineWidth to 1.0, which would leave a hairline arc.
     member _.SetPreview(points: Vector3 array) = preview <- points
 
+    member _.SubmitDebugLine(fromPoint: Vector3, toPoint: Vector3, color: Vector4) =
+        debugLines.Add(struct (fromPoint, toPoint, color))
+
     member _.Step(dt: float32) =
         lines <- lines |> List.choose (fun line -> let remaining = line.Remaining - dt in if remaining > 0.0f then Some { line with Remaining = remaining } else None)
         puffs <-
@@ -229,7 +234,7 @@ void main() {
                     Some { puff with Position = puff.Position + velocity * dt; Velocity = velocity; Remaining = remaining; Size = puff.Size + dt * puff.Growth })
 
     member _.Render(viewProjection: Matrix4x4) =
-        if not lines.IsEmpty || not puffs.IsEmpty || preview.Length > 0 then
+        if not lines.IsEmpty || not puffs.IsEmpty || preview.Length > 0 || debugLines.Count > 0 then
             let lineData =
                 lines
                 |> List.collect (fun line ->
@@ -238,6 +243,16 @@ void main() {
                     [ line.From; line.To ]
                     |> List.collect (fun position -> [ position.X; position.Y; position.Z; color.X; color.Y; color.Z; color.W; 1.0f ]))
                 |> List.toArray
+            let lineData =
+                let debugData =
+                    debugLines
+                    |> Seq.collect (fun struct (fromPoint, toPoint, color) ->
+                        seq {
+                            for position in [ fromPoint; toPoint ] do
+                                yield! [ position.X; position.Y; position.Z; color.X; color.Y; color.Z; color.W; 1.0f ]
+                        })
+                    |> Seq.toArray
+                Array.append lineData debugData
             let puffData =
                 puffs
                 |> List.collect (fun puff ->
@@ -290,6 +305,7 @@ void main() {
                     gl.DrawArrays(PrimitiveType.Points, 0, uint32 (previewData.Length / 8))
                 gl.DepthMask true
             gl.Disable EnableCap.Blend
+            debugLines.Clear()
             gl.BindVertexArray 0u
 
     interface IDisposable with

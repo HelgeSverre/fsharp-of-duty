@@ -29,12 +29,14 @@ module SettingsTests =
               Contrast = 1.15f
               MouseSensitivity = 1.6f
               AdsToggle = true
+              CrouchToggle = true
               BloodColor = Green }
         let restored = Settings.deserialize (Settings.serialize custom)
         Assert.Equal(85.0f, restored.Fov)
         Assert.Equal(1.15f, restored.Contrast)
         Assert.Equal(1.6f, restored.MouseSensitivity)
         Assert.True(restored.AdsToggle)
+        Assert.True(restored.CrouchToggle)
         Assert.Equal(Green, restored.BloodColor)
 
     [<Fact>]
@@ -44,6 +46,7 @@ module SettingsTests =
               Contrast = 0.0f
               MouseSensitivity = 99.0f
               AdsToggle = true
+              CrouchToggle = false
               BloodColor = Black }
         let restored = Settings.deserialize (Settings.serialize wild)
         Assert.Equal(95.0f, restored.Fov)

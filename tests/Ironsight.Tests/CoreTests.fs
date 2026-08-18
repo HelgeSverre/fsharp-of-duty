@@ -277,6 +277,27 @@ module CoreTests =
         Assert.InRange(highest, 0.249f, 0.251f)
 
     [<Fact>]
+    let ``crouch jumping tucks the legs to clear higher ledges`` () =
+        let level = LevelDsl.level "Jump range" [ LevelDsl.street 30.0f 10.0f Mud ] |> LevelCompile.compile
+        let start = { (Sim.createTrainingWorld 51UL).Player with Position = Vector3.Zero; Velocity = Vector3.Zero }
+        let apexOf holdCrouch =
+            let mutable player = Movement.step Tuning.TickDuration (input 1L InputButtons.Jump Vector2.Zero) level start
+            let mutable apex = player.Position.Y
+            for tick in 2L..60L do
+                let buttons = if holdCrouch then InputButtons.Crouch else InputButtons.None
+                player <- Movement.step Tuning.TickDuration (input tick buttons Vector2.Zero) level player
+                apex <- max apex player.Position.Y
+            apex, player
+        let plainApex, _ = apexOf false
+        let tuckedApex, landed = apexOf true
+        // Source-style air crouch: the feet gain the stand/crouch height delta.
+        Assert.InRange(plainApex, 0.8f, 1.3f)
+        Assert.True(tuckedApex > plainApex + 0.4f, $"tucked {tuckedApex} vs plain {plainApex}")
+        // Still lands cleanly on the floor while holding crouch.
+        Assert.InRange(landed.Position.Y, -0.01f, 0.05f)
+        Assert.Equal(Crouched, landed.Stance)
+
+    [<Fact>]
     let ``walking emits a generated-surface footstep event`` () =
         let world = Sim.createTrainingWorld 31UL
         let struct (_, events) = Sim.step (input 1L InputButtons.None Vector2.UnitY) world
@@ -286,7 +307,7 @@ module CoreTests =
     let ``friendly kill does not score in team deathmatch`` () =
         let makePlayer id team =
             { Id = EntityId id; Name = string id; Team = team; Position = Vector3.Zero; Velocity = Vector3.Zero
-              Yaw = 0.0f; Pitch = 0.0f; Stance = Standing; CrouchLatched = false; CrouchPrevHeld = false; Sprinting = false; Ads = 0.0f
+              Yaw = 0.0f; Pitch = 0.0f; Stance = Standing; Sprinting = false; Ads = 0.0f
               Health = Units.health 100.0f; RegenIn = Units.seconds 0.0f; Weapon = Tuning.weaponSlot Tuning.kar98k 2; RequestedWeapon = None
               Grenade = GrenadeIdle 3; Connected = true; Ready = true; Alive = true; RespawnIn = Units.seconds 0.0f; SpawnProtection = Units.seconds 0.0f
               Kills = 0; Deaths = 0; LastInputSequence = 0L }
@@ -301,7 +322,7 @@ module CoreTests =
     let ``team deathmatch hostile kill scores and marks victim dead`` () =
         let makePlayer id team =
             { Id = EntityId id; Name = string id; Team = team; Position = Vector3.Zero; Velocity = Vector3.Zero
-              Yaw = 0.0f; Pitch = 0.0f; Stance = Standing; CrouchLatched = false; CrouchPrevHeld = false; Sprinting = false; Ads = 0.0f
+              Yaw = 0.0f; Pitch = 0.0f; Stance = Standing; Sprinting = false; Ads = 0.0f
               Health = Units.health 100.0f; RegenIn = Units.seconds 0.0f; Weapon = Tuning.weaponSlot Tuning.kar98k 2; RequestedWeapon = None
               Grenade = GrenadeIdle 3; Connected = true; Ready = true; Alive = true; RespawnIn = Units.seconds 0.0f; SpawnProtection = Units.seconds 0.0f
               Kills = 0; Deaths = 0; LastInputSequence = 0L }

@@ -14,6 +14,7 @@ type GameSettings =
       Contrast: float32
       MouseSensitivity: float32
       AdsToggle: bool
+      CrouchToggle: bool
       BloodColor: BloodColor }
 
 [<RequireQualifiedAccess>]
@@ -23,6 +24,8 @@ module Settings =
           Contrast = 1.0f
           MouseSensitivity = 1.0f
           AdsToggle = false
+          // Hold-to-crouch by default; toggle is opt-in like ADS toggle.
+          CrouchToggle = false
           BloodColor = Crimson }
 
     /// Reject out-of-range values from hand-edited or old config files.

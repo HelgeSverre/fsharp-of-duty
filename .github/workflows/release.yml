@@ -1,0 +1,63 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: 10.0.x
+
+      # Self-contained cross-publish: no AOT, so one Linux runner can build
+      # every RID. The SDK sets the exec bit on unix apphosts; tar keeps it.
+      - name: Publish client for each platform
+        run: |
+          set -euo pipefail
+          for rid in win-x64 linux-x64 osx-x64 osx-arm64; do
+            dotnet publish src/Ironsight/Ironsight.fsproj \
+              --configuration Release --runtime "$rid" --self-contained \
+              --output "publish/$rid"
+            case "$rid" in
+              win-*) (cd "publish/$rid" && zip -qr "$GITHUB_WORKSPACE/ironsight-$rid.zip" .) ;;
+              *) tar -czf "ironsight-$rid.tar.gz" -C "publish/$rid" . ;;
+            esac
+          done
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ironsight-builds
+          path: |
+            ironsight-*.zip
+            ironsight-*.tar.gz
+
+      - name: Create release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            ironsight-*.zip
+            ironsight-*.tar.gz
+          body: |
+            Self-contained builds — no .NET install required. Unpack and run `Ironsight` (`Ironsight.exe` on Windows). An OpenGL 4.1-capable desktop is required.
+
+            - **Windows x64**: `ironsight-win-x64.zip`
+            - **Linux x64**: `ironsight-linux-x64.tar.gz`
+            - **macOS Apple Silicon**: `ironsight-osx-arm64.tar.gz`
+            - **macOS Intel**: `ironsight-osx-x64.tar.gz`
+
+            macOS builds are unsigned: run `xattr -dr com.apple.quarantine Ironsight` after unpacking, or right-click → Open.

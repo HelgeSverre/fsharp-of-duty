@@ -38,8 +38,6 @@ module OnlineWorld =
             // up as 20 Hz stutter on flat ground and mangled jumps.
             Velocity = snapshot.Velocity
             Stance = snapshot.Stance
-            CrouchLatched = snapshot.CrouchLatched
-            CrouchPrevHeld = snapshot.CrouchPrevHeld
             Yaw = snapshot.Yaw
             Pitch = snapshot.Pitch
             Sprinting = false

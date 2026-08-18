@@ -14,8 +14,6 @@ type NetworkPlayer =
       Yaw: float32
       Pitch: float32
       Stance: Stance
-      CrouchLatched: bool
-      CrouchPrevHeld: bool
       Sprinting: bool
       Ads: float32
       Health: float32<hp>

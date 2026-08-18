@@ -34,15 +34,14 @@
     <section class="hero shell">
       <div class="eyebrow"><span class="live-dot"></span> One machine. One region. Several ambitions.</div>
       <h1>The massively<br><em>modest</em><br>online FPS.</h1>
-      <p class="hero-copy">A code-generated WWII-ish shooter with MMO-scale typography,
-        authoritative netcode, and enough server memory to hold a particularly
-        confident spreadsheet.</p>
+      <p class="hero-copy">A WWII-ish shooter generated entirely from F# code —
+        authoritative netcode, procedural everything, and enough server memory
+        to hold a confident spreadsheet.</p>
       <div class="hero-actions">
-        <a class="button" href="https://github.com/HelgeSverre/fsharp-of-duty#quick-start">Enlist via Git clone</a>
+        <a class="button" href="https://github.com/HelgeSverre/fsharp-of-duty/releases/latest">Enlist — download the game</a>
         <a class="text-link" href="#leaderboard">Inspect the entire population →</a>
       </div>
-      <p class="fine-print">* “Massively multiplayer” currently means up to 16 players per room.
-        “Persistent world” means the process has not restarted. No loot boxes because there is no loot.</p>
+      <p class="fine-print">* “Massively” means 16 players per room. “Persistent” means the process has not restarted.</p>
 
       <div class="hero-object" aria-hidden="true">
         <div class="scope-ring"><div class="crosshair"></div></div>
@@ -55,7 +54,7 @@
 
     <section class="ticker" aria-label="Project statistics">
       <div><strong>0</strong><span>game assets shipped</span></div>
-      <div><strong>56</strong><span>tests standing between you and chaos</span></div>
+      <div><strong>16</strong><span>players per theater, maximum</span></div>
       <div><strong>60</strong><span>authoritative ticks per second</span></div>
       <div><strong>256 MB</strong><span>of strategic cloud supremacy</span></div>
     </section>
@@ -84,8 +83,8 @@
         <div>
           <div class="section-number">02 // GLOBAL WAR ROOM</div>
           <h2>Live strategic leaderboard</h2>
-          <p>Every currently connected hero, ranked by actual server state. History
-            is written by the victors and erased by the next deployment.</p>
+          <p>Everyone connected right now, ranked by actual server state.
+            History is erased by the next deployment.</p>
         </div>
         <div class="server-badge"><span class="live-dot"></span><b id="server-status">CONTACTING COMMAND</b><small>ARN // FLY.IO</small></div>
       </div>
@@ -119,8 +118,8 @@
       <div>
         <div class="section-number">03 // ORDNANCE PROCUREMENT</div>
         <h2>Numbers worth arguing about.</h2>
-        <p>Inspect damage models, cyclic rates, reload timing, spread, penetration,
-          and theoretical shotgun optimism—directly from the game’s real tuning data.</p>
+        <p>Damage, cyclic rates, reload timing, spread, and penetration —
+          served directly from the game’s real tuning data.</p>
       </div>
       <a class="button" href="arsenal.html">Open classified arsenal →</a>
     </section>
@@ -139,10 +138,14 @@
     </section>
 
     <section class="cta shell">
-      <p class="eyebrow">THE WAR WILL NOT DOWNLOAD ITSELF</p>
-      <h2>Clone. Compile.<br>Question your choices.</h2>
-      <a class="button" href="https://github.com/HelgeSverre/fsharp-of-duty">View the F# arsenal</a>
-      <code>git clone https://github.com/HelgeSverre/fsharp-of-duty.git</code>
+      <p class="eyebrow">THE WAR DOWNLOADS ITSELF NOW</p>
+      <h2>Download. Unzip.<br>Question your choices.</h2>
+      <a class="button" href="https://github.com/HelgeSverre/fsharp-of-duty/releases/latest">Download for Windows, macOS, or Linux</a>
+      <code id="quick-start" title="Click to copy">git clone https://github.com/HelgeSverre/fsharp-of-duty.git
+cd fsharp-of-duty
+just run</code>
+      <p class="fine-print">Downloads are self-contained — no .NET required, just an OpenGL 4.1-capable desktop.
+        Prefer conscription the hard way? Build from source above.</p>
     </section>
   </main>
 

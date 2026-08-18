@@ -41,6 +41,13 @@ The dedicated server is headless and does not require OpenGL or OpenAL.
 
 ## Quick start
 
+Download a self-contained build for Windows, macOS, or Linux from the
+[latest release](https://github.com/HelgeSverre/fsharp-of-duty/releases/latest) —
+no .NET install required. macOS builds are unsigned; run
+`xattr -dr com.apple.quarantine Ironsight` after unpacking, or right-click → Open.
+
+Or build from source:
+
 ```sh
 git clone https://github.com/HelgeSverre/fsharp-of-duty.git
 cd fsharp-of-duty

@@ -25,6 +25,9 @@ type HudInfo =
       /// drives the trajectory preview. Decided by the caller rather than read
       /// from World.Player.Grenade: online the client never advances the hand
       /// state, so the world would always report idle.
+      /// Wireframe + line-of-sight overlay (F3). Deliberately a wallhack —
+      /// this is an experiment sandbox, not a secured competitive game.
+      DebugView: bool
       GrenadeCooking: bool
       /// In-game loadout picker: Some selectedIndex while open.
       LoadoutScreen: int option
@@ -241,6 +244,8 @@ type Hud(gl: GL) =
         addText (healthPanelX + healthPanelWidth - 14.0f - float32 ($"{int (Units.raw world.Player.Health)}").Length * 11.2f) (healthPanelY + 8.0f) 1.4f white $"{int (Units.raw world.Player.Health)}"
         solid (healthPanelX + 14.0f) (healthPanelY + 30.0f) (healthPanelWidth - 28.0f) 9.0f (Vector4(0.10f, 0.12f, 0.10f, 0.9f))
         solid (healthPanelX + 14.0f) (healthPanelY + 30.0f) ((healthPanelWidth - 28.0f) * healthRatio) 9.0f healthFill
+        if info.DebugView then
+            addText 22.0f 8.0f 1.0f (Vector4(1.0f, 0.74f, 0.30f, 0.95f)) "DEBUG VIEW [F3]  GREEN: CLEAR LOS  RED: BLOCKED"
         let heading = ((world.Player.Yaw * 180.0f / MathF.PI) % 360.0f + 360.0f) % 360.0f
         let directions = [| "N"; "NE"; "E"; "SE"; "S"; "SW"; "W"; "NW" |]
         let direction = directions[(int (MathF.Round(heading / 45.0f))) % directions.Length]

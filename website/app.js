@@ -236,7 +236,21 @@
       });
   }
 
+  function initializeQuickStart() {
+    const block = byId("quick-start");
+    if (!block) return;
+    const commands = block.textContent;
+    block.addEventListener("click", async () => {
+      try {
+        await navigator.clipboard.writeText(commands);
+        block.classList.add("copied");
+        setTimeout(() => block.classList.remove("copied"), 1200);
+      } catch { /* clipboard unavailable; leave the text selectable */ }
+    });
+  }
+
   initializeBackdrop();
+  initializeQuickStart();
   initializeLeaderboard();
   initializeArsenal();
 })();

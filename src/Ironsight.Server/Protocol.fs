@@ -30,8 +30,6 @@ type PlayerSnapshot =
       yaw: float32
       pitch: float32
       stance: string
-      crouchLatched: bool
-      crouchPrevHeld: bool
       health: float32
       alive: bool
       ready: bool
@@ -191,8 +189,6 @@ module Protocol =
                   yaw = player.Yaw
                   pitch = player.Pitch
                   stance = string player.Stance
-                  crouchLatched = player.CrouchLatched
-                  crouchPrevHeld = player.CrouchPrevHeld
                   health = Units.raw player.Health
                   alive = player.Alive
                   ready = player.Ready

@@ -321,6 +321,32 @@ type Renderer(gl: GL) =
                 gl.BindVertexArray soldierVao
                 gl.DrawElements(PrimitiveType.Triangles, soldierIndexCount, DrawElementsType.UnsignedInt, noOffset)
             gl.BindVertexArray 0u
+            if hudInfo.DebugView then
+                // Wallhack overlay: soldiers redrawn as wireframes with depth
+                // testing off (visible through walls), the level as wireframe
+                // with depth on so it hugs the real surfaces.
+                gl.PolygonMode(TriangleFace.FrontAndBack, PolygonMode.Line)
+                if soldierIndexCount > 0u then
+                    gl.Disable EnableCap.DepthTest
+                    gl.BindVertexArray soldierVao
+                    gl.DrawElements(PrimitiveType.Triangles, soldierIndexCount, DrawElementsType.UnsignedInt, noOffset)
+                    gl.Enable EnableCap.DepthTest
+                gl.BindVertexArray vao
+                gl.DrawElements(PrimitiveType.Triangles, indexCount, DrawElementsType.UnsignedInt, noOffset)
+                gl.PolygonMode(TriangleFace.FrontAndBack, PolygonMode.Fill)
+                gl.BindVertexArray 0u
+                // Line-of-sight web: every living soldier's eye to the local
+                // player's eye; green when the trace is clear, red when a wall
+                // is in the way.
+                let playerEye = Ballistics.playerEyeOrigin world.Player
+                for soldier in world.Soldiers do
+                    if soldier.Health > Units.health 0.0f then
+                        let soldierEye = soldier.Position + Vector3(0.0f, 1.55f, 0.0f)
+                        let clear = Ballistics.lineOfSight soldierEye playerEye world.Level
+                        let color =
+                            if clear then Vector4(0.20f, 1.0f, 0.30f, 0.85f)
+                            else Vector4(1.0f, 0.16f, 0.10f, 0.45f)
+                        particles.SubmitDebugLine(soldierEye, playerEye, color)
             // Re-predicted every frame so the arc tracks the crosshair. Two
             // seconds of ticks covers any throw the player can make before the
             // grenade settles.

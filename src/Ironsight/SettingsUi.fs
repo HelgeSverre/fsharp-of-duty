@@ -58,6 +58,10 @@ module SettingsUi =
              Kind = Toggle
              Get = (fun current -> if current.AdsToggle then "ON" else "OFF")
              Step = (fun current _ -> { current with AdsToggle = not current.AdsToggle }) }
+           { Label = "CROUCH TOGGLE"
+             Kind = Toggle
+             Get = (fun current -> if current.CrouchToggle then "ON" else "OFF")
+             Step = (fun current _ -> { current with CrouchToggle = not current.CrouchToggle }) }
            { Label = "EFFECTS"
              Kind = Header
              Get = (fun _ -> "")
