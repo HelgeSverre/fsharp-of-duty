@@ -386,3 +386,5 @@ module Sim =
 
     let createCanalYardWorld seed = createRoundWorld Levels.canalYard 5 seed
 
+    let createOmahaWorld seed = createRoundWorld Levels.omahaDraw 5 seed
+

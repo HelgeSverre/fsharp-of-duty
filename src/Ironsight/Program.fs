@@ -74,6 +74,7 @@ module Program =
             | "battlefield" -> Sim.createBattlefieldWorld 0x1A0B3CUL
             | "depot" -> Sim.createScrapDepotWorld 0x1A0B3CUL
             | "canal" -> Sim.createCanalYardWorld 0x1A0B3CUL
+            | "omaha" -> Sim.createOmahaWorld 0x1A0B3CUL
             | _ -> Sim.createPaintballWorld 0x1A0B3CUL
         let requestedMap =
             if args |> Array.contains "--stalingrad" then Some "stalingrad"

@@ -99,17 +99,26 @@ while gz <= bounds.Max.Z do
     line $"""<text class="small" x="%.1f{margin + 3.0f}" y="%.1f{planY gz - 3.0f}">%.0f{gz}</text>"""
     gz <- gz + 10.0f
 
-// Brushes, lowest first, so tall geometry paints over the ground slab.
-line """<g id="plan-brushes">"""
-level.Brushes
-|> Array.sortBy (fun item -> item.Bounds.Max.Y)
-|> Array.iter (fun item ->
-    let b = item.Bounds
-    let x, y = planX b.Min.X, planY b.Max.Z
-    let w, h = (b.Max.X - b.Min.X) * scale, (b.Max.Z - b.Min.Z) * scale
+// Every upward-facing collision triangle, lowest first. Drawing the collision
+// mesh rather than the brushes is what makes ramps and slopes visible at all —
+// they are not boxes and would otherwise be missing from the plan entirely.
+line """<g id="plan-surfaces">"""
+level.Collision.Triangles
+|> Array.filter (fun t -> t.Normal.Y > 0.3f)
+|> Array.sortBy (fun t -> (t.A.Y + t.B.Y + t.C.Y) / 3.0f)
+|> Array.iter (fun t ->
+    let mid = (t.A.Y + t.B.Y + t.C.Y) / 3.0f
     // The ground slab would otherwise hide the grid entirely.
-    let opacity = if b.Max.Y <= 0.01f then 0.35f else 0.92f
-    line $"""<rect class="brush" x="%.1f{x}" y="%.1f{y}" width="%.1f{w}" height="%.1f{h}" fill="%s{heightFill b.Max.Y}" fill-opacity="%.2f{opacity}"><title>%s{materialName item.Material} top %.2f{b.Max.Y}m</title></rect>""")
+    let opacity = if mid <= 0.01f then 0.30f else 0.92f
+    let points =
+        [ t.A; t.B; t.C ]
+        |> List.map (fun p -> $"%.1f{planX p.X},%.1f{planY p.Z}")
+        |> String.concat " "
+    // Walkable faces are drawn solid; anything past the slope limit is hatched
+    // dark, because "can I climb this" is the plan view's other job.
+    let walkable = t.Normal.Y >= Tuning.MaxSlopeCosine
+    let fill = if walkable then heightFill mid else "#2a1c1c"
+    line $"""<polygon class="brush" points="%s{points}" fill="%s{fill}" fill-opacity="%.2f{opacity}"><title>%s{materialName t.Material} y %.2f{mid} %s{if walkable then "walkable" else "too steep"}</title></polygon>""")
 line "</g>"
 
 // Nav links show where the AI can actually walk — usually the first thing that
@@ -146,15 +155,15 @@ line "</g>"
 // slope actually climbs and that nothing pokes through the ceiling.
 line """<g id="elevation">"""
 line $"""<line class="grid" x1="%.1f{margin}" y1="%.1f{elevationY 0.0f}" x2="%.1f{margin + planWidth}" y2="%.1f{elevationY 0.0f}"/>"""
-level.Brushes
-|> Array.sortBy (fun item -> item.Bounds.Max.Y)
-|> Array.iter (fun item ->
-    let b = item.Bounds
-    let x = planX b.Min.X
-    let w = (b.Max.X - b.Min.X) * scale
-    let top = elevationY b.Max.Y
-    let h = max 1.0f ((b.Max.Y - b.Min.Y) * scale)
-    line $"""<rect class="brush" x="%.1f{x}" y="%.1f{top}" width="%.1f{w}" height="%.1f{h}" fill="%s{heightFill b.Max.Y}" fill-opacity="0.5"/>""")
+level.Collision.Triangles
+|> Array.sortBy (fun t -> (t.A.Y + t.B.Y + t.C.Y) / 3.0f)
+|> Array.iter (fun t ->
+    let points =
+        [ t.A; t.B; t.C ]
+        |> List.map (fun p -> $"%.1f{planX p.X},%.1f{elevationY p.Y}")
+        |> String.concat " "
+    let mid = (t.A.Y + t.B.Y + t.C.Y) / 3.0f
+    line $"""<polygon class="brush" points="%s{points}" fill="%s{heightFill mid}" fill-opacity="0.28"/>""")
 line $"""<text class="small" x="%.1f{margin}" y="%.1f{elevationBase + 16.0f}">elevation — looking along +Z, ceiling %.1f{bounds.Max.Y}m</text>"""
 line "</g>"
 

@@ -228,3 +228,80 @@ module GeometryTests =
         let below = Vector3(0.0f, 1.0f, 9.0f)
         let across = Vector3(0.0f, 1.0f, -9.0f)
         Assert.False(Ballistics.lineOfSight below across level, "the ramp body should block sight through it")
+
+    /// Phase 4 gate: the map has to be traversable, and the bluff has to stop
+    /// you. Layout bugs are invisible in a screenshot but obvious to pathfinding.
+    module Omaha =
+        let private level = Levels.omahaDraw
+
+        let private nearest (position: Vector3) =
+            level.Nav |> Array.mapi (fun index node -> index, Vector3.DistanceSquared(node.Position, position)) |> Array.minBy snd |> fst
+
+        /// Breadth-first over the nav graph. Tests the graph itself rather than
+        /// the A* on top of it, which is what a layout bug actually breaks.
+        let private reachable start finish =
+            let goal = nearest finish
+            let seen = System.Collections.Generic.HashSet<int>()
+            let queue = System.Collections.Generic.Queue<int>()
+            queue.Enqueue(nearest start)
+            seen.Add(nearest start) |> ignore
+            let mutable found = false
+            while not found && queue.Count > 0 do
+                let current = queue.Dequeue()
+                if current = goal then found <- true
+                else
+                    for neighbour in level.Nav[current].Neighbours do
+                        if seen.Add neighbour then queue.Enqueue neighbour
+            found
+
+        [<Fact>]
+        let ``the surf connects to both bunkers through the draws`` () =
+            let surf = Vector3(0.0f, 0.0f, -28.0f)
+            Assert.True(reachable surf (Vector3(-18.5f, 5.6f, 24.0f)), "no route from the beach to the west bunker")
+            Assert.True(reachable surf (Vector3(18.5f, 5.6f, 24.0f)), "no route from the beach to the east bunker")
+
+        [<Fact>]
+        let ``both spawns reach the beach`` () =
+            let beach = Vector3(0.0f, 0.0f, -18.0f)
+            for struct (_, spawn) in level.Spawns do
+                Assert.True(reachable spawn beach, $"spawn at {spawn} is cut off from the beach")
+
+        [<Fact>]
+        let ``spawns land on the plateau, not at sea level`` () =
+            for struct (owner, spawn) in level.Spawns do
+                Assert.True(spawn.Y > 5.0f, $"{owner} spawn at {spawn} did not snap onto the plateau")
+
+        [<Fact>]
+        let ``the bluff face between the draws is not walkable`` () =
+            // Straight up the middle must be blocked, or the draws are pointless.
+            let faceNodes =
+                level.Nav
+                |> Array.filter (fun node -> abs node.Position.X < 10.0f && node.Position.Z > -4.0f && node.Position.Z < 9.0f)
+            // Any node there sits on top of the bluff, never partway up its face.
+            Assert.True(
+                faceNodes |> Array.forall (fun node -> node.Position.Y < 0.6f || node.Position.Y > 5.0f),
+                "found a navigable foothold partway up the bluff face")
+
+        [<Fact>]
+        let ``the map is mirrored across x`` () =
+            let alliesSpawns = level.Spawns |> Array.filter (fun struct (o, _) -> o = Some Allies) |> Array.length
+            let axisSpawns = level.Spawns |> Array.filter (fun struct (o, _) -> o = Some Axis) |> Array.length
+            Assert.Equal(alliesSpawns, axisSpawns)
+            // Every walkable surface should have a partner at mirrored X.
+            let heightAt x z =
+                match LevelCompile.surfaceColumn level.Collision x z with
+                | ValueSome(struct (height, _)) -> height
+                | ValueNone -> Single.NaN
+            for z in [ -20.0f; -10.0f; 0.0f; 8.0f; 14.0f; 24.0f ] do
+                for x in [ 6.0f; 14.0f; 18.5f; 26.0f ] do
+                    Assert.Equal(float (heightAt x z), float (heightAt -x z), 2)
+
+        [<Fact>]
+        let ``the draws climb within the slope limit`` () =
+            // Sample up a draw and confirm every surface there is standable.
+            for sign in [ -1.0f; 1.0f ] do
+                for z in [ -3.0f; 0.0f; 4.0f; 8.0f ] do
+                    match LevelCompile.surfaceColumn level.Collision (sign * 18.5f) z with
+                    | ValueSome(struct (_, normal)) ->
+                        Assert.True(Movement.walkableNormal normal, $"draw at x={sign * 18.5f} z={z} is too steep to climb")
+                    | ValueNone -> failwith $"no surface in the draw at x={sign * 18.5f} z={z}"

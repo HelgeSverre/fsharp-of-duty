@@ -157,3 +157,51 @@ module IntegrationTests =
             ]
         finally
             app |> Option.iter (fun host -> host.StopAsync().GetAwaiter().GetResult())
+
+    /// The end-to-end gate for the terrain work: a real client, over a real
+    /// socket, against the authoritative server, physically climbing a slope.
+    /// Everything below it — triangle collision, the slope limit, the ground
+    /// probe, client prediction — has to agree for this to pass.
+    [<Fact>]
+    [<Trait("Category", Integration)>]
+    let ``a player walks up the Omaha draw and gains the bluff`` () =
+        // The server picks its level from the environment at build time.
+        let previous = Environment.GetEnvironmentVariable "IRONSIGHT_LEVEL"
+        Environment.SetEnvironmentVariable("IRONSIGHT_LEVEL", "omaha")
+        let app, uri = try startServer () finally Environment.SetEnvironmentVariable("IRONSIGHT_LEVEL", previous)
+        try
+            let mutable startHeight = 0.0f
+            MatchScript.run uri TeamDeathmatch [
+                Join "Climber"
+                Join "Anchor"
+                WaitUntil("the match reaches Playing", 30.0, fun snapshot -> snapshot.Phase = Playing)
+                Expect("the climber spawns on the plateau", fun snapshot ->
+                    match MatchScript.selfOf "Climber" snapshot with
+                    | Some self ->
+                        startHeight <- self.Position.Y
+                        self.Position.Y > 5.0f
+                    | None -> false)
+
+                // Yaw 0 faces -Z, which is down the draw toward the sea.
+                Face("Climber", 0.0f)
+                Wait 1.0
+                Move("Climber", Vector2(0.0f, 1.0f))
+                WaitUntil("the climber descends to the beach", 25.0, fun snapshot ->
+                    match MatchScript.selfOf "Climber" snapshot with
+                    | Some self -> self.Position.Y < 2.0f
+                    | None -> false)
+
+                // Turn inland and climb back up the way it came.
+                Face("Climber", MathF.PI)
+                Wait 1.0
+                Move("Climber", Vector2(0.0f, 1.0f))
+                WaitUntil("the climber regains the bluff", 25.0, fun snapshot ->
+                    match MatchScript.selfOf "Climber" snapshot with
+                    | Some self -> self.Position.Y > 5.0f
+                    | None -> false)
+
+                Leave "Climber"
+                Leave "Anchor"
+            ]
+        finally
+            app.StopAsync().GetAwaiter().GetResult()

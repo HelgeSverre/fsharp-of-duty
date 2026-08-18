@@ -21,6 +21,10 @@ type Act =
     | Aim of bot: string * delta: Vector2
     /// Turn to face the nearest hostile player in the latest snapshot.
     | FaceEnemy of bot: string
+    /// Hold a compass heading in radians, steered every tick. Yaw 0 faces -Z.
+    /// Unlike Aim this persists, because a bot that has to walk somewhere needs
+    /// to keep pointing there rather than drift.
+    | Face of bot: string * yaw: float32
     | Press of bot: string * buttons: InputButtons
     | Release of bot: string * buttons: InputButtons
     | Wait of seconds: float
@@ -35,6 +39,7 @@ module MatchScript =
           mutable Move: Vector2
           mutable Look: Vector2
           mutable Buttons: InputButtons
+          mutable Heading: float32 voption
           mutable Sequence: int64
           mutable Token: string
           mutable Weapon: string }
@@ -100,6 +105,17 @@ module MatchScript =
                         lock ordered (fun () ->
                             for entry in ordered do
                                 if entry.Client.Connected then
+                                    // Steer toward a held heading. The server clamps
+                                    // look deltas, so this converges over a few ticks
+                                    // rather than snapping.
+                                    match entry.Heading, entry.Client.TryLatestSnapshot() with
+                                    | ValueSome target, Some snapshot ->
+                                        match snapshot.Players |> Array.tryFind (fun player -> player.Id = entry.Client.PlayerId) with
+                                        | Some self ->
+                                            let error = MathF.Atan2(MathF.Sin(target - self.Yaw), MathF.Cos(target - self.Yaw))
+                                            entry.Look <- Vector2(Math.Clamp(error, -0.2f, 0.2f), entry.Look.Y)
+                                        | None -> ()
+                                    | _ -> ()
                                     entry.Sequence <- entry.Sequence + 1L
                                     entry.Client.QueueInput
                                         { Sequence = entry.Sequence
@@ -124,6 +140,7 @@ module MatchScript =
                       Move = Vector2.Zero
                       Look = Vector2.Zero
                       Buttons = InputButtons.None
+                      Heading = ValueNone
                       Sequence = 0L
                       Token = ""
                       Weapon = weapon }
@@ -139,6 +156,7 @@ module MatchScript =
                 connect entry (Some entry.Token)
             | Move(name, direction) -> (bot name).Move <- direction
             | Aim(name, delta) -> (bot name).Look <- delta
+            | Face(name, yaw) -> (bot name).Heading <- ValueSome yaw
             | Press(name, buttons) ->
                 let entry = bot name
                 entry.Buttons <- entry.Buttons ||| buttons

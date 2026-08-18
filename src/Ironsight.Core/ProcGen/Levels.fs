@@ -284,6 +284,93 @@ module Levels =
               LevelDsl.trigger (ObjectiveDone 0) EndMission ]
         |> LevelCompile.compile
 
-    let all = [| paintballArena; scrapDepot; canalYard; battlefield; trainingYard; stalingradStreet |]
+    /// Omaha Draw — the D-Day silhouette mirrored across X so both teams hold a
+    /// bluff and the beach below is neutral ground. The shape runs surf, open
+    /// sand, shingle and seawall, a draw cut up the bluff, then a trench line
+    /// and a bunker. Three planes: beach at 0, seawall at 2.4, plateau at 5.6.
+    ///
+    /// Lanes are the two draws plus the bluff top between them; the beach links
+    /// them at the bottom and the trench at the top, so there are two loops
+    /// rather than a single head-on push.
+    let omahaDraw =
+        // The sand ramps up from the waterline; anything standing on it has to
+        // sit at the right height, so the profile is shared rather than guessed.
+        let sandTop = 1.2f
+        let sandStart, sandEnd = -22.0f, -8.0f
+        let sandY z = sandTop * MathEx.clamp01 ((z - sandStart) / (sandEnd - sandStart))
+        let shingleTop = 2.4f
+        let plateau = 5.6f
+        let drawX = 18.5f
+        // Bunkers sit outboard of the draws so they overlook the beach without
+        // standing between a spawn and its route down.
+        let bunkerX = 29.0f
+        // A hedgehog: chest-high obstacle, so it reads as cover to the AI too.
+        let hedgehog x z =
+            LevelDsl.block (Vector3(x, sandY z + 0.6f, z)) (Vector3(1.6f, 1.2f, 1.6f)) Metal
+        // Mirrored pairs keep the two halves honestly identical.
+        let mirrored build = [ for sign in [ -1.0f; 1.0f ] -> build sign ]
+        let items =
+            [ LevelDsl.street 64.0f 34.0f Mud
+
+              // Beach: flat wet sand at the waterline, then the long open rise.
+              LevelDsl.ramp (Vector3(0.0f, 0.0f, sandStart)) (Vector3(0.0f, sandTop, sandEnd)) 68.0f Mud
+              // The shingle runs right up to the draw mouths; stopping it short
+              // left a 2.4 m step the player would have had to climb.
+              LevelDsl.ramp (Vector3(0.0f, sandTop, sandEnd)) (Vector3(0.0f, shingleTop, -4.0f)) 68.0f Sandbag
+
+              // Seawall along the shingle, broken by one gap per draw.
+              LevelDsl.block (Vector3(0.0f, shingleTop + 0.6f, -4.5f)) (Vector3(26.0f, 1.6f, 1.2f)) Brick
+              yield! mirrored (fun sign -> LevelDsl.block (Vector3(sign * 28.5f, shingleTop + 0.6f, -4.5f)) (Vector3(11.0f, 1.6f, 1.2f)) Brick)
+
+              // The bluff. Vertical faces, so it is a wall by slope rather than
+              // by an invisible box, and play is funnelled into the draws.
+              LevelDsl.block (Vector3(0.0f, plateau * 0.5f, 3.0f)) (Vector3(26.0f, plateau, 14.0f)) Mud
+              yield! mirrored (fun sign -> LevelDsl.block (Vector3(sign * 29.0f, plateau * 0.5f, 3.0f)) (Vector3(10.0f, plateau, 14.0f)) Mud)
+
+              // The draws: the only walkable way up, about 13 degrees.
+              yield! mirrored (fun sign ->
+                  LevelDsl.ramp (Vector3(sign * drawX, shingleTop, -4.0f)) (Vector3(sign * drawX, plateau, 10.0f)) 10.0f Mud)
+
+              // Plateau behind the crest, carrying the trench and the bunkers.
+              LevelDsl.block (Vector3(0.0f, plateau * 0.5f, 21.0f)) (Vector3(68.0f, plateau, 22.0f)) Mud
+              // Trench walls: a channel at plateau level between two parapets.
+              // Both are broken behind each draw, so the route runs beach, draw,
+              // trench, plateau without ever being a dead end.
+              LevelDsl.block (Vector3(0.0f, plateau + 0.7f, 11.0f)) (Vector3(27.0f, 1.4f, 2.0f)) Sandbag
+              LevelDsl.block (Vector3(0.0f, plateau + 0.7f, 18.0f)) (Vector3(27.0f, 1.4f, 2.0f)) Sandbag
+
+              // Bunkers overlooking the beach, with a real embrasure: a gap left
+              // between a low front wall and a high one.
+              yield! mirrored (fun sign -> LevelDsl.block (Vector3(sign * bunkerX, plateau + 0.45f, 20.5f)) (Vector3(9.0f, 0.9f, 1.0f)) Brick)
+              yield! mirrored (fun sign -> LevelDsl.block (Vector3(sign * bunkerX, plateau + 2.3f, 20.5f)) (Vector3(9.0f, 1.2f, 1.0f)) Brick)
+              yield! mirrored (fun sign -> LevelDsl.block (Vector3(sign * bunkerX - 4.0f, plateau + 1.45f, 22.5f)) (Vector3(1.0f, 2.9f, 5.0f)) Brick)
+              yield! mirrored (fun sign -> LevelDsl.block (Vector3(sign * bunkerX + 4.0f, plateau + 1.45f, 22.5f)) (Vector3(1.0f, 2.9f, 5.0f)) Brick)
+
+              // Focal point on the bluff top, the one landmark visible from the sand.
+              LevelDsl.sandbags (Vector3(-5.0f, plateau, 6.0f)) (Vector3(5.0f, plateau, 6.0f)) None
+              LevelDsl.block (Vector3(0.0f, plateau + 0.5f, 8.0f)) (Vector3(3.0f, 1.0f, 2.0f)) Metal
+
+              // Beach clutter: hedgehogs staggered so no single line of them
+              // gives a clean lane down the sand.
+              hedgehog -24.0f -18.0f
+              hedgehog -14.0f -14.0f
+              hedgehog -6.0f -19.0f
+              hedgehog 6.0f -19.0f
+              hedgehog 14.0f -14.0f
+              hedgehog 24.0f -18.0f
+              // A wrecked landing craft: the only hard cover in the open middle.
+              LevelDsl.block (Vector3(0.0f, sandY -12.0f + 0.9f, -12.0f)) (Vector3(9.0f, 1.8f, 3.4f)) Metal
+              LevelDsl.block (Vector3(-4.0f, sandY -12.0f + 1.6f, -12.0f)) (Vector3(1.2f, 3.2f, 3.4f)) Metal
+
+              // Sandbagged firing steps flanking each draw mouth.
+              yield! mirrored (fun sign ->
+                  LevelDsl.sandbags (Vector3(sign * 13.5f, shingleTop, -3.0f)) (Vector3(sign * 13.5f, shingleTop, 2.0f)) None)
+
+              LevelDsl.spawnSquad Allies 8 (Vector3(-drawX, 0.0f, 28.0f))
+              LevelDsl.spawnSquad Axis 8 (Vector3(drawX, 0.0f, 28.0f))
+              LevelDsl.objective "Hold the draws" ]
+        LevelDsl.level "Omaha Draw" items |> LevelCompile.compile
+
+    let all = [| paintballArena; scrapDepot; canalYard; battlefield; trainingYard; stalingradStreet; omahaDraw |]
 
     let byName name = all |> Array.tryFind (fun level -> level.Name = name)
