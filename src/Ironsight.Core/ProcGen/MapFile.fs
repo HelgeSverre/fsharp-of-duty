@@ -29,10 +29,12 @@ module MapFile =
     let private materialTag = function
         | Brick -> 0uy | Plaster -> 1uy | Wood -> 2uy | Mud -> 3uy | Snow -> 4uy
         | Sandbag -> 5uy | Metal -> 6uy | UniformOlive -> 7uy | UniformFeldgrau -> 8uy | Skin -> 9uy
+        | Water -> 10uy
 
     let private materialOf = function
         | 0uy -> Brick | 1uy -> Plaster | 2uy -> Wood | 3uy -> Mud | 4uy -> Snow
         | 5uy -> Sandbag | 6uy -> Metal | 7uy -> UniformOlive | 8uy -> UniformFeldgrau | 9uy -> Skin
+        | 10uy -> Water
         | tag -> failwith $"unknown material tag {tag}"
 
     let private teamTag = function Allies -> 0uy | Axis -> 1uy
@@ -211,11 +213,15 @@ module MapFile =
             writer.Write 12uy
             writeVector3 writer center
             writeVector2 writer size
-            let cells = max 1 cells
+            // Must match readItem's accepted range (1..512) so every encoded file decodes.
+            let cells = Math.Clamp(cells, 1, 512)
             writer.Write cells
             writer.Write(materialTag material)
             for sample in heightSamples center size cells height do
                 writer.Write sample
+        | WaterPlane height ->
+            writer.Write 13uy
+            writer.Write height
 
     let private readItem (reader: BinaryReader) =
         match reader.ReadByte() with
@@ -271,6 +277,7 @@ module MapFile =
             let material = materialOf (reader.ReadByte())
             let samples = Array.init ((cells + 1) * (cells + 1)) (fun _ -> reader.ReadSingle())
             Heightfield(center, size, cells, heightLookup center size cells samples, material)
+        | 13uy -> WaterPlane(reader.ReadSingle())
         | tag -> failwith $"unknown map item tag {tag} (map made by a newer game version?)"
 
     let encode (spec: LevelSpec) =
@@ -307,6 +314,7 @@ module MapFile =
             with
             | :? EndOfStreamException -> Error "truncated map file"
             | Failure message -> Error message
+            | error -> Error $"malformed map file: {error.Message}"
 
     let hash (bytes: byte array) =
         Convert.ToHexString(SHA256.HashData bytes).ToLowerInvariant()

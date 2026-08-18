@@ -50,6 +50,8 @@ let planY (z: float32) = margin + (bounds.Max.Z - z) * scale
 let elevationBase = margin * 2.0f + planHeight + elevationHeight
 let elevationY (y: float32) = elevationBase - (y - min 0.0f bounds.Min.Y) * scale
 
+let waterLevel = defaultArg level.WaterLevel Single.NegativeInfinity
+
 let materialName material =
     match material with
     | Brick -> "brick" | Plaster -> "plaster" | Wood -> "wood" | Mud -> "mud"
@@ -117,7 +119,10 @@ level.Collision.Triangles
     // Walkable faces are drawn solid; anything past the slope limit is hatched
     // dark, because "can I climb this" is the plan view's other job.
     let walkable = t.Normal.Y >= Tuning.MaxSlopeCosine
-    let fill = if walkable then heightFill mid else "#2a1c1c"
+    let fill =
+        if mid < waterLevel then "#1d4a5c"           // under the sea
+        elif walkable then heightFill mid
+        else "#2a1c1c"
     line $"""<polygon class="brush" points="%s{points}" fill="%s{fill}" fill-opacity="%.2f{opacity}"><title>%s{materialName t.Material} y %.2f{mid} %s{if walkable then "walkable" else "too steep"}</title></polygon>""")
 line "</g>"
 

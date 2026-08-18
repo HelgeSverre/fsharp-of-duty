@@ -35,18 +35,20 @@ module Movement =
     /// capsule footprint rather than a single point, so standing on the lip of a
     /// ledge still finds support. Returns the highest surface at or below the
     /// feet, which is what you are standing on.
-    let surfaceUnder (level: Level) (position: Vector3) =
+    // Hoisted: surfaceUnder runs several times per entity per tick.
+    let private probeOffsets =
         let radius = Tuning.PlayerRadius * 0.7f
-        let probes =
-            [| Vector3.Zero
-               Vector3(radius, 0.0f, 0.0f); Vector3(-radius, 0.0f, 0.0f)
-               Vector3(0.0f, 0.0f, radius); Vector3(0.0f, 0.0f, -radius) |]
+        [| Vector3.Zero
+           Vector3(radius, 0.0f, 0.0f); Vector3(-radius, 0.0f, 0.0f)
+           Vector3(0.0f, 0.0f, radius); Vector3(0.0f, 0.0f, -radius) |]
+
+    let surfaceUnder (level: Level) (position: Vector3) =
         // Start slightly above the feet so a surface flush with them still registers.
         let ceiling = position.Y + 0.055f
         let triangles = LevelCompile.trianglesNear position (Tuning.PlayerRadius + 0.6f) level
         let mutable bestHeight = Single.NegativeInfinity
         let mutable bestNormal = Vector3.UnitY
-        for offset in probes do
+        for offset in probeOffsets do
             let origin = position + offset + Vector3(0.0f, 0.6f, 0.0f)
             for triangle in triangles do
                 // Downward-facing triangles are ceilings, never support.
@@ -79,8 +81,7 @@ module Movement =
             else
                 let stepped =
                     if wasGrounded then
-                        // Up to half a metre, which clears a trench fire step.
-                        [ 0.1f; 0.2f; 0.3f; 0.4f; 0.5f ]
+                        [ 0.1f; 0.2f; 0.3f; 0.4f ]
                         |> List.tryPick (fun height ->
                             let candidate = Vector3(horizontal.X, oldPosition.Y + height, horizontal.Z)
                             if collides level stance candidate then None else Some candidate)
@@ -119,8 +120,17 @@ module Movement =
         let pitch = Math.Clamp(player.Pitch + input.Look.Y, -1.45f, 1.45f)
         let move = if input.Move.LengthSquared() > 1.0f then Vector2.Normalize input.Move else input.Move
         let stance, crouchLatched, crouchPrevHeld = requestedStance player input.Buttons
-        let wantsSprint = hasButton InputButtons.Sprint input.Buttons && move.Y > 0.1f && stance = Standing
-        let targetSpeed = Tuning.WalkSpeed * (if wantsSprint then Tuning.SprintMultiplier else 1.0f)
+        // Feet below the sea surface: wading. Applies on the server and in
+        // client prediction alike, since both run this same step.
+        let wading =
+            match level.WaterLevel with
+            | Some water -> player.Position.Y < water - 0.05f
+            | None -> false
+        let wantsSprint = hasButton InputButtons.Sprint input.Buttons && move.Y > 0.1f && stance = Standing && not wading
+        let targetSpeed =
+            Tuning.WalkSpeed
+            * (if wantsSprint then Tuning.SprintMultiplier else 1.0f)
+            * (if wading then Tuning.WadeSpeedMultiplier else 1.0f)
         let wishDirection = MathEx.normalizedOrZero (MathEx.yawRight yaw * move.X + MathEx.yawForward yaw * move.Y)
         let targetVelocity = wishDirection * targetSpeed
         let onGround = grounded level player.Position

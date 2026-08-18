@@ -61,6 +61,44 @@ module MapFileTests =
         unknownTag[4 + 1 + 1 + nameLength + 4] <- 250uy
         expectError unknownTag
 
+    [<Fact>]
+    let ``resolve rejects malformed map hashes before touching disk or network`` () =
+        let unreachable = Uri "ws://127.0.0.1:1/play"
+        let expectError hash =
+            match MapStore.resolve unreachable hash with
+            | Error _ -> ()
+            | Ok level -> Assert.Fail $"expected rejection for '{hash}', resolved '{level.Name}'"
+        expectError "../../../../etc/passwd"
+        expectError "..%2f..%2fevil"
+        expectError (String.replicate 64 "Z")
+        expectError ""
+        // Well-formed but unknown: still an error, just not a "malformed hash" one.
+        expectError (String.replicate 64 "a")
+
+    [<Fact>]
+    let ``decode returns an error for a malformed string length prefix`` () =
+        let bytes = Array.concat [ "IRNM"B; [| 1uy |]; Array.create 6 0xFFuy ]
+        match MapFile.decode bytes with
+        | Error _ -> ()
+        | Ok spec -> Assert.Fail $"expected rejection, decoded '{spec.Name}'"
+
+    [<Fact>]
+    let ``oversized heightfield cell counts are clamped to a decodable file`` () =
+        let spec =
+            LevelDsl.level
+                "Clamp Test"
+                [ LevelDsl.street 20.0f 10.0f Mud
+                  LevelDsl.heightfield
+                      (System.Numerics.Vector3(0.0f, 0.0f, 0.0f))
+                      (System.Numerics.Vector2(10.0f, 10.0f))
+                      600
+                      (fun _ _ -> 1.0f)
+                      Mud ]
+        let bytes = MapFile.encode spec
+        match MapFile.decode bytes with
+        | Error message -> Assert.Fail message
+        | Ok decoded -> Assert.Equal(2, decoded.Items.Length)
+
     let private startServer () =
         let app = Program.build [||] 0
         app.StartAsync().GetAwaiter().GetResult()

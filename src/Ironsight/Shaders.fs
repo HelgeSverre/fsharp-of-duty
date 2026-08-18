@@ -213,6 +213,11 @@ vec3 materialColor() {
     if (vMaterial == 7) return vec3(0.25,0.31,0.14) * (0.90 + 0.10*noise(p*5.0));
     if (vMaterial == 8) return vec3(0.27,0.30,0.26) * (0.90 + 0.10*noise(p*5.0));
     if (vMaterial == 9) return vec3(0.61,0.43,0.31) * (0.93 + 0.07*noise(p*4.0));
+    if (vMaterial == 10) {
+        // Sea: deep blue-green with a moving noise shimmer along the surface.
+        float ripple = noise(p * 2.2) * 0.5 + noise(p * 7.0) * 0.5;
+        return mix(vec3(0.10,0.20,0.24), vec3(0.22,0.36,0.38), ripple);
+    }
     return vec3(0.24,0.26,0.25);
 }
 void main() {

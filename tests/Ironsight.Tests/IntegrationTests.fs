@@ -159,51 +159,39 @@ module IntegrationTests =
             app |> Option.iter (fun host -> host.StopAsync().GetAwaiter().GetResult())
 
     /// The end-to-end gate for the terrain work: a real client, over a real
-    /// socket, against the authoritative server, physically climbing a slope.
-    /// Everything below it — triangle collision, the slope limit, the ground
-    /// probe, client prediction — has to agree for this to pass.
+    /// socket, against the authoritative server, wading out of the sea and
+    /// climbing the draw. Water damping, triangle collision, the slope limit
+    /// and client prediction all have to agree for this to pass.
     [<Fact>]
     [<Trait("Category", Integration)>]
-    let ``a player walks up the Omaha draw and gains the bluff`` () =
+    let ``an attacker wades ashore and climbs the draw`` () =
         // The server picks its level from the environment at build time.
         let previous = Environment.GetEnvironmentVariable "IRONSIGHT_LEVEL"
         Environment.SetEnvironmentVariable("IRONSIGHT_LEVEL", "omaha")
         let app, uri = try startServer () finally Environment.SetEnvironmentVariable("IRONSIGHT_LEVEL", previous)
         try
-            let mutable startHeight = 0.0f
             MatchScript.run uri TeamDeathmatch [
-                Join "Climber"
+                Join "Climber"   // first in: Allies, the assaulting side
                 Join "Anchor"
                 WaitUntil("the match reaches Playing", 30.0, fun snapshot -> snapshot.Phase = Playing)
-                Expect("the climber spawns on the plateau", fun snapshot ->
+                Expect("the attacker respawns in the surf", fun snapshot ->
                     match MatchScript.selfOf "Climber" snapshot with
-                    | Some self ->
-                        startHeight <- self.Position.Y
-                        self.Position.Y > 5.0f
+                    | Some self -> self.Position.Y < 0.5f
                     | None -> false)
 
-                // Spawns sit outboard of the draws, so cross to the channel at
-                // x = -13 first. Yaw pi/2 faces +X.
-                Face("Climber", MathF.PI / 2.0f)
+                // West along the surf until level with the draw's breach lane.
+                Face("Climber", -MathF.PI / 2.0f)
                 Move("Climber", Vector2(0.0f, 1.0f))
-                WaitUntil("the climber reaches the draw", 35.0, fun snapshot ->
+                WaitUntil("the attacker lines up on the draw", 35.0, fun snapshot ->
                     match MatchScript.selfOf "Climber" snapshot with
-                    | Some self -> self.Position.X > -14.5f
-                    | None -> false)
-                // Yaw 0 faces -Z, which is down the draw toward the sea.
-                Face("Climber", 0.0f)
-                WaitUntil("the climber descends to the beach", 40.0, fun snapshot ->
-                    match MatchScript.selfOf "Climber" snapshot with
-                    | Some self -> self.Position.Y < 2.0f
+                    | Some self -> self.Position.X < -11.0f
                     | None -> false)
 
-                // Turn inland and climb back up the way it came.
+                // Inland, across the sand and up the draw. Yaw pi faces +Z.
                 Face("Climber", MathF.PI)
-                Wait 1.0
-                Move("Climber", Vector2(0.0f, 1.0f))
-                WaitUntil("the climber regains the bluff", 40.0, fun snapshot ->
+                WaitUntil("the attacker gains the crest", 45.0, fun snapshot ->
                     match MatchScript.selfOf "Climber" snapshot with
-                    | Some self -> self.Position.Y > 5.0f
+                    | Some self -> self.Position.Y > 6.0f
                     | None -> false)
 
                 Leave "Climber"

@@ -64,6 +64,8 @@ module Ballistics =
         | Brick -> 8.0f
         | Metal -> 20.0f
         | UniformOlive | UniformFeldgrau | Skin -> 0.5f
+        // Render-only; never in the collision mesh, kept for match totality.
+        | Water -> 0.0f
 
     let private soldierHit origin direction index (soldier: Soldier) =
         if soldier.Health <= Units.health 0.0f then None

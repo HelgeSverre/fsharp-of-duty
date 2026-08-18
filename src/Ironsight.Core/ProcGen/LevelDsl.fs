@@ -20,6 +20,9 @@ type LevelItem =
     /// `cells` is the sample count per side; the surface is closed by a skirt so
     /// it behaves as a solid for penetration.
     | Heightfield of center: Vector3 * size: Vector2 * cells: int * height: (float32 -> float32 -> float32) * material: Material
+    /// Sea level. One per map; the surface is drawn across the whole level
+    /// and anyone wading below it moves slower.
+    | WaterPlane of height: float32
     | SpawnSquad of team: Team * count: int * center: Vector3
     | Objective of text: string
     | MissionRule of condition: TriggerCondition * action: ScriptAction
@@ -40,6 +43,7 @@ module LevelDsl =
     let block center size material = Block(center, size, material)
     let ramp startPoint endPoint width material = Ramp(startPoint, endPoint, width, material)
     let heightfield center size cells height material = Heightfield(center, size, cells, height, material)
+    let water height = WaterPlane height
     let spawnSquad team count center = SpawnSquad(team, count, center)
     let objective text = Objective text
     let trigger condition action = MissionRule(condition, action)

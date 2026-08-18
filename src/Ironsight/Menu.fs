@@ -5,10 +5,25 @@ open Ironsight
 
 type MenuPage = Main | NameEntry | OfflineMaps | ServerList | OnlineLoadout
 
+/// Live room info fetched from the server's /api/leaderboard.
+type RoomStatus =
+    { Mode: GameMode
+      Phase: string
+      Players: int
+      Capacity: int }
+
+type ServerStatus =
+    { PingMs: int
+      Rooms: RoomStatus array }
+
 type StartMenuState =
     { Page: MenuPage
       Selected: int
-      PlayerName: string }
+      PlayerName: string
+      /// Room chosen on the server list; the mode sent in the online hello.
+      OnlineMode: GameMode
+      /// None until (or unless) the leaderboard probe answers.
+      ServerStatus: ServerStatus option }
 
 type MenuInput =
     { Up: bool
@@ -24,7 +39,7 @@ type MenuInput =
 
 type StartMenuAction =
     | StartOffline of map: string
-    | StartOnline of weaponName: string
+    | StartOnline of weaponName: string * mode: GameMode
     | OpenSettings
     | ExitGame
 
@@ -54,7 +69,9 @@ module StartMenu =
         let sanitized = Multiplayer.sanitizeName playerName
         { Page = Main
           Selected = 0
-          PlayerName = if System.String.IsNullOrWhiteSpace sanitized then "Soldier" else sanitized }
+          PlayerName = if System.String.IsNullOrWhiteSpace sanitized then "Soldier" else sanitized
+          OnlineMode = TeamDeathmatch
+          ServerStatus = None }
 
     let initial = create "Soldier"
 
@@ -63,7 +80,16 @@ module StartMenu =
         | Main -> [| $"CALLSIGN  {state.PlayerName}"; "QUICK PLAY"; "OFFLINE PLAY / MAP SELECT"; "JOIN ONLINE"; "SETTINGS"; "QUIT" |]
         | NameEntry -> [| $"> {state.PlayerName}_" |]
         | OfflineMaps -> [| "PAINTBALL KILLHOUSE"; "SCRAP DEPOT"; "CANAL YARD"; "OMAHA DRAW"; "BACK" |]
-        | ServerList -> [| "FLY.IO  -  FSHARP-OF-DUTY.FLY.DEV"; "BACK" |]
+        | ServerList ->
+            match state.ServerStatus with
+            | Some status ->
+                let rows =
+                    status.Rooms
+                    |> Array.map (fun room ->
+                        let mode = if room.Mode = FreeForAll then "FREE FOR ALL   " else "TEAM DEATHMATCH"
+                        $"{mode}  {room.Players}/{room.Capacity}  {room.Phase.ToUpperInvariant()}")
+                Array.append rows [| "BACK" |]
+            | None -> [| "FLY.IO  -  FSHARP-OF-DUTY.FLY.DEV  (PINGING...)"; "BACK" |]
         | OnlineLoadout ->
             Array.append (Tuning.onlineWeapons |> Array.map (fun weapon -> weapon.Name.ToUpperInvariant())) [| "BACK" |]
 
@@ -72,7 +98,10 @@ module StartMenu =
         | Main -> "SELECT A DEPLOYMENT"
         | NameEntry -> "TYPE YOUR CALLSIGN, THEN PRESS ENTER"
         | OfflineMaps -> "OFFLINE MAP SELECT"
-        | ServerList -> "SERVER LIST"
+        | ServerList ->
+            match state.ServerStatus with
+            | Some status -> $"FSHARP-OF-DUTY.FLY.DEV  -  PING {status.PingMs} MS"
+            | None -> "SERVER LIST"
         | OnlineLoadout -> "SELECT ONLINE LOADOUT"
 
     let private hoveredIndex (width: int) (height: int) (count: int) (pointer: Vector2) =
@@ -131,8 +160,15 @@ module StartMenu =
             | OfflineMaps, 2 -> struct(next, Some(StartOffline "canal"))
             | OfflineMaps, 3 -> struct(next, Some(StartOffline "omaha"))
             | OfflineMaps, _ -> struct({ next with Page = Main; Selected = 0 }, None)
-            | ServerList, 0 -> struct({ next with Page = OnlineLoadout; Selected = 0 }, None)
-            | ServerList, _ -> struct({ next with Page = Main; Selected = 0 }, None)
+            | ServerList, index ->
+                // One row per live room; without status a single default row
+                // still joins the Team Deathmatch room.
+                let rooms = state.ServerStatus |> Option.map (fun status -> status.Rooms) |> Option.defaultValue [||]
+                let roomRows = max 1 rooms.Length
+                if index < roomRows then
+                    let mode = rooms |> Array.tryItem index |> Option.map (fun room -> room.Mode) |> Option.defaultValue TeamDeathmatch
+                    struct({ next with Page = OnlineLoadout; Selected = 0; OnlineMode = mode }, None)
+                else struct({ next with Page = Main; Selected = 0 }, None)
             | OnlineLoadout, index when index < Tuning.onlineWeapons.Length ->
-                struct(next, Some(StartOnline Tuning.onlineWeapons[index].Name))
+                struct(next, Some(StartOnline(Tuning.onlineWeapons[index].Name, state.OnlineMode)))
             | OnlineLoadout, _ -> struct({ next with Page = ServerList; Selected = 0 }, None)

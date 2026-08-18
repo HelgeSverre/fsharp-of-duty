@@ -100,7 +100,25 @@ module ClientTests =
         let struct (loadout, _) = StartMenu.update 1280 720 activate servers
         Assert.Equal(OnlineLoadout, loadout.Page)
         let struct (_, onlineAction) = StartMenu.update 1280 720 activate { loadout with Selected = 3 }
-        Assert.Equal(Some(StartOnline "Kar98k Sniper"), onlineAction)
+        Assert.Equal(Some(StartOnline("Kar98k Sniper", TeamDeathmatch)), onlineAction)
+
+        // A populated server list offers one row per room; picking the second
+        // row carries the Free For All mode through to the online hello.
+        let status =
+            { PingMs = 42
+              Rooms =
+                [| { Mode = TeamDeathmatch; Phase = "Playing"; Players = 3; Capacity = 16 }
+                   { Mode = FreeForAll; Phase = "Waiting"; Players = 1; Capacity = 16 } |] }
+        let listed = { StartMenu.initial with Page = ServerList; ServerStatus = Some status }
+        let rows = StartMenu.items listed
+        Assert.Equal(3, rows.Length)
+        Assert.Contains("3/16", rows[0])
+        Assert.Contains("FREE FOR ALL", rows[1])
+        let struct (ffaLoadout, _) = StartMenu.update 1280 720 activate { listed with Selected = 1 }
+        Assert.Equal(OnlineLoadout, ffaLoadout.Page)
+        Assert.Equal(FreeForAll, ffaLoadout.OnlineMode)
+        let struct (_, ffaAction) = StartMenu.update 1280 720 activate { ffaLoadout with Selected = 1 }
+        Assert.Equal(Some(StartOnline("Thompson", FreeForAll)), ffaAction)
 
         let struct (editing, _) = StartMenu.update 1280 720 activate (StartMenu.create "Old")
         let struct (edited, _) =

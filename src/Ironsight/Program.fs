@@ -21,7 +21,7 @@ module Program =
     [<EntryPoint>]
     let main args =
         let mutable onlineRequested = args |> Array.contains "--online"
-        let requestedMode = if args |> Array.contains "--ffa" then FreeForAll else TeamDeathmatch
+        let mutable selectedOnlineMode = if args |> Array.contains "--ffa" then FreeForAll else TeamDeathmatch
         let mutable playerName =
             argumentValue "--name" args
             |> Option.defaultValue (Environment.GetEnvironmentVariable "USER" |> Option.ofObj |> Option.defaultValue "Soldier")
@@ -51,6 +51,8 @@ module Program =
         let mutable lastOnlineEventId = 0L
         let mutable onlineSnapshot: OnlineSnapshot option = None
         let mutable onlineLevel: Level option = None
+        let mutable serverStatusTask: Task<ServerStatus option> option = None
+        let mutable serverStatusAt = DateTimeOffset.MinValue
         let mutable predictedFireCooldown = 0.0f
         let mutable predictedFireHeld = false
         let mutable subtitle: struct (string * float32<s>) option = None
@@ -87,7 +89,9 @@ module Program =
             |> Option.map (fun path ->
                 match Ironsight.ProcGen.MapFile.decode (IO.File.ReadAllBytes path) with
                 | Ok spec -> Sim.createRoundWorldFor (Ironsight.ProcGen.LevelCompile.compile spec) 0x1A0B3CUL
-                | Error message -> failwith $"--map {path}: {message}")
+                | Error message ->
+                    eprintfn $"--map {path}: {message}"
+                    exit 1)
         let mutable initialWorld =
             customMapWorld
             |> Option.defaultWith (fun () -> createOfflineWorld (requestedMap |> Option.defaultValue "paintball"))
@@ -120,9 +124,39 @@ module Program =
                     window.Title <- "IRONSIGHT — MAP DOWNLOAD FAILED"
                     false
 
+        /// Ping the server's leaderboard endpoint: one HTTP round trip gives
+        /// both the latency figure and the per-room player counts.
+        let fetchServerStatus () =
+            task {
+                try
+                    let ws = OnlineDefaults.serverUri ()
+                    let scheme = if ws.Scheme = "wss" then "https" else "http"
+                    let target = UriBuilder(ws, Scheme = scheme, Path = "/api/leaderboard").Uri
+                    use http = new System.Net.Http.HttpClient(Timeout = TimeSpan.FromSeconds 5.0)
+                    let clock = System.Diagnostics.Stopwatch.StartNew()
+                    let! json = http.GetStringAsync target
+                    let ping = int clock.ElapsedMilliseconds
+                    use document = System.Text.Json.JsonDocument.Parse json
+                    let root = document.RootElement
+                    let capacity =
+                        match root.TryGetProperty "capacityPerRoom" with
+                        | true, value -> value.GetInt32()
+                        | _ -> 16
+                    let rooms =
+                        root.GetProperty("rooms").EnumerateArray()
+                        |> Seq.map (fun room ->
+                            { Mode = (if room.GetProperty("mode").GetString() = "FreeForAll" then FreeForAll else TeamDeathmatch)
+                              Phase = room.GetProperty("phase").GetString()
+                              Players = room.GetProperty("connectedPlayers").GetInt32()
+                              Capacity = capacity })
+                        |> Seq.toArray
+                    return Some { PingMs = ping; Rooms = rooms }
+                with _ -> return None
+            }
+
         let beginReconnect generation token =
             task {
-                let client = new OnlineClient(OnlineDefaults.serverUri (), playerName, requestedMode, selectedOnlineWeapon, ?resumeToken = token)
+                let client = new OnlineClient(OnlineDefaults.serverUri (), playerName, selectedOnlineMode, selectedOnlineWeapon, ?resumeToken = token)
                 try
                     do! client.ConnectAsync()
                     return struct (generation, Some client)
@@ -168,7 +202,7 @@ module Program =
             with error -> Console.Error.WriteLine($"Audio unavailable: {error.Message}")
             if onlineRequested then
                 try
-                    let client = new OnlineClient(OnlineDefaults.serverUri (), playerName, requestedMode, selectedOnlineWeapon)
+                    let client = new OnlineClient(OnlineDefaults.serverUri (), playerName, selectedOnlineMode, selectedOnlineWeapon)
                     client.ConnectAsync().GetAwaiter().GetResult()
                     if applyServerMap client then
                         onlineClient <- Some client
@@ -200,13 +234,17 @@ module Program =
                     reconnectTask <- None
                     let struct (generation, result) = attempt.GetAwaiter().GetResult()
                     match result with
-                    | Some client when onlineRequested && generation = connectionGeneration && applyServerMap client ->
-                        onlineClient |> Option.iter closeClient
-                        onlineClient <- Some client
-                        pendingInputs.Clear()
-                        reconciledTick <- -1L
-                        lastOnlineEventId <- 0L
-                        window.Title <- $"IRONSIGHT — ONLINE — {client.ServerUri.Host}"
+                    | Some client when onlineRequested && generation = connectionGeneration ->
+                        if applyServerMap client then
+                            onlineClient |> Option.iter closeClient
+                            onlineClient <- Some client
+                            pendingInputs.Clear()
+                            reconciledTick <- -1L
+                            lastOnlineEventId <- 0L
+                            window.Title <- $"IRONSIGHT — ONLINE — {client.ServerUri.Host}"
+                        else
+                            closeClient client
+                            reconnectAfter <- DateTimeOffset.UtcNow.AddSeconds 2.0
                     | Some client -> closeClient client
                     | None when onlineRequested && generation = connectionGeneration ->
                         reconnectAfter <- DateTimeOffset.UtcNow.AddSeconds 2.0
@@ -216,6 +254,20 @@ module Program =
                 | Some inputSampler ->
                     match menu with
                     | Some state ->
+                        // Server list rows show live player counts and ping,
+                        // refreshed every few seconds while the page is open.
+                        if state.Page = ServerList then
+                            match serverStatusTask with
+                            | Some fetch when fetch.IsCompleted ->
+                                serverStatusTask <- None
+                                serverStatusAt <- DateTimeOffset.UtcNow
+                                match fetch.GetAwaiter().GetResult() with
+                                | Some status -> menu <- Some { state with ServerStatus = Some status }
+                                | None -> ()
+                            | Some _ -> ()
+                            | None when DateTimeOffset.UtcNow - serverStatusAt > TimeSpan.FromSeconds 3.0 ->
+                                serverStatusTask <- Some(fetchServerStatus ())
+                            | None -> ()
                         match settingsScreen with
                         | Some screen ->
                             let menuInput = inputSampler.ConsumeMenuInput()
@@ -243,10 +295,11 @@ module Program =
                                     menu <- None
                                     inputSampler.SetMenuActive false
                                     window.Title <- $"IRONSIGHT — {current.Level.Name}"
-                                | StartOnline weaponName ->
+                                | StartOnline(weaponName, mode) ->
                                     connectionGeneration <- connectionGeneration + 1
                                     onlineRequested <- true
                                     selectedOnlineWeapon <- weaponName
+                                    selectedOnlineMode <- mode
                                     reconnectAfter <- DateTimeOffset.MinValue
                                     menu <- None
                                     inputSampler.SetMenuActive false

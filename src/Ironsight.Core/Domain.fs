@@ -96,7 +96,7 @@ type Soldier =
       Suppression: float32
       AnimPhase: float32 }
 
-type Material = Brick | Plaster | Wood | Mud | Snow | Sandbag | Metal | UniformOlive | UniformFeldgrau | Skin
+type Material = Brick | Plaster | Wood | Mud | Snow | Sandbag | Metal | UniformOlive | UniformFeldgrau | Skin | Water
 
 type Brush =
     { Bounds: Aabb
@@ -171,6 +171,9 @@ type Level =
       MountedGuns: MountedGun array
       MissionRules: ScriptRule array
       Nav: NavNode array
+      /// Sea/flood height. Render-only surface; the sim reads it to slow
+      /// anyone wading below it.
+      WaterLevel: float32 option
       Vertices: MeshVertex array
       Indices: uint32 array }
 

@@ -20,6 +20,9 @@ module Tuning =
     /// act as a wall without an invisible box around it.
     let MaxSlopeAngle = 45.0f
     let MaxSlopeCosine = MathF.Cos(MaxSlopeAngle * MathF.PI / 180.0f)
+    /// Speed factor while standing below the water line. Wading is slow and
+    /// loud on purpose: the shallows trade speed for a lower silhouette.
+    let WadeSpeedMultiplier = 0.55f
     let StandingHeight = 1.8f
     let CrouchedHeight = 1.3f
     let ProneHeight = 0.6f

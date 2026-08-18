@@ -27,6 +27,11 @@ module MapStore =
 
     let private cachePath hash = Path.Combine(cacheDir (), hash + MapFile.Extension)
 
+    /// A content hash is exactly 64 lowercase hex chars (SHA-256). This is what makes it
+    /// safe to use directly as a filename (no path traversal) and as a URL path segment.
+    let private validHash (hash: string) =
+        hash.Length = 64 && hash |> Seq.forall (fun c -> Char.IsAsciiDigit c || (c >= 'a' && c <= 'f'))
+
     let private compileVerified (expectedHash: string) (bytes: byte array) =
         if MapFile.hash bytes <> expectedHash then Error "map bytes do not match the announced hash"
         else
@@ -65,9 +70,12 @@ module MapStore =
 
     /// Resolve the announced map. `hash` comes from the server's welcome.
     let resolve (serverUri: Uri) (hash: string) : Result<Level, string> =
-        match Map.tryFind hash builtins.Value with
-        | Some level -> Ok level
-        | None ->
-            match fromCache hash with
+        if not (validHash hash) then
+            Error "server sent a malformed map hash"
+        else
+            match Map.tryFind hash builtins.Value with
             | Some level -> Ok level
-            | None -> download serverUri hash
+            | None ->
+                match fromCache hash with
+                | Some level -> Ok level
+                | None -> download serverUri hash

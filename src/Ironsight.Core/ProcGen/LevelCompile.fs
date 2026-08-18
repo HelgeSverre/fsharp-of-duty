@@ -184,6 +184,17 @@ module LevelCompile =
               quad lsA lsB usB usA material   // start cap
               quad lfA ufA ufB lfB material ] // end cap
 
+    /// The sea surface: one quad across the bounds at the water height. Render
+    /// mesh only — it must never enter the collision mesh, or it would read as
+    /// walkable ground floating over the seabed.
+    let waterTriangles (bounds: Aabb) (height: float32) =
+        let a = Vector3(bounds.Min.X, height, bounds.Min.Z)
+        let b = Vector3(bounds.Max.X, height, bounds.Min.Z)
+        let c = Vector3(bounds.Max.X, height, bounds.Max.Z)
+        let d = Vector3(bounds.Min.X, height, bounds.Max.Z)
+        [| { A = a; B = c; C = b; Normal = Vector3.UnitY; Material = Water }
+           { A = a; B = d; C = c; Normal = Vector3.UnitY; Material = Water } |]
+
     let private triangleBounds (triangle: Tri) =
         { Min = Vector3.Min(triangle.A, Vector3.Min(triangle.B, triangle.C))
           Max = Vector3.Max(triangle.A, Vector3.Max(triangle.B, triangle.C)) }
@@ -447,7 +458,7 @@ module LevelCompile =
                         // ramps: a 2 m rise over 2 m is a 45 degree slope if the
                         // midpoint is halfway up, and a wall if it is not.
                         let climbable =
-                            rise <= 0.55f
+                            rise <= 0.45f
                             || (rise <= spacing * MathF.Tan(Tuning.MaxSlopeAngle * MathF.PI / 180.0f)
                                 && (match surfaceColumn collision ((position.X + other.X) * 0.5f) ((position.Z + other.Z) * 0.5f) with
                                     | ValueSome(struct (midHeight, _)) -> abs (midHeight - (position.Y + other.Y) * 0.5f) <= 0.35f
@@ -476,6 +487,9 @@ module LevelCompile =
                         abs (x - center.X) <= size.X * 0.5f && abs (z - center.Z) <= size.Y * 0.5f)
                 | Trench(startPoint, endPoint, trenchWidth) ->
                     // Cut the channel plus its banks, so the spoil has somewhere to sit.
+                    // Must cover the banks emitted in the Trench arm below
+                    // (width/2 + 0.3 offset + 0.3 half-thickness) or the ground
+                    // grid leaves a hole beside the trench.
                     let reach = trenchWidth * 0.5f + 0.95f
                     Some(fun x z ->
                         let point = Vector3(x, 0.0f, z)
@@ -502,7 +516,7 @@ module LevelCompile =
                             if lengthSquared < 0.000001f then 0.0f
                             else MathEx.clamp01 (Vector3.Dot(point - startPoint, segment) / lengthSquared)
                         Vector3.Distance(MathEx.horizontal (startPoint + segment * t), point) <= reach
-                    Some(inside, min startPoint.Y endPoint.Y - 0.9f)
+                    Some(inside, (min startPoint.Y endPoint.Y) - 0.8f)
                 | _ -> None)
         let groundCell = 2.0f
         let groundStepsX = max 1 (int (MathF.Ceiling(width * 2.0f / groundCell)))
@@ -533,7 +547,7 @@ module LevelCompile =
             | None -> if team = Allies then lineNormal else -lineNormal
         for item in spec.Items do
             match item with
-            | Street _ | Objective _ | MissionRule _ -> ()
+            | Street _ | Objective _ | MissionRule _ | WaterPlane _ -> ()
             | Block(center, size, material) ->
                 brushes.Add(brush (center - size * 0.5f) (center + size * 0.5f) material)
                 // Anything at chest height is cover a soldier can crouch behind.
@@ -590,7 +604,7 @@ module LevelCompile =
                 // Deep enough to be chest-high cover standing and full cover
                 // crouched, shallow enough to climb out of: the jump apex is
                 // 1.11 m, so a deeper cut would be a trap rather than a trench.
-                let depth = 0.9f
+                let depth = 0.8f
                 let floorStart = startPoint - Vector3.UnitY * depth
                 let floorEnd = endPoint - Vector3.UnitY * depth
                 sloped.AddRange(orientedBoxTriangles (floorStart - Vector3.UnitY * 0.3f) (floorEnd - Vector3.UnitY * 0.3f) 0.3f trenchWidth Mud)
@@ -609,15 +623,18 @@ module LevelCompile =
                     let ledge = MathEx.normalizedOrZero offset * 0.35f
                     sloped.AddRange(
                         orientedBoxTriangles (floorStart + offset - ledge) (floorEnd + offset - ledge) (depth * 0.5f) 0.7f Mud)
-                    // Stand inside the channel facing out over the bank, so the
-                    // ground probe settles it on the trench floor rather than on
-                    // top of the spoil.
-                    let inside = (startPoint + endPoint) * 0.5f + offset * 0.45f
-                    covers.Add
-                        { Pos = inside
-                          PeekDir = MathEx.normalizedOrZero offset
-                          Crouch = true
-                          Owner = None }
+                    // Cover every 1.5 m along the inside of each wall, matching
+                    // sandbag lines — one point per side made a 40 m trench worth
+                    // exactly two firing positions to the AI.
+                    let run = MathEx.horizontal (endPoint - startPoint)
+                    let samples = max 1 (int (run.Length() / 1.5f))
+                    for sample in 0..samples do
+                        let along = startPoint + run * (float32 sample / float32 samples)
+                        covers.Add
+                            { Pos = along + offset * 0.45f
+                              PeekDir = MathEx.normalizedOrZero offset
+                              Crouch = true
+                              Owner = None }
             | Mg42(position, facing, owner) ->
                 let forward = MathEx.yawForward facing
                 let side = MathEx.yawRight facing
@@ -646,6 +663,7 @@ module LevelCompile =
         let brushArray = brushes.ToArray()
         let brushGrid = compileBrushGrid brushArray
         let slopedArray = sloped.ToArray()
+        let waterLevel = spec.Items |> List.tryPick (function WaterPlane height -> Some height | _ -> None)
         let vertices, indices =
             let boxVertices, boxIndices = compileMesh brushArray
             appendTriangleMesh boxVertices boxIndices slopedArray
@@ -664,6 +682,10 @@ module LevelCompile =
                 |> Array.fold (fun acc t -> max acc (max t.A.Y (max t.B.Y t.C.Y))) (brushArray |> Array.fold (fun acc item -> max acc item.Bounds.Max.Y) 0.0f)
             { Min = Vector3(bounds.Min.X, lowest, bounds.Min.Z)
               Max = Vector3(bounds.Max.X, max bounds.Max.Y (highest + 4.0f), bounds.Max.Z) }
+        let vertices, indices =
+            match waterLevel with
+            | Some height -> appendTriangleMesh vertices indices (waterTriangles worldBounds height)
+            | None -> vertices, indices
         { Name = spec.Name
           Revision = 0
           Bounds = worldBounds
@@ -693,6 +715,7 @@ module LevelCompile =
             |> List.choose (function MissionRule(condition, action) -> Some { Condition = condition; Action = action; Fired = false } | _ -> None)
             |> List.toArray
           Nav = compileNav bounds brushArray brushGrid collision
+          WaterLevel = waterLevel
           Vertices = vertices
           Indices = indices }
 
@@ -705,7 +728,10 @@ module LevelCompile =
             |> compileCollision
         let vertices, indices =
             let boxVertices, boxIndices = compileMesh brushes
-            appendTriangleMesh boxVertices boxIndices level.Sloped
+            let merged, mergedIx = appendTriangleMesh boxVertices boxIndices level.Sloped
+            match level.WaterLevel with
+            | Some height -> appendTriangleMesh merged mergedIx (waterTriangles level.Bounds height)
+            | None -> merged, mergedIx
         // Bump the revision so renderers holding cached geometry re-upload.
         { level with
             Revision = level.Revision + 1

@@ -19,7 +19,7 @@ module Program =
         member val FreeForAll = MatchHost(FreeForAll, level)
         member _.LevelName = level.Name
         member _.MapBytes = mapBytes
-        member _.MapHash = Ironsight.ProcGen.MapFile.hash mapBytes
+        member val MapHash = Ironsight.ProcGen.MapFile.hash mapBytes
 
         member this.Leaderboard() =
             Protocol.leaderboard [| this.TeamDeathmatch.Snapshot(); this.FreeForAll.Snapshot() |]

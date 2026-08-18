@@ -254,76 +254,57 @@ module GeometryTests =
                         if seen.Add neighbour then queue.Enqueue neighbour
             found
 
-        let private channels = [| -13.0f; 0.0f; 13.0f |]
-        let private spurs = [| -19.5f; -6.5f; 6.5f; 19.5f |]
-
         let private standable x z =
             match LevelCompile.surfaceColumn level.Collision x z with
             | ValueSome(struct (_, normal)) -> Movement.walkableNormal normal
             | ValueNone -> false
 
         [<Fact>]
-        let ``the surf connects to both bunkers`` () =
-            let surf = Vector3(0.0f, 0.0f, -27.0f)
-            Assert.True(reachable surf (Vector3(-22.0f, 6.5f, 24.0f)), "no route from the beach to the west bunker")
-            Assert.True(reachable surf (Vector3(22.0f, 6.5f, 24.0f)), "no route from the beach to the east bunker")
+        let ``the map has a sea and the attackers spawn in it`` () =
+            Assert.Equal(Some 0.0f, level.WaterLevel)
+            let allies = level.Spawns |> Array.filter (fun struct (o, _) -> o = Some Allies)
+            Assert.NotEmpty allies
+            let wading = allies |> Array.filter (fun struct (_, p) -> p.Y < 0.0f)
+            Assert.True(wading.Length >= allies.Length - 2, "most attacker spawns should be below the waterline")
 
         [<Fact>]
-        let ``both spawns reach the beach`` () =
-            let beach = Vector3(0.0f, 0.0f, -18.0f)
-            for struct (_, spawn) in level.Spawns do
-                Assert.True(reachable spawn beach, $"spawn at {spawn} is cut off from the beach")
-
-        [<Fact>]
-        let ``spawns land on the bluff, not on the sand`` () =
+        let ``the defenders spawn on the crest`` () =
             for struct (owner, spawn) in level.Spawns do
-                Assert.True(spawn.Y > 4.5f, $"{owner} spawn at {spawn} did not snap onto the bluff")
+                if owner = Some Axis then
+                    Assert.True(spawn.Y > 4.5f, $"Axis spawn at {spawn} is not on the bluff")
 
         [<Fact>]
-        let ``all three channels are climbable end to end`` () =
-            for x in channels do
-                for z in [ -1.0f; 2.0f; 5.0f; 8.0f ] do
-                    Assert.True(standable x z, $"channel at x={x} is not standable at z={z}")
+        let ``the surf reaches the crest through the draw and the gully`` () =
+            let surf = Vector3(-6.0f, -0.9f, -27.0f)
+            Assert.True(reachable surf (Vector3(-10.0f, 6.7f, 10.0f)), "no route up the draw")
+            Assert.True(reachable surf (Vector3(25.0f, 5.4f, 10.0f)), "no route up the gully")
+            Assert.True(reachable surf (Vector3(-4.0f, 5.4f, 25.0f)), "no route from the surf to the defender spawn")
 
         [<Fact>]
-        let ``the spurs between the channels are walls`` () =
-            // This is what makes three distinct lanes instead of one open
-            // hillside: you cannot cross from one channel to the next partway up.
-            // The wall is the band where the spur leaps to full height, just
-            // above the seawall. Higher up, a spur top is flat and walkable —
-            // reachable from the crest, which is the point.
-            for x in spurs do
-                let footholds = [ -2.0f; -1.5f; -1.0f ] |> List.filter (fun z -> standable x z)
-                Assert.True(footholds.IsEmpty, $"spur at x={x} can be climbed from the beach at z={footholds}")
-
-        [<Fact>]
-        let ``the ravine is cut deeper than the draws`` () =
-            let height x z =
-                match LevelCompile.surfaceColumn level.Collision x z with
-                | ValueSome(struct (value, _)) -> value
-                | ValueNone -> Single.NaN
+        let ``the routes up are walkable and the face between them is not`` () =
+            // The draw, the scramble and the gully all climb inside the limit.
             for z in [ 0.0f; 3.0f; 6.0f ] do
-                Assert.True(height 0.0f z < height -13.0f z - 0.5f, $"the ravine is no deeper than the west draw at z={z}")
-                Assert.True(height 0.0f z < height 13.0f z - 0.5f, $"the ravine is no deeper than the east draw at z={z}")
+                Assert.True(standable -10.0f z, $"draw not standable at z={z}")
+                Assert.True(standable 25.0f z, $"gully not standable at z={z}")
+            Assert.True(standable 14.0f 2.0f, "scramble not standable")
+            // The bare face is a wall in its steep band.
+            for x in [ -22.0f; 4.0f; 19.0f ] do
+                Assert.False(standable x -2.5f, $"bluff face climbable at x={x}")
 
         [<Fact>]
-        let ``the map is mirrored across x`` () =
-            let alliesSpawns = level.Spawns |> Array.filter (fun struct (o, _) -> o = Some Allies) |> Array.length
-            let axisSpawns = level.Spawns |> Array.filter (fun struct (o, _) -> o = Some Axis) |> Array.length
-            Assert.Equal(alliesSpawns, axisSpawns)
-            let height x z =
-                match LevelCompile.surfaceColumn level.Collision x z with
-                | ValueSome(struct (value, _)) -> value
-                | ValueNone -> Single.NaN
-            for z in [ -20.0f; -10.0f; 0.0f; 6.0f; 15.0f; 24.0f ] do
-                for x in [ 4.0f; 13.0f; 22.0f ] do
-                    let left, right = height -x z, height x z
-                    if Single.IsNaN left || Single.IsNaN right then
-                        Assert.True(Single.IsNaN left && Single.IsNaN right, $"only one side is a wall at x=+/-{x} z={z}")
-                    else
-                        // Quads split along one diagonal, which does not mirror,
-                        // so the two sides can differ by a few millimetres.
-                        Assert.True(abs (left - right) < 0.05f, $"x=+/-{x} z={z} differ: {left} vs {right}")
+        let ``the casemate roof shields its interior from above`` () =
+            // A defender inside WN72 cannot be shot from the crest behind it.
+            let inside = Vector3(-3.0f, 2.2f + 1.2f, 1.0f)
+            let crestBehind = Vector3(-14.0f, 8.4f, 11.0f)
+            Assert.False(Ballistics.lineOfSight crestBehind inside level, "casemate roof does not block fire from behind")
+
+        [<Fact>]
+        let ``the casemate slit sees along the beach but not out to sea`` () =
+            let gunner = Vector3(-3.0f, 2.2f + 1.6f, 1.0f)
+            // East along the sand: the enfilade line the 88 existed for.
+            Assert.True(Ballistics.lineOfSight gunner (Vector3(18.0f, 3.0f, 1.0f)) level, "the slit cannot see along the beach")
+            // Straight out to sea: blocked by the seaward wall.
+            Assert.False(Ballistics.lineOfSight gunner (Vector3(-3.0f, 1.0f, -14.0f)) level, "the seaward wall is open")
 
     /// Oriented geometry, real trenches and heightfields — the pieces that let a
     /// level stop being axis-aligned boxes on a flat plane.
@@ -411,3 +392,28 @@ module GeometryTests =
             match before, after with
             | ValueSome(struct (a, _)), ValueSome(struct (b, _)) -> Assert.Equal(float a, float b, 3)
             | _ -> failwith "the ramp did not survive the rebuild"
+
+        [<Fact>]
+        let ``wading below the waterline is slower than walking the same ground`` () =
+            let dry = LevelDsl.level "Dry" [ LevelDsl.street 80.0f 40.0f Mud ] |> LevelCompile.compile
+            let wet = LevelDsl.level "Wet" [ LevelDsl.street 80.0f 40.0f Mud; LevelDsl.water 1.0f ] |> LevelCompile.compile
+            let travel level =
+                let world = Sim.createTrainingWorld 3UL
+                let mutable player = { world.Player with Position = Vector3(0.0f, 0.0f, 10.0f); Yaw = MathF.PI; Velocity = Vector3.Zero }
+                let input = { Sequence = 0L; Move = Vector2(0.0f, 1.0f); Look = Vector2.Zero; Buttons = InputButtons.None }
+                for _ in 1..90 do
+                    player <- Movement.step Tuning.TickDuration input level player
+                player.Position.Z - 10.0f
+            let onLand = travel dry
+            let inWater = travel wet
+            Assert.True(inWater < onLand * 0.7f, $"wading covered {inWater} vs {onLand} on land — not slowed")
+
+        [<Fact>]
+        let ``sprint is refused while wading`` () =
+            let wet = LevelDsl.level "Wet" [ LevelDsl.street 80.0f 40.0f Mud; LevelDsl.water 1.0f ] |> LevelCompile.compile
+            let world = Sim.createTrainingWorld 3UL
+            let mutable player = { world.Player with Position = Vector3.Zero; Yaw = MathF.PI }
+            let input = { Sequence = 0L; Move = Vector2(0.0f, 1.0f); Look = Vector2.Zero; Buttons = InputButtons.Sprint }
+            for _ in 1..30 do
+                player <- Movement.step Tuning.TickDuration input wet player
+            Assert.False(player.Sprinting, "sprinting through chest-deep water")
