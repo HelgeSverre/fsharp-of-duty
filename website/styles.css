@@ -33,6 +33,10 @@ button, input { font: inherit; }
 .button { display: inline-flex; align-items: center; justify-content: center; min-height: 48px; padding: 0 24px; border: 1px solid var(--signal-light); color: #fff7e8; background: var(--signal); box-shadow: 6px 6px 0 #702510; text-decoration: none; text-transform: uppercase; font-size: 12px; font-weight: 900; letter-spacing: .1em; transition: transform .18s, box-shadow .18s; }
 .button:hover { transform: translate(3px, 3px); box-shadow: 3px 3px 0 #702510; }
 .button-small { min-height: 40px; padding: 0 16px; font-size: 10px; }
+.header-actions { display: flex; align-items: center; gap: 18px; }
+.github-link { display: inline-flex; color: var(--muted); }
+.github-link:hover { color: var(--paper); }
+.github-link svg { width: 20px; height: 20px; fill: currentColor; }
 .eyebrow, .section-number { color: var(--olive); font-size: 11px; font-weight: 900; letter-spacing: .18em; text-transform: uppercase; }
 .live-dot { display: inline-block; width: 8px; height: 8px; margin-right: 8px; border-radius: 50%; background: #9bc75b; box-shadow: 0 0 12px #9bc75b; animation: pulse 2s infinite; }
 
