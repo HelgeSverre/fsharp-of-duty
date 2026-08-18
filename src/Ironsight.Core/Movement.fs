@@ -27,30 +27,46 @@ module Movement =
         stance, latched, crouchHeld
 
     let private collides (level: Level) (stance: Stance) (position: Vector3) =
-        LevelCompile.brushesNear position (Tuning.PlayerRadius + 0.1f) level
-        |> Array.exists (fun brush -> MathEx.capsuleIntersectsAabb Tuning.PlayerRadius (stanceHeight stance) position brush.Bounds)
+        LevelCompile.trianglesNear position (Tuning.PlayerRadius + 0.6f) level
+        |> Array.exists (fun triangle ->
+            (MathEx.capsuleIntersectsTriangle Tuning.PlayerRadius (stanceHeight stance) position triangle.A triangle.B triangle.C).IsSome)
 
-    let private grounded (level: Level) (position: Vector3) =
-        position.Y <= 0.002f
-        || LevelCompile.brushesNear position (Tuning.PlayerRadius + 0.1f) level
-           |> Array.exists (fun brush ->
-               let top = brush.Bounds.Max.Y
-               abs (position.Y - top) <= 0.055f
-               && position.X >= brush.Bounds.Min.X - Tuning.PlayerRadius
-               && position.X <= brush.Bounds.Max.X + Tuning.PlayerRadius
-               && position.Z >= brush.Bounds.Min.Z - Tuning.PlayerRadius
-               && position.Z <= brush.Bounds.Max.Z + Tuning.PlayerRadius)
+    /// The surface under a position: its height and its normal. Probes the
+    /// capsule footprint rather than a single point, so standing on the lip of a
+    /// ledge still finds support. Returns the highest surface at or below the
+    /// feet, which is what you are standing on.
+    let surfaceUnder (level: Level) (position: Vector3) =
+        let radius = Tuning.PlayerRadius * 0.7f
+        let probes =
+            [| Vector3.Zero
+               Vector3(radius, 0.0f, 0.0f); Vector3(-radius, 0.0f, 0.0f)
+               Vector3(0.0f, 0.0f, radius); Vector3(0.0f, 0.0f, -radius) |]
+        // Start slightly above the feet so a surface flush with them still registers.
+        let ceiling = position.Y + 0.055f
+        let triangles = LevelCompile.trianglesNear position (Tuning.PlayerRadius + 0.6f) level
+        let mutable bestHeight = Single.NegativeInfinity
+        let mutable bestNormal = Vector3.UnitY
+        for offset in probes do
+            let origin = position + offset + Vector3(0.0f, 0.6f, 0.0f)
+            for triangle in triangles do
+                // Downward-facing triangles are ceilings, never support.
+                if triangle.Normal.Y > 0.0001f then
+                    match MathEx.rayTriangle origin -Vector3.UnitY triangle.A triangle.B triangle.C with
+                    | ValueSome distance ->
+                        let height = origin.Y - distance
+                        if height <= ceiling && height > bestHeight then
+                            bestHeight <- height
+                            bestNormal <- triangle.Normal
+                    | ValueNone -> ()
+        if Single.IsNegativeInfinity bestHeight then ValueNone else ValueSome(struct (bestHeight, bestNormal))
 
-    let private supportHeight (level: Level) (position: Vector3) =
-        LevelCompile.brushesNear position (Tuning.PlayerRadius + 0.1f) level
-        |> Array.choose (fun brush ->
-            if brush.Bounds.Max.Y <= position.Y + 0.055f
-               && position.X >= brush.Bounds.Min.X - Tuning.PlayerRadius
-               && position.X <= brush.Bounds.Max.X + Tuning.PlayerRadius
-               && position.Z >= brush.Bounds.Min.Z - Tuning.PlayerRadius
-               && position.Z <= brush.Bounds.Max.Z + Tuning.PlayerRadius then Some brush.Bounds.Max.Y
-            else None)
-        |> function [||] -> 0.0f | heights -> max 0.0f (Array.max heights)
+    /// Whether a surface is shallow enough to stand on rather than slide down.
+    let walkableNormal (normal: Vector3) = normal.Y >= Tuning.MaxSlopeCosine
+
+    let grounded (level: Level) (position: Vector3) =
+        match surfaceUnder level position with
+        | ValueSome(struct (height, normal)) -> abs (position.Y - height) <= 0.055f && walkableNormal normal
+        | ValueNone -> false
 
     let private resolveWorld (level: Level) (stance: Stance) (oldPosition: Vector3) (requestedPosition: Vector3) (wasGrounded: bool) =
         let radius = Tuning.PlayerRadius
@@ -75,16 +91,26 @@ module Movement =
                     let xResolved = if collides level stance alongX then oldPosition else alongX
                     let alongZ = Vector3(xResolved.X, xResolved.Y, bounded.Z)
                     if collides level stance alongZ then xResolved else alongZ
-        let floorY = supportHeight level horizontalPosition
-        if requestedPosition.Y <= floorY + 0.05f then Vector3(horizontalPosition.X, floorY, horizontalPosition.Z)
-        else
+        // Settle onto the surface underfoot, but only if it is shallow enough to
+        // stand on — a steep face lets you keep falling, which is what turns a
+        // cliff into a wall without needing an invisible box around it.
+        match surfaceUnder level horizontalPosition with
+        | ValueSome(struct (floorY, normal)) when walkableNormal normal && requestedPosition.Y <= floorY + 0.05f ->
+            Vector3(horizontalPosition.X, floorY, horizontalPosition.Z)
+        | _ ->
             let vertical = Vector3(horizontalPosition.X, bounded.Y, horizontalPosition.Z)
             if collides level stance vertical then horizontalPosition else vertical
 
     /// Resolve a grounded humanoid displacement through the same capsule and
     /// broadphase used by the player controller.
+    /// ponytail: soldiers have no velocity, so they are snapped to the surface
+    /// rather than falling ballistically. Give Soldier a velocity if AI ever
+    /// needs to be launched or to jump.
     let resolveAgent level oldPosition requestedPosition =
-        resolveWorld level Standing oldPosition requestedPosition true
+        let resolved = resolveWorld level Standing oldPosition requestedPosition true
+        match surfaceUnder level resolved with
+        | ValueSome(struct (floorY, normal)) when walkableNormal normal -> Vector3(resolved.X, floorY, resolved.Z)
+        | _ -> resolved
 
     let step (dt: float32<s>) (input: InputFrame) (level: Level) (player: Player) : Player =
         let seconds = Units.raw dt

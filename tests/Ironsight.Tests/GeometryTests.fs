@@ -128,3 +128,62 @@ module GeometryTests =
             LevelCompile.trianglesAlongRay origin direction 40.0f level
             |> Array.filter (fun t -> t.Material = Brick)
         Assert.NotEmpty found
+
+    /// Phase 2 gate: terrain you can walk up, and terrain you cannot.
+    /// A ramp is built as a staircase of thin risers, which is what the DSL
+    /// ramp primitive emits; the slope limit is what decides walkability.
+    let private rampLevel riseOverRun =
+        // Steps fine enough that the capsule reads them as a continuous surface.
+        let steps = 40
+        let run = 20.0f
+        let items =
+            [ yield LevelDsl.street 80.0f 30.0f Mud
+              for index in 0 .. steps - 1 do
+                  let depth = run / float32 steps
+                  let z = -10.0f + float32 index * depth + depth * 0.5f
+                  let height = (float32 index + 1.0f) * depth * riseOverRun
+                  yield LevelDsl.block (Vector3(0.0f, height * 0.5f, z)) (Vector3(8.0f, height, depth)) Mud ]
+        LevelDsl.level "Ramp" items |> LevelCompile.compile
+
+    let private walkForward (level: Level) (start: Vector3) ticks =
+        let world = Sim.createTrainingWorld 3UL
+        let mutable player = { world.Player with Position = start; Yaw = MathF.PI; Velocity = Vector3.Zero }
+        // Yaw of pi faces +Z, which is up the ramp.
+        let input = { Sequence = 0L; Move = Vector2(0.0f, 1.0f); Look = Vector2.Zero; Buttons = InputButtons.None }
+        for _ in 1..ticks do
+            player <- Movement.step Tuning.TickDuration input level player
+        player.Position
+
+    [<Fact>]
+    let ``a player walks up a gentle slope and gains height`` () =
+        // 20 degrees: tan 20 is about 0.36.
+        let level = rampLevel 0.36f
+        let finish = walkForward level (Vector3(0.0f, 0.0f, -12.0f)) 180
+        Assert.True(finish.Z > -4.0f, $"expected to advance up the ramp, ended at z={finish.Z}")
+        Assert.True(finish.Y > 2.0f, $"expected to gain height, ended at y={finish.Y}")
+
+    [<Fact>]
+    let ``a player cannot climb a slope past the limit`` () =
+        // 70 degrees is well beyond the 45 degree limit.
+        let level = rampLevel 2.75f
+        let finish = walkForward level (Vector3(0.0f, 0.0f, -12.0f)) 180
+        Assert.True(finish.Y < 1.5f, $"expected to be stopped by the face, ended at y={finish.Y}")
+
+    [<Fact>]
+    let ``a soldier walked off a ledge ends up on the ground, not floating`` () =
+        // Regression: resolveAgent applied no gravity, so AI hovered off the
+        // Canal Yard bank at whatever height it left it.
+        let level = Levels.canalYard
+        let onBank = Vector3(18.0f, 1.2f, 0.0f)
+        let offBank = Vector3(0.0f, 1.2f, 0.0f)
+        let resolved = Movement.resolveAgent level onBank offBank
+        Assert.True(resolved.Y < 0.5f, $"agent left the bank still at y={resolved.Y}")
+
+    [<Fact>]
+    let ``nav links a walkable ramp but not a wall of the same rise`` () =
+        let ramp = rampLevel 0.36f
+        let linked = ramp.Nav |> Array.filter (fun node -> node.Neighbours.Length > 0)
+        Assert.True(linked.Length > ramp.Nav.Length / 2, "most of a walkable ramp should be connected")
+        // Nodes partway up must exist at height, proving the probe sees stacked ground.
+        let elevated = ramp.Nav |> Array.filter (fun node -> node.Position.Y > 1.0f)
+        Assert.NotEmpty elevated

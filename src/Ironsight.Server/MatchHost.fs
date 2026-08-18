@@ -76,7 +76,8 @@ type MatchHost(mode: GameMode, ?matchLevel: Level) =
             Velocity = Vector3.Zero
             Health = Units.health 100.0f
             RegenIn = Units.seconds 0.0f
-            Weapon = Tuning.weaponSlot player.Weapon.Class 4
+            Weapon = Tuning.weaponSlot (defaultArg player.RequestedWeapon player.Weapon.Class) 4
+            RequestedWeapon = None
             Grenade = GrenadeIdle 3
             Alive = true
             RespawnIn = Units.seconds 0.0f
@@ -145,6 +146,7 @@ type MatchHost(mode: GameMode, ?matchLevel: Level) =
                       Health = Units.health 100.0f
                       RegenIn = Units.seconds 0.0f
                       Weapon = Tuning.weaponSlot (selectedWeapon team weaponName) 4
+                      RequestedWeapon = None
                       Grenade = GrenadeIdle 3
                       Connected = true
                       Ready = false
@@ -174,6 +176,20 @@ type MatchHost(mode: GameMode, ?matchLevel: Level) =
             match Map.tryFind id state.Players with
             | Some player -> state <- { state with Players = Map.add id { player with Ready = true } state.Players }
             | None -> ())
+
+    /// Unrestricted mid-match loadout change. Outside live play it swaps the
+    /// weapon on the spot; during a live round it arms on the next spawn so a
+    /// firefight cannot be reset by re-rolling ammunition.
+    member _.SetLoadout(id, weaponName: string) =
+        lock gate (fun () ->
+            match Tuning.weaponByName weaponName, Map.tryFind id state.Players with
+            | Some weaponClass, Some player ->
+                let updated =
+                    if state.Phase <> Playing && player.Alive then
+                        { player with Weapon = Tuning.weaponSlot weaponClass 4; RequestedWeapon = None }
+                    else { player with RequestedWeapon = Some weaponClass }
+                state <- { state with Players = Map.add id updated state.Players }
+            | _ -> ())
 
     member _.ApplyInput(id, message: JsonElement) =
         lock gate (fun () ->
@@ -278,7 +294,7 @@ type MatchHost(mode: GameMode, ?matchLevel: Level) =
                 thrown |> Option.iter thrownGrenades.Add
                 let horizontalSpeed = MathEx.horizontal handPlayer.Velocity |> fun velocity -> velocity.Length()
                 let footstepInterval = if handPlayer.Sprinting then 18L else 26L
-                if horizontalSpeed > 1.0f && handPlayer.Position.Y <= 0.06f && lifecycleState.Tick % footstepInterval = 0L then
+                if horizontalSpeed > 1.0f && Movement.grounded level handPlayer.Position && lifecycleState.Tick % footstepInterval = 0L then
                     emit (FootStep(handPlayer.Position, Mud))
                 if not requests.IsEmpty then
                     // Eye trace, muzzle visuals: the authoritative ray leaves the

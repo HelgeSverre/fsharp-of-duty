@@ -158,6 +158,31 @@ module LevelCompile =
         |> Seq.map (fun index -> mesh.Triangles[index])
         |> Seq.toArray
 
+    /// Highest walkable surface in an XZ column, with its normal. The shared
+    /// ground probe for nav nodes, spawn snapping and cover placement, so all
+    /// three agree about where the floor is.
+    let surfaceColumn (mesh: CollisionMesh) (x: float32) (z: float32) =
+        let cell value = int (MathF.Floor(value / mesh.CellSize))
+        let indices =
+            match Map.tryFind (struct (cell x, cell z)) mesh.Cells with
+            | Some found -> found
+            | None -> [||]
+        // Start above anything the level can contain and cast straight down.
+        let origin = Vector3(x, 100000.0f, z)
+        let mutable bestHeight = Single.NegativeInfinity
+        let mutable bestNormal = Vector3.UnitY
+        for index in indices do
+            let triangle = mesh.Triangles[index]
+            if triangle.Normal.Y >= Tuning.MaxSlopeCosine then
+                match MathEx.rayTriangle origin -Vector3.UnitY triangle.A triangle.B triangle.C with
+                | ValueSome distance ->
+                    let height = origin.Y - distance
+                    if height > bestHeight then
+                        bestHeight <- height
+                        bestNormal <- triangle.Normal
+                | ValueNone -> ()
+        if Single.IsNegativeInfinity bestHeight then ValueNone else ValueSome(struct (bestHeight, bestNormal))
+
     let private brush (minimum: Vector3) (maximum: Vector3) (material: Material) : Brush =
         { Bounds = { Min = minimum; Max = maximum }; Material = material }
 
@@ -236,7 +261,7 @@ module LevelCompile =
             |> Array.concat
         vertices, indices
 
-    let private compileNav (bounds: Aabb) (brushes: Brush array) (brushGrid: BrushGrid) =
+    let private compileNav (bounds: Aabb) (brushes: Brush array) (brushGrid: BrushGrid) (collision: CollisionMesh) =
         let spacing = 2.0f
         let minX, maxX = int (MathF.Ceiling(bounds.Min.X / spacing)), int (MathF.Floor(bounds.Max.X / spacing))
         let minZ, maxZ = int (MathF.Ceiling(bounds.Min.Z / spacing)), int (MathF.Floor(bounds.Max.Z / spacing))
@@ -254,15 +279,14 @@ module LevelCompile =
                                | Some indices -> yield! indices
                                | None -> () |]
                     |> Array.distinct
+                // A downward probe finds the walkable surface whatever height it
+                // sits at. The old rule only accepted brushes resting on y = 0
+                // and under 3.1 m, so anything stacked was invisible as ground
+                // and the navmesh grew a hole across it.
                 let groundY =
-                    nearby
-                    |> Array.choose (fun index ->
-                        let bounds = brushes[index].Bounds
-                        if bounds.Min.Y <= 0.01f && bounds.Max.Y <= 3.1f
-                           && flatPosition.X >= bounds.Min.X && flatPosition.X <= bounds.Max.X
-                           && flatPosition.Z >= bounds.Min.Z && flatPosition.Z <= bounds.Max.Z then Some bounds.Max.Y
-                        else None)
-                    |> function [||] -> 0.0f | heights -> Array.max heights
+                    match surfaceColumn collision flatPosition.X flatPosition.Z with
+                    | ValueSome(struct (height, _)) -> height
+                    | ValueNone -> 0.0f
                 let position = Vector3(flatPosition.X, groundY, flatPosition.Z)
                 let blocked =
                     nearby
@@ -279,7 +303,20 @@ module LevelCompile =
                 [| struct (x - 1, z); struct (x + 1, z); struct (x, z - 1); struct (x, z + 1) |]
                 |> Array.choose (fun key ->
                     match lookup.TryGetValue key with
-                    | true, value when abs (positions[value].Y - position.Y) <= 0.4f -> Some value
+                    | true, value ->
+                        let other = positions[value]
+                        let rise = abs (other.Y - position.Y)
+                        // A step is climbable outright. Anything taller is only
+                        // linked when the ground between the two nodes actually
+                        // ramps: a 2 m rise over 2 m is a 45 degree slope if the
+                        // midpoint is halfway up, and a wall if it is not.
+                        let climbable =
+                            rise <= 0.45f
+                            || (rise <= spacing * MathF.Tan(Tuning.MaxSlopeAngle * MathF.PI / 180.0f)
+                                && (match surfaceColumn collision ((position.X + other.X) * 0.5f) ((position.Z + other.Z) * 0.5f) with
+                                    | ValueSome(struct (midHeight, _)) -> abs (midHeight - (position.Y + other.Y) * 0.5f) <= 0.35f
+                                    | ValueNone -> false))
+                        if climbable then Some value else None
                     | _ -> None)
             { Position = positions[index]; Neighbours = neighbours })
         |> Seq.toArray
@@ -364,45 +401,61 @@ module LevelCompile =
                             let radius = 2.0f + MathF.Sqrt(rank) * 0.85f
                             Vector3(MathF.Cos(angle) * radius, 0.0f, MathF.Sin(angle) * radius)
                     let flat = center + offset
-                    let ground =
-                        brushes
-                        |> Seq.choose (fun item ->
-                            if item.Bounds.Min.Y <= 0.01f && item.Bounds.Max.Y <= 3.1f
-                               && flat.X >= item.Bounds.Min.X && flat.X <= item.Bounds.Max.X
-                               && flat.Z >= item.Bounds.Min.Z && flat.Z <= item.Bounds.Max.Z then Some item.Bounds.Max.Y
-                            else None)
-                        |> Seq.fold max 0.0f
-                    spawns.Add(struct (Some team, Vector3(flat.X, ground, flat.Z)))
+                    // Snapped to the ground once the collision mesh exists, below.
+                    spawns.Add(struct (Some team, Vector3(flat.X, 0.0f, flat.Z)))
         let brushArray = brushes.ToArray()
         let brushGrid = compileBrushGrid brushArray
         let vertices, indices = compileMesh brushArray
         let collision = brushArray |> Array.collect (fun item -> boxTriangles item.Bounds item.Material) |> compileCollision
+        // The vertical extent follows the content rather than a fixed 8 m lid,
+        // so a bluff or a below-sea-level beach is expressible. Headroom above
+        // the tallest brush keeps the top of it reachable.
+        let worldBounds =
+            let lowest = brushArray |> Array.fold (fun acc item -> min acc item.Bounds.Min.Y) 0.0f
+            let highest = brushArray |> Array.fold (fun acc item -> max acc item.Bounds.Max.Y) 0.0f
+            { Min = Vector3(bounds.Min.X, lowest, bounds.Min.Z)
+              Max = Vector3(bounds.Max.X, max bounds.Max.Y (highest + 4.0f), bounds.Max.Z) }
         { Name = spec.Name
           Revision = 0
-          Bounds = bounds
+          Bounds = worldBounds
           Brushes = brushArray
           BrushGrid = brushGrid
           Collision = collision
-          Cover = covers.ToArray()
-          Spawns = spawns.ToArray()
+          // Spawns and cover both ride on the ground probe, so all three of
+          // them, nav included, agree about where the floor is. Cover used to
+          // keep whatever Y the DSL author wrote, which left it buried at one
+          // end of a slope and floating at the other.
+          Cover =
+            covers.ToArray()
+            |> Array.map (fun point ->
+                match surfaceColumn collision point.Pos.X point.Pos.Z with
+                | ValueSome(struct (height, _)) -> { point with Pos = Vector3(point.Pos.X, height, point.Pos.Z) }
+                | ValueNone -> point)
+          Spawns =
+            spawns.ToArray()
+            |> Array.map (fun struct (team, position) ->
+                match surfaceColumn collision position.X position.Z with
+                | ValueSome(struct (height, _)) -> struct (team, Vector3(position.X, height, position.Z))
+                | ValueNone -> struct (team, position))
           MountedGuns = mountedGuns.ToArray()
           MissionRules =
             spec.Items
             |> List.choose (function MissionRule(condition, action) -> Some { Condition = condition; Action = action; Fired = false } | _ -> None)
             |> List.toArray
-          Nav = compileNav bounds brushArray brushGrid
+          Nav = compileNav bounds brushArray brushGrid collision
           Vertices = vertices
           Indices = indices }
 
     let rebuild brushes (level: Level) =
         let brushGrid = compileBrushGrid brushes
+        let rebuiltCollision = brushes |> Array.collect (fun item -> boxTriangles item.Bounds item.Material) |> compileCollision
         let vertices, indices = compileMesh brushes
         // Bump the revision so renderers holding cached geometry re-upload.
         { level with
             Revision = level.Revision + 1
             Brushes = brushes
             BrushGrid = brushGrid
-            Collision = brushes |> Array.collect (fun item -> boxTriangles item.Bounds item.Material) |> compileCollision
-            Nav = compileNav level.Bounds brushes brushGrid
+            Collision = rebuiltCollision
+            Nav = compileNav level.Bounds brushes brushGrid rebuiltCollision
             Vertices = vertices
             Indices = indices }

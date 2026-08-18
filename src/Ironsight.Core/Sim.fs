@@ -10,10 +10,28 @@ module Sim =
 
     let private playerSlots () =
         [| Tuning.weaponSlot Tuning.kar98k 6
+           Tuning.weaponSlot Tuning.m1Garand 5
+           Tuning.weaponSlot Tuning.leeEnfield 5
            Tuning.weaponSlot Tuning.thompson 4
+           Tuning.weaponSlot Tuning.stg44 4
+           Tuning.weaponSlot Tuning.mp40 4
            Tuning.weaponSlot Tuning.m1911 5
            Tuning.weaponSlot Tuning.kar98kSniper 5
-           Tuning.weaponSlot Tuning.m1897 5 |]
+           Tuning.weaponSlot Tuning.fg42 4
+           Tuning.weaponSlot Tuning.m1897 5
+           Tuning.weaponSlot Tuning.bar 5 |]
+
+    /// CS-style category slots: each weapon key owns a category and pressing
+    /// the same key again cycles within it. Indices refer to playerSlots order.
+    let weaponCategories =
+        [| [| 0; 1; 2 |]     // 1: bolt/semi rifles — Kar98k, Garand, Lee-Enfield
+           [| 3; 4; 5 |]     // 2: automatics — Thompson, STG-44, MP40
+           [| 6 |]           // 3: pistol — M1911
+           [| 7; 8 |]        // 4: scoped — Kar98k Sniper, FG42
+           [| 9; 10 |] |]    // 5: heavy — Trench Gun, BAR
+
+    /// The paintball round loadout opens on the Thompson.
+    let private thompsonSlot = 3
 
     let private resetRoundCombatants (world: World) round =
         let playerSpawn =
@@ -51,7 +69,7 @@ module Sim =
                     Health = Units.health 100.0f
                     RegenIn = Units.seconds 0.0f
                     Slots = playerSlots ()
-                    Active = 1
+                    Active = thompsonSlot
                     Grenade = GrenadeIdle 3 }
             Soldiers = soldiers
             Grenades = [||]
@@ -94,26 +112,40 @@ module Sim =
     let private shotDirection (player: Player) shot =
         Ballistics.directionFromAngles player.Yaw player.Pitch shot.DirectionOffset
 
+    /// Material of the surface underfoot, for footstep sound. Takes it from the
+    /// triangle actually stood on, so a slope or a raised terrace reports its own
+    /// material rather than whatever brush top happened to be nearest.
     let private surfaceBelow (level: Level) (position: Vector3) =
-        LevelCompile.brushesNear position 0.5f level
-        |> Array.filter (fun brush ->
-            position.X >= brush.Bounds.Min.X && position.X <= brush.Bounds.Max.X
-            && position.Z >= brush.Bounds.Min.Z && position.Z <= brush.Bounds.Max.Z
-            && brush.Bounds.Max.Y <= position.Y + 0.12f)
-        |> Array.sortByDescending (fun brush -> brush.Bounds.Max.Y)
-        |> Array.tryHead
-        |> Option.map (fun brush -> brush.Material)
-        |> Option.defaultValue Mud
+        LevelCompile.trianglesNear position 0.6f level
+        |> Array.choose (fun triangle ->
+            if triangle.Normal.Y >= Tuning.MaxSlopeCosine then
+                match MathEx.rayTriangle (position + Vector3(0.0f, 0.3f, 0.0f)) -Vector3.UnitY triangle.A triangle.B triangle.C with
+                | ValueSome distance when distance <= 0.5f -> Some(struct (0.3f - distance, triangle.Material))
+                | _ -> None
+            else None)
+        |> function
+            | [||] -> Mud
+            | hits -> hits |> Array.maxBy (fun struct (height, _) -> height) |> fun struct (_, material) -> material
 
     let step (input: InputFrame) (world: World) =
         let moved = Movement.step Tuning.TickDuration input world.Level world.Player |> Damage.stepRegen Tuning.TickDuration
-        let requestedWeapon =
+        let requestedCategory =
             if hasButton InputButtons.Weapon1 input.Buttons then Some 0
             elif hasButton InputButtons.Weapon2 input.Buttons then Some 1
             elif hasButton InputButtons.Weapon3 input.Buttons then Some 2
             elif hasButton InputButtons.Weapon4 input.Buttons then Some 3
             elif hasButton InputButtons.Weapon5 input.Buttons then Some 4
             else None
+        // A key selects its category; pressing it again cycles within the
+        // category. Holding the key is rate-limited naturally by the 0.35 s
+        // Switching state, which ignores requests while in flight.
+        let requestedWeapon =
+            requestedCategory
+            |> Option.map (fun category ->
+                let members = weaponCategories[category]
+                match Array.tryFindIndex ((=) moved.Active) members with
+                | Some position -> members[(position + 1) % members.Length]
+                | None -> members[0])
         let prepared, weaponLocked =
             match moved.Slots[moved.Active].State with
             | Switching(incoming, remaining) when remaining <= Tuning.TickDuration ->
@@ -196,7 +228,7 @@ module Sim =
         let footstepEvents =
             let speed = MathEx.horizontal aiPlayer.Velocity |> fun velocity -> velocity.Length()
             let interval = if aiPlayer.Sprinting then 18L else 26L
-            if speed > 1.0f && aiPlayer.Position.Y <= 0.06f && world.Tick % interval = 0L then
+            if speed > 1.0f && Movement.grounded world.Level aiPlayer.Position && world.Tick % interval = 0L then
                 [ FootStep(aiPlayer.Position, surfaceBelow world.Level aiPlayer.Position) ]
             else []
         let objectives, objectiveEvents =
@@ -237,7 +269,8 @@ module Sim =
         let rounded, roundEvents = advanceRound scripted (events @ scriptEvents)
         struct (rounded, roundEvents)
 
-    let private createWorld level objective seed =
+    /// Public so tests and tools can build a world for any compiled level.
+    let createWorld level objective seed =
         let playerSpawn =
             level.Spawns
             |> Array.pick (fun struct (team, position) -> if team = Some Allies then Some position else None)
@@ -337,7 +370,7 @@ module Sim =
                         { Tuning.weaponSlot weaponClass 4 with
                             State = Cooling(Units.seconds (0.18f + float32 index * 0.12f)) } })
         { world with
-            Player = { world.Player with Active = 1 }
+            Player = { world.Player with Active = thompsonSlot }
             Soldiers = soldiers
             Round =
                 Some
@@ -353,8 +386,3 @@ module Sim =
 
     let createCanalYardWorld seed = createRoundWorld Levels.canalYard 5 seed
 
-    let createStalingradWorld seed =
-        createWorld Levels.stalingradStreet "Clear the MG nest at the end of the street" seed
-
-    let createBattlefieldWorld seed =
-        createWorld Levels.battlefield "Break through the German defensive line" seed

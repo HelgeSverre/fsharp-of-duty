@@ -46,16 +46,6 @@ module Grenades =
             { player with Grenade = GrenadeIdle(count - 1) }, Some(throwFrom fuse player)
         | _ -> player, None
 
-    let private collisionNormal (point: Vector3) (bounds: Aabb) =
-        let distances =
-            [| point.X - bounds.Min.X, -Vector3.UnitX
-               bounds.Max.X - point.X, Vector3.UnitX
-               point.Y - bounds.Min.Y, -Vector3.UnitY
-               bounds.Max.Y - point.Y, Vector3.UnitY
-               point.Z - bounds.Min.Z, -Vector3.UnitZ
-               bounds.Max.Z - point.Z, Vector3.UnitZ |]
-        distances |> Array.minBy fst |> snd
-
     let stepProjectilesOwned (dt: float32<s>) (level: Level) (grenades: Grenade array) =
         let seconds = Units.raw dt
         let active = ResizeArray<Grenade>()
@@ -63,23 +53,36 @@ module Grenades =
         for grenade in grenades do
             let velocity = grenade.Velocity + Vector3(0.0f, -Tuning.Gravity * seconds, 0.0f)
             let requested = grenade.Position + velocity * seconds
-            // Sample the swept segment as well as the endpoint so a fast grenade
-            // cannot tunnel straight through a thin brush or sandbag.
+            // Sweep the segment against the world so the grenade bounces off the
+            // real surface normal. On a slope that means it rolls downhill
+            // instead of stopping dead on an invisible plane at y = 0.08.
+            let travel = requested - grenade.Position
+            let travelLength = travel.Length()
             let collision =
-                [| 0.25f; 0.5f; 0.75f; 1.0f |]
-                |> Array.tryPick (fun t ->
-                    let point = Vector3.Lerp(grenade.Position, requested, t)
-                    LevelCompile.brushesNear point 0.25f level
-                    |> Array.tryFind (fun item -> MathEx.overlapsPoint point item.Bounds)
-                    |> Option.map (fun item -> point, item))
+                if travelLength < 0.000001f then ValueNone
+                else
+                    let direction = travel / travelLength
+                    // The radius keeps a grenade from ending the tick embedded in
+                    // the surface it just struck.
+                    let reach = travelLength + 0.09f
+                    LevelCompile.trianglesAlongRay grenade.Position direction reach level
+                    |> Array.choose (fun triangle ->
+                        if Vector3.Dot(triangle.Normal, direction) < 0.0f then
+                            match MathEx.rayTriangle grenade.Position direction triangle.A triangle.B triangle.C with
+                            | ValueSome distance when distance <= reach -> Some(struct (distance, triangle))
+                            | _ -> None
+                        else None)
+                    |> function
+                        | [||] -> ValueNone
+                        | hits -> ValueSome(Array.minBy (fun struct (distance, _) -> distance) hits)
             let position, bouncedVelocity =
                 match collision with
-                | Some(point, item) ->
-                    let normal = collisionNormal point item.Bounds
-                    grenade.Position, Vector3.Reflect(velocity, normal) * 0.3f
-                | None when requested.Y < 0.08f ->
-                    Vector3(requested.X, 0.08f, requested.Z), Vector3(velocity.X * 0.65f, MathF.Abs velocity.Y * 0.3f, velocity.Z * 0.65f)
-                | None -> requested, velocity
+                | ValueSome(struct (distance, triangle)) ->
+                    let contact = grenade.Position + (travel / travelLength) * max 0.0f (distance - 0.05f)
+                    // One factor covers restitution and friction together, as it
+                    // always has; a shallower surface simply bleeds less speed.
+                    contact, Vector3.Reflect(velocity, triangle.Normal) * 0.35f
+                | ValueNone -> requested, velocity
             let fuse = grenade.Fuse - dt
             if fuse <= Units.seconds 0.0f then exploded.Add(struct (grenade.Owner, position))
             else active.Add { grenade with Position = position; Velocity = bouncedVelocity; Fuse = fuse }
@@ -111,7 +114,9 @@ module Grenades =
                 // Once it has settled on the ground the rest of the horizon is
                 // just the same point repeated, so stop and let the last entry
                 // stand as the landing spot.
-                if grenade.Velocity.Length() < 0.6f && grenade.Position.Y <= 0.12f then resting <- true
+                // Come to rest by speed alone; a height test would assume flat
+                // ground and never trigger on a slope or a raised terrace.
+                if grenade.Velocity.Length() < 0.6f then resting <- true
             step <- step + 1
         points.ToArray()
 
