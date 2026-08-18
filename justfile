@@ -97,6 +97,9 @@ install: _sdk
     set -euo pipefail
     rid=$([ "$(sysctl -n hw.optional.arm64 2>/dev/null)" = "1" ] && echo osx-arm64 || echo osx-x64)
     out="$PWD/.build/install"
+    # Clean output dir: incremental publish deletes the loose native dylibs
+    # (stale single-file FileWrites), shipping a client that dies at Window.Create.
+    rm -rf "$out"
     PATH="$PWD/.dotnet:$PATH" dotnet publish {{ client }} -c Release -r "$rid" --self-contained -o "$out"
     app="/Applications/Ironsight.app"
     rm -rf "$app"
