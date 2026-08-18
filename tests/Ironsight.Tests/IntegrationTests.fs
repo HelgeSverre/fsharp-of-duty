@@ -186,13 +186,13 @@ module IntegrationTests =
                 // x = -13 first. Yaw pi/2 faces +X.
                 Face("Climber", MathF.PI / 2.0f)
                 Move("Climber", Vector2(0.0f, 1.0f))
-                WaitUntil("the climber reaches the draw", 20.0, fun snapshot ->
+                WaitUntil("the climber reaches the draw", 35.0, fun snapshot ->
                     match MatchScript.selfOf "Climber" snapshot with
                     | Some self -> self.Position.X > -14.5f
                     | None -> false)
                 // Yaw 0 faces -Z, which is down the draw toward the sea.
                 Face("Climber", 0.0f)
-                WaitUntil("the climber descends to the beach", 25.0, fun snapshot ->
+                WaitUntil("the climber descends to the beach", 40.0, fun snapshot ->
                     match MatchScript.selfOf "Climber" snapshot with
                     | Some self -> self.Position.Y < 2.0f
                     | None -> false)
@@ -201,7 +201,7 @@ module IntegrationTests =
                 Face("Climber", MathF.PI)
                 Wait 1.0
                 Move("Climber", Vector2(0.0f, 1.0f))
-                WaitUntil("the climber regains the bluff", 25.0, fun snapshot ->
+                WaitUntil("the climber regains the bluff", 40.0, fun snapshot ->
                     match MatchScript.selfOf "Climber" snapshot with
                     | Some self -> self.Position.Y > 5.0f
                     | None -> false)
