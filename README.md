@@ -6,6 +6,7 @@ particle is generated in code. The same deterministic gameplay core powers the
 offline game and an authoritative multiplayer server.
 
 [![CI](https://github.com/HelgeSverre/fsharp-of-duty/actions/workflows/ci.yml/badge.svg)](https://github.com/HelgeSverre/fsharp-of-duty/actions/workflows/ci.yml)
+[![Release](https://github.com/HelgeSverre/fsharp-of-duty/actions/workflows/release.yml/badge.svg)](https://github.com/HelgeSverre/fsharp-of-duty/releases/latest)
 
 The project is a playable prototype rather than a finished commercial game. It
 is intentionally small, direct, and engine-free: Silk.NET provides the window,
@@ -210,6 +211,17 @@ curl https://fsharp-of-duty.fly.dev/health/ready
 
 The public deployment is for development playtests and carries no uptime or data
 retention guarantee.
+
+### Add your server to the browser
+
+The in-game server browser merges [`servers.json`](servers.json) from this
+repo (fetched live, cached offline) with the copy packaged next to the game
+and your own list at `<appdata>/ironsight/servers.json`. To make your server
+visible to every player, open a pull request adding one entry:
+
+```json
+{ "name": "My Server", "url": "wss://example.com/play" }
+```
 
 ## Website and public telemetry
 

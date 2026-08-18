@@ -37,20 +37,10 @@ run: _sdk
 dev: _sdk
     {{ dotnet }} watch --project {{ client }} run
 
-# Run the large generated Normandy battlefield.
-[group('run')]
-battlefield: _sdk
-    {{ dotnet }} run --project {{ client }} -- --battlefield
-
 # Run the training yard.
 [group('run')]
 training: _sdk
     {{ dotnet }} run --project {{ client }} -- --training
-
-# Run the Stalingrad street mission.
-[group('run')]
-stalingrad: _sdk
-    {{ dotnet }} run --project {{ client }} -- --stalingrad
 
 # Connect TDM to the configured server (the official server by default).
 [group('run')]
