@@ -45,6 +45,7 @@
     <Compile Include="Hud.fs" />
     <Compile Include="Particles.fs" />
     <Compile Include="Audio.fs" />
+    <Compile Include="Ragdoll.fs" />
     <Compile Include="Renderer.fs" />
     <Compile Include="Program.fs" />
   </ItemGroup>

@@ -10,6 +10,15 @@ open Ironsight
 open Ironsight.ProcGen
 open Silk.NET.OpenGL
 
+/// A recent lethal-looking event kept around briefly so a soldier who dies
+/// this frame can be ragdolled away from what killed them. Radius > 0 marks a
+/// radial (explosion) source; otherwise Push is the directional kick.
+type private KillImpulse =
+    { Expires: int64
+      Position: Vector3
+      Push: Vector3
+      Radius: float32 }
+
 type Renderer(gl: GL) =
     let hud = new Hud(gl)
     let particles = new Particles(gl)
@@ -46,6 +55,9 @@ type Renderer(gl: GL) =
     let mutable lastView = Vector2.Zero
     let mutable deathWatching = false
     let mutable deathStarted = Stopwatch.GetTimestamp()
+    let ragdolls = Ragdoll.System()
+    let mutable killImpulses: KillImpulse list = []
+    let mutable ragdollClock = Stopwatch.GetTimestamp()
 
     let createLinkedProgram = GlUtil.createProgram gl
     let setMatrix = GlUtil.setMatrix gl
@@ -103,22 +115,73 @@ type Renderer(gl: GL) =
         gunIndexCount <- uint32 mesh.Indices.Length
         loadedGun <- name
 
+    /// Spawn ragdolls for newly dead soldiers, seeded from whatever recent
+    /// event plausibly killed them, then advance the simulation on wall-clock
+    /// time (same convention as the first-person death fall).
+    let updateRagdolls (world: World) =
+        let now = Stopwatch.GetTimestamp()
+        killImpulses <- killImpulses |> List.filter (fun impulse -> impulse.Expires > now)
+        ragdolls.Prune world.Soldiers
+        for soldier in world.Soldiers do
+            match soldier.Behavior with
+            | Dying _ | DyingHeadshot _ when not (ragdolls.Contains soldier.Id) ->
+                let chest = soldier.Position + Vector3(0.0f, 1.3f, 0.0f)
+                let candidate =
+                    killImpulses
+                    |> List.map (fun impulse ->
+                        if impulse.Radius > 0.0f then
+                            let reach = impulse.Radius + 0.8f
+                            let distance = Vector3.Distance(chest, impulse.Position)
+                            if distance < reach then
+                                let away = chest - impulse.Position + Vector3(0.0f, 0.5f, 0.0f)
+                                let direction = if away.LengthSquared() < 0.001f then Vector3.UnitY else Vector3.Normalize away
+                                direction * (7.5f * (1.0f - distance / reach))
+                            else Vector3.Zero
+                        elif Vector3.Distance(chest, impulse.Position) < 1.6f then impulse.Push
+                        else Vector3.Zero)
+                    |> List.fold (fun (best: Vector3) (push: Vector3) -> if push.LengthSquared() > best.LengthSquared() then push else best) Vector3.Zero
+                let impulse =
+                    if candidate.LengthSquared() < 0.05f then MathEx.yawForward soldier.Facing * 1.5f
+                    else candidate
+                ragdolls.Spawn(soldier.Id, Humanoid.worldSkeleton soldier, impulse)
+            | _ -> ()
+        let dt = float32 (Stopwatch.GetElapsedTime ragdollClock).TotalSeconds
+        ragdollClock <- now
+        ragdolls.Step(dt, world.Level)
+
     let uploadActors (world: World) =
         let visibleSoldiers =
             world.Soldiers
             |> Array.filter (fun soldier ->
                 let distanceSquared = Vector3.DistanceSquared(soldier.Position, world.Player.Position)
                 distanceSquared > 0.85f * 0.85f && distanceSquared < 85.0f * 85.0f)
-        let soldierVertices, soldierIndices = Humanoid.mesh visibleSoldiers
+        let hasRagdoll (soldier: Soldier) =
+            match soldier.Behavior with
+            | Dying _ | DyingHeadshot _ -> ragdolls.Contains soldier.Id
+            | _ -> false
+        let soldierVertices, soldierIndices =
+            visibleSoldiers |> Array.filter (hasRagdoll >> not) |> Humanoid.mesh
+        let ragdollMesh =
+            visibleSoldiers
+            |> Array.choose (fun soldier ->
+                if hasRagdoll soldier then
+                    ragdolls.TryGet soldier.Id |> Option.map (Humanoid.poseFromSkeleton soldier)
+                else None)
+            |> MeshGen.union
         let grenadeMesh =
             world.Grenades
             |> Array.map (fun grenade ->
                 MeshGen.box (Vector3(0.14f, 0.18f, 0.14f)) Metal
                 |> MeshGen.translate grenade.Position)
             |> MeshGen.union
-        let grenadeOffset = uint32 soldierVertices.Length
-        let meshVertices = Array.append soldierVertices grenadeMesh.Vertices
-        let meshIndices = Array.append soldierIndices (grenadeMesh.Indices |> Array.map ((+) grenadeOffset))
+        let ragdollOffset = uint32 soldierVertices.Length
+        let grenadeOffset = ragdollOffset + uint32 ragdollMesh.Vertices.Length
+        let meshVertices = Array.concat [ soldierVertices; ragdollMesh.Vertices; grenadeMesh.Vertices ]
+        let meshIndices =
+            Array.concat
+                [ soldierIndices
+                  ragdollMesh.Indices |> Array.map ((+) ragdollOffset)
+                  grenadeMesh.Indices |> Array.map ((+) grenadeOffset) ]
         soldierIndexCount <- uint32 meshIndices.Length
         if meshIndices.Length > 0 then
             let vertices = GlUtil.flattenVertices meshVertices
@@ -186,6 +249,7 @@ type Renderer(gl: GL) =
         gl.ClearColor(0.54f, 0.61f, 0.64f, 1.0f)
         if indexCount > 0u then
             let eye, viewProjection, fieldOfView, cameraPitch = cameraMatrices world.Player deathFall
+            updateRagdolls world
             uploadActors world
             let noOffset = NativePtr.nullPtr<byte> |> NativePtr.toVoidPtr
             gl.BindFramebuffer(FramebufferTarget.Framebuffer, shadowFramebuffer)
@@ -349,6 +413,20 @@ type Renderer(gl: GL) =
 
     member _.HandleEvents(events: GameEvent list) =
         particles.Handle events (Settings.bloodRgb settings.BloodColor)
+        // Remember anything that could have killed someone for a moment, so a
+        // death observed on a later frame still ragdolls away from its cause.
+        let expires = Stopwatch.GetTimestamp() + int64 (0.7 * float Stopwatch.Frequency)
+        let impulses =
+            events
+            |> List.choose (function
+                | BloodImpact(position, direction, headshot) ->
+                    Some { Expires = expires; Position = position; Push = direction * (if headshot then 4.5f else 3.0f); Radius = 0.0f }
+                | HeadGib(position, direction) ->
+                    Some { Expires = expires; Position = position; Push = direction * 5.0f; Radius = 0.0f }
+                | Explosion(position, radius) ->
+                    Some { Expires = expires; Position = position; Push = Vector3.Zero; Radius = radius }
+                | _ -> None)
+        killImpulses <- impulses @ killImpulses |> List.truncate 32
         let added =
             events
             |> List.choose (function

@@ -443,3 +443,24 @@ module ClientTests =
         let forward = Ballistics.directionFromAngles player.Yaw player.Pitch Vector2.Zero
         Assert.True(Vector3.Dot(origin - eye, forward) > 0.5f)
         Assert.True(Vector3.Distance(origin, eye) > 0.5f)
+
+    [<Fact>]
+    let ``ragdolled corpse collapses to the ground, keeps bone lengths, and prunes on respawn`` () =
+        let world = Sim.createPaintballWorld 73UL
+        let soldier = { world.Soldiers[0] with Behavior = Dying(Units.seconds 0.0f) }
+        let ragdolls = Ragdoll.System()
+        ragdolls.Spawn(soldier.Id, Humanoid.worldSkeleton soldier, Vector3(2.0f, 0.0f, 1.0f))
+        for _ in 1..240 do
+            ragdolls.Step(1.0f / 60.0f, world.Level)
+        let skeleton = (ragdolls.TryGet soldier.Id).Value
+        // The head starts ~1.68 above the feet; after the fall the whole body
+        // lies near the floor instead of standing.
+        let ground = soldier.Position.Y
+        Assert.True(skeleton.Head.Y < ground + 0.6f)
+        Assert.True(skeleton.Chest.Y < ground + 0.6f)
+        Assert.True(skeleton.Pelvis.Y > ground - 0.5f)
+        // Constraints hold: the pelvis-chest bone stays near its ~0.53 rest length.
+        Assert.InRange(Vector3.Distance(skeleton.Pelvis, skeleton.Chest), 0.35f, 0.7f)
+        // A respawned (alive-again) soldier takes its corpse with it.
+        ragdolls.Prune [| { soldier with Behavior = Idle } |]
+        Assert.True((ragdolls.TryGet soldier.Id).IsNone)
