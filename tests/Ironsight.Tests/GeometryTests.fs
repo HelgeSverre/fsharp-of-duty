@@ -187,3 +187,44 @@ module GeometryTests =
         // Nodes partway up must exist at height, proving the probe sees stacked ground.
         let elevated = ramp.Nav |> Array.filter (fun node -> node.Position.Y > 1.0f)
         Assert.NotEmpty elevated
+
+    /// Phase 3 gate: the Ramp primitive is a genuine slope, not a staircase.
+    let private slopeLevel rise =
+        LevelDsl.level "Slope"
+            [ LevelDsl.street 80.0f 30.0f Mud
+              LevelDsl.ramp (Vector3(0.0f, 0.0f, -10.0f)) (Vector3(0.0f, rise, 10.0f)) 16.0f Mud ]
+        |> LevelCompile.compile
+
+    [<Fact>]
+    let ``a ramp is one sloped surface, walkable end to end`` () =
+        // 20 m run, 7 m rise: about 19 degrees.
+        let level = slopeLevel 7.0f
+        let finish = walkForward level (Vector3(0.0f, 0.0f, -12.0f)) 240
+        Assert.True(finish.Y > 5.5f, $"expected to reach the top of the ramp, ended at y={finish.Y}")
+        Assert.True(finish.Z > 8.0f, $"expected to cross the ramp, ended at z={finish.Z}")
+
+    [<Fact>]
+    let ``a ramp past the slope limit cannot be climbed`` () =
+        // 20 m run, 40 m rise: about 63 degrees.
+        let level = slopeLevel 40.0f
+        let finish = walkForward level (Vector3(0.0f, 0.0f, -12.0f)) 240
+        Assert.True(finish.Y < 3.0f, $"expected the face to stop the player, ended at y={finish.Y}")
+
+    [<Fact>]
+    let ``a ramp carries a connected navmesh from bottom to top`` () =
+        let level = slopeLevel 7.0f
+        let onRamp =
+            level.Nav
+            |> Array.filter (fun node -> node.Position.Z > -10.0f && node.Position.Z < 10.0f && abs node.Position.X < 6.0f)
+        Assert.NotEmpty onRamp
+        Assert.True(onRamp |> Array.exists (fun node -> node.Position.Y > 5.0f), "no nav node near the top of the ramp")
+        Assert.True(onRamp |> Array.forall (fun node -> node.Neighbours.Length > 0), "ramp nav nodes are isolated")
+
+    [<Fact>]
+    let ``a ramp is solid, so rounds cannot pass through it`` () =
+        // Firing into the flank of the ramp must be blocked, which needs the
+        // prism to be closed rather than a bare surface.
+        let level = slopeLevel 7.0f
+        let below = Vector3(0.0f, 1.0f, 9.0f)
+        let across = Vector3(0.0f, 1.0f, -9.0f)
+        Assert.False(Ballistics.lineOfSight below across level, "the ramp body should block sight through it")

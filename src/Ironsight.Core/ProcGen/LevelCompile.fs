@@ -72,6 +72,44 @@ module LevelCompile =
             [| { A = points[0]; B = points[1]; C = points[2]; Normal = normal; Material = material }
                { A = points[0]; B = points[2]; C = points[3]; Normal = normal; Material = material } |])
 
+    /// Two triangles for a quad, wound so the normal points away from `inside`.
+    /// Deriving the normal and then orienting it against a known interior point
+    /// means callers need not reason about winding for every face of a prism.
+    let private quadTriangles (inside: Vector3) (p0: Vector3) (p1: Vector3) (p2: Vector3) (p3: Vector3) material =
+        let centre = (p0 + p1 + p2 + p3) * 0.25f
+        let normal = Vector3.Cross(p1 - p0, p2 - p0) |> MathEx.normalizedOrZero
+        let outward = if Vector3.Dot(normal, centre - inside) >= 0.0f then normal else -normal
+        if Vector3.Dot(normal, centre - inside) >= 0.0f then
+            [| { A = p0; B = p1; C = p2; Normal = outward; Material = material }
+               { A = p0; B = p2; C = p3; Normal = outward; Material = material } |]
+        else
+            [| { A = p0; B = p2; C = p1; Normal = outward; Material = material }
+               { A = p0; B = p3; C = p2; Normal = outward; Material = material } |]
+
+    /// A closed sloped prism: the walkable top surface plus a skirt down to the
+    /// ground, so penetration can still pair an entry face with an exit face.
+    let rampTriangles (startPoint: Vector3) (endPoint: Vector3) (width: float32) material =
+        let forward = MathEx.normalizedOrZero (MathEx.horizontal (endPoint - startPoint))
+        if forward.LengthSquared() < 0.5f then [||]
+        else
+            let side = Vector3.Cross(Vector3.UnitY, forward) * (width * 0.5f)
+            // Solid earth beneath, so a ramp rising from a terrace is not a
+            // floating shelf with nothing under it.
+            let baseY = min 0.0f (min startPoint.Y endPoint.Y) - 0.25f
+            let sA, sB = startPoint - side, startPoint + side
+            let fA, fB = endPoint - side, endPoint + side
+            let flatten (v: Vector3) = Vector3(v.X, baseY, v.Z)
+            let bsA, bsB, bfA, bfB = flatten sA, flatten sB, flatten fA, flatten fB
+            let inside = (sA + sB + fA + fB + bsA + bsB + bfA + bfB) / 8.0f
+            let quad = quadTriangles inside
+            Array.concat
+                [ quad sA sB fB fA material      // walkable top
+                  quad bsA bfA bfB bsB material  // underside
+                  quad sA fA bfA bsA material    // one flank
+                  quad sB bsB bfB fB material    // the other flank
+                  quad sA bsA bsB sB material    // lower end cap
+                  quad fA fB bfB bfA material ]  // upper end cap
+
     let private triangleBounds (triangle: Tri) =
         { Min = Vector3.Min(triangle.A, Vector3.Min(triangle.B, triangle.C))
           Max = Vector3.Max(triangle.A, Vector3.Max(triangle.B, triangle.C)) }
@@ -261,6 +299,23 @@ module LevelCompile =
             |> Array.concat
         vertices, indices
 
+    /// Folds loose triangles into an existing render mesh. Level.Vertices is
+    /// opaque to the renderer, which already draws arbitrary triangle soup for
+    /// characters and guns, so sloped geometry needs no renderer change.
+    let private appendTriangleMesh (vertices: MeshVertex array) (indices: uint32 array) (triangles: Tri array) =
+        if triangles.Length = 0 then vertices, indices
+        else
+            let baseIndex = uint32 vertices.Length
+            let extraVertices =
+                triangles
+                |> Array.collect (fun triangle ->
+                    let materialId = Materials.id triangle.Material
+                    [| { Position = triangle.A; Normal = triangle.Normal; MaterialId = materialId }
+                       { Position = triangle.B; Normal = triangle.Normal; MaterialId = materialId }
+                       { Position = triangle.C; Normal = triangle.Normal; MaterialId = materialId } |])
+            let extraIndices = Array.init (triangles.Length * 3) (fun index -> baseIndex + uint32 index)
+            Array.append vertices extraVertices, Array.append indices extraIndices
+
     let private compileNav (bounds: Aabb) (brushes: Brush array) (brushGrid: BrushGrid) (collision: CollisionMesh) =
         let spacing = 2.0f
         let minX, maxX = int (MathF.Ceiling(bounds.Min.X / spacing)), int (MathF.Floor(bounds.Max.X / spacing))
@@ -326,6 +381,9 @@ module LevelCompile =
         let length, width, surface = streets |> List.tryHead |> Option.defaultValue (40.0f, 16.0f, Mud)
         let bounds = { Min = Vector3(-width, 0.0f, -length * 0.5f); Max = Vector3(width, 8.0f, length * 0.5f) }
         let brushes = ResizeArray<Brush>()
+        // Geometry that is not a box lives here and is merged into both the
+        // collision mesh and the render mesh once the item loop is done.
+        let sloped = ResizeArray<Tri>()
         brushes.Add(brush (Vector3(-width, -0.25f, -length * 0.5f)) (Vector3(width, 0.0f, length * 0.5f)) surface)
         let covers = ResizeArray<CoverPoint>()
         let spawns = ResizeArray<struct (Team option * Vector3)>()
@@ -345,7 +403,17 @@ module LevelCompile =
         for item in spec.Items do
             match item with
             | Street _ | Objective _ | MissionRule _ -> ()
-            | Block(center, size, material) -> brushes.Add(brush (center - size * 0.5f) (center + size * 0.5f) material)
+            | Block(center, size, material) ->
+                brushes.Add(brush (center - size * 0.5f) (center + size * 0.5f) material)
+                // Anything at chest height is cover a soldier can crouch behind.
+                // Only sandbag lines and MGs ever produced cover points, so every
+                // crate and hedgehog on every map was invisible to the AI.
+                let top = center.Y + size.Y * 0.5f
+                if top >= 0.7f && top <= 1.7f && size.X >= 0.8f && size.Z >= 0.8f then
+                    for facing in [| Vector3.UnitX; -Vector3.UnitX; Vector3.UnitZ; -Vector3.UnitZ |] do
+                        let reach = Vector3(size.X * 0.5f + 0.6f, 0.0f, size.Z * 0.5f + 0.6f) * facing
+                        covers.Add { Pos = Vector3(center.X, 0.0f, center.Z) + reach; PeekDir = facing; Crouch = true; Owner = None }
+            | Ramp(startPoint, endPoint, width, material) -> sloped.AddRange(rampTriangles startPoint endPoint width material)
             | Ruin(center, size, height, facade, condition) -> brushes.AddRange(ruinBrushes center size height facade condition)
             | SandbagLine(startPoint, endPoint, owner) ->
                 brushes.Add(lineBrush startPoint endPoint 1.15f 0.55f Sandbag)
@@ -405,14 +473,23 @@ module LevelCompile =
                     spawns.Add(struct (Some team, Vector3(flat.X, 0.0f, flat.Z)))
         let brushArray = brushes.ToArray()
         let brushGrid = compileBrushGrid brushArray
-        let vertices, indices = compileMesh brushArray
-        let collision = brushArray |> Array.collect (fun item -> boxTriangles item.Bounds item.Material) |> compileCollision
+        let slopedArray = sloped.ToArray()
+        let vertices, indices =
+            let boxVertices, boxIndices = compileMesh brushArray
+            appendTriangleMesh boxVertices boxIndices slopedArray
+        let collision =
+            Array.append (brushArray |> Array.collect (fun item -> boxTriangles item.Bounds item.Material)) slopedArray
+            |> compileCollision
         // The vertical extent follows the content rather than a fixed 8 m lid,
         // so a bluff or a below-sea-level beach is expressible. Headroom above
         // the tallest brush keeps the top of it reachable.
         let worldBounds =
-            let lowest = brushArray |> Array.fold (fun acc item -> min acc item.Bounds.Min.Y) 0.0f
-            let highest = brushArray |> Array.fold (fun acc item -> max acc item.Bounds.Max.Y) 0.0f
+            let lowest =
+                slopedArray
+                |> Array.fold (fun acc t -> min acc (min t.A.Y (min t.B.Y t.C.Y))) (brushArray |> Array.fold (fun acc item -> min acc item.Bounds.Min.Y) 0.0f)
+            let highest =
+                slopedArray
+                |> Array.fold (fun acc t -> max acc (max t.A.Y (max t.B.Y t.C.Y))) (brushArray |> Array.fold (fun acc item -> max acc item.Bounds.Max.Y) 0.0f)
             { Min = Vector3(bounds.Min.X, lowest, bounds.Min.Z)
               Max = Vector3(bounds.Max.X, max bounds.Max.Y (highest + 4.0f), bounds.Max.Z) }
         { Name = spec.Name

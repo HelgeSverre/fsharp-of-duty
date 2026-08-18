@@ -13,6 +13,9 @@ type LevelItem =
     | Trench of startPoint: Vector3 * endPoint: Vector3 * width: float32
     | Mg42 of position: Vector3 * facing: float32 * owner: Team
     | Block of center: Vector3 * size: Vector3 * material: Material
+    /// A genuinely sloped surface between two heights, solid down to the ground
+    /// beneath it. Walkable if the grade is inside the slope limit.
+    | Ramp of startPoint: Vector3 * endPoint: Vector3 * width: float32 * material: Material
     | SpawnSquad of team: Team * count: int * center: Vector3
     | Objective of text: string
     | MissionRule of condition: TriggerCondition * action: ScriptAction
@@ -31,6 +34,7 @@ module LevelDsl =
     let trench startPoint endPoint width = Trench(startPoint, endPoint, width)
     let mg42 position facing owner = Mg42(position, facing, owner)
     let block center size material = Block(center, size, material)
+    let ramp startPoint endPoint width material = Ramp(startPoint, endPoint, width, material)
     let spawnSquad team count center = SpawnSquad(team, count, center)
     let objective text = Objective text
     let trigger condition action = MissionRule(condition, action)
