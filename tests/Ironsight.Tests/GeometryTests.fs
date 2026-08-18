@@ -254,11 +254,19 @@ module GeometryTests =
                         if seen.Add neighbour then queue.Enqueue neighbour
             found
 
+        let private channels = [| -13.0f; 0.0f; 13.0f |]
+        let private spurs = [| -19.5f; -6.5f; 6.5f; 19.5f |]
+
+        let private standable x z =
+            match LevelCompile.surfaceColumn level.Collision x z with
+            | ValueSome(struct (_, normal)) -> Movement.walkableNormal normal
+            | ValueNone -> false
+
         [<Fact>]
-        let ``the surf connects to both bunkers through the draws`` () =
-            let surf = Vector3(0.0f, 0.0f, -28.0f)
-            Assert.True(reachable surf (Vector3(-18.5f, 5.6f, 24.0f)), "no route from the beach to the west bunker")
-            Assert.True(reachable surf (Vector3(18.5f, 5.6f, 24.0f)), "no route from the beach to the east bunker")
+        let ``the surf connects to both bunkers`` () =
+            let surf = Vector3(0.0f, 0.0f, -27.0f)
+            Assert.True(reachable surf (Vector3(-22.0f, 6.5f, 24.0f)), "no route from the beach to the west bunker")
+            Assert.True(reachable surf (Vector3(22.0f, 6.5f, 24.0f)), "no route from the beach to the east bunker")
 
         [<Fact>]
         let ``both spawns reach the beach`` () =
@@ -267,44 +275,55 @@ module GeometryTests =
                 Assert.True(reachable spawn beach, $"spawn at {spawn} is cut off from the beach")
 
         [<Fact>]
-        let ``spawns land on the plateau, not at sea level`` () =
+        let ``spawns land on the bluff, not on the sand`` () =
             for struct (owner, spawn) in level.Spawns do
-                Assert.True(spawn.Y > 5.0f, $"{owner} spawn at {spawn} did not snap onto the plateau")
+                Assert.True(spawn.Y > 4.5f, $"{owner} spawn at {spawn} did not snap onto the bluff")
 
         [<Fact>]
-        let ``the bluff face between the draws is not walkable`` () =
-            // Straight up the middle must be blocked, or the draws are pointless.
-            let faceNodes =
-                level.Nav
-                |> Array.filter (fun node -> abs node.Position.X < 10.0f && node.Position.Z > -4.0f && node.Position.Z < 9.0f)
-            // Any node there sits on top of the bluff, never partway up its face.
-            Assert.True(
-                faceNodes |> Array.forall (fun node -> node.Position.Y < 0.6f || node.Position.Y > 5.0f),
-                "found a navigable foothold partway up the bluff face")
+        let ``all three channels are climbable end to end`` () =
+            for x in channels do
+                for z in [ -1.0f; 2.0f; 5.0f; 8.0f ] do
+                    Assert.True(standable x z, $"channel at x={x} is not standable at z={z}")
+
+        [<Fact>]
+        let ``the spurs between the channels are walls`` () =
+            // This is what makes three distinct lanes instead of one open
+            // hillside: you cannot cross from one channel to the next partway up.
+            // The wall is the band where the spur leaps to full height, just
+            // above the seawall. Higher up, a spur top is flat and walkable —
+            // reachable from the crest, which is the point.
+            for x in spurs do
+                let footholds = [ -2.0f; -1.5f; -1.0f ] |> List.filter (fun z -> standable x z)
+                Assert.True(footholds.IsEmpty, $"spur at x={x} can be climbed from the beach at z={footholds}")
+
+        [<Fact>]
+        let ``the ravine is cut deeper than the draws`` () =
+            let height x z =
+                match LevelCompile.surfaceColumn level.Collision x z with
+                | ValueSome(struct (value, _)) -> value
+                | ValueNone -> Single.NaN
+            for z in [ 0.0f; 3.0f; 6.0f ] do
+                Assert.True(height 0.0f z < height -13.0f z - 0.5f, $"the ravine is no deeper than the west draw at z={z}")
+                Assert.True(height 0.0f z < height 13.0f z - 0.5f, $"the ravine is no deeper than the east draw at z={z}")
 
         [<Fact>]
         let ``the map is mirrored across x`` () =
             let alliesSpawns = level.Spawns |> Array.filter (fun struct (o, _) -> o = Some Allies) |> Array.length
             let axisSpawns = level.Spawns |> Array.filter (fun struct (o, _) -> o = Some Axis) |> Array.length
             Assert.Equal(alliesSpawns, axisSpawns)
-            // Every walkable surface should have a partner at mirrored X.
-            let heightAt x z =
+            let height x z =
                 match LevelCompile.surfaceColumn level.Collision x z with
-                | ValueSome(struct (height, _)) -> height
+                | ValueSome(struct (value, _)) -> value
                 | ValueNone -> Single.NaN
-            for z in [ -20.0f; -10.0f; 0.0f; 8.0f; 14.0f; 24.0f ] do
-                for x in [ 6.0f; 14.0f; 18.5f; 26.0f ] do
-                    Assert.Equal(float (heightAt x z), float (heightAt -x z), 2)
-
-        [<Fact>]
-        let ``the draws climb within the slope limit`` () =
-            // Sample up a draw and confirm every surface there is standable.
-            for sign in [ -1.0f; 1.0f ] do
-                for z in [ -3.0f; 0.0f; 4.0f; 8.0f ] do
-                    match LevelCompile.surfaceColumn level.Collision (sign * 18.5f) z with
-                    | ValueSome(struct (_, normal)) ->
-                        Assert.True(Movement.walkableNormal normal, $"draw at x={sign * 18.5f} z={z} is too steep to climb")
-                    | ValueNone -> failwith $"no surface in the draw at x={sign * 18.5f} z={z}"
+            for z in [ -20.0f; -10.0f; 0.0f; 6.0f; 15.0f; 24.0f ] do
+                for x in [ 4.0f; 13.0f; 22.0f ] do
+                    let left, right = height -x z, height x z
+                    if Single.IsNaN left || Single.IsNaN right then
+                        Assert.True(Single.IsNaN left && Single.IsNaN right, $"only one side is a wall at x=+/-{x} z={z}")
+                    else
+                        // Quads split along one diagonal, which does not mirror,
+                        // so the two sides can differ by a few millimetres.
+                        Assert.True(abs (left - right) < 0.05f, $"x=+/-{x} z={z} differ: {left} vs {right}")
 
     /// Oriented geometry, real trenches and heightfields — the pieces that let a
     /// level stop being axis-aligned boxes on a flat plane.
@@ -339,13 +358,14 @@ module GeometryTests =
             let level = compile [ LevelDsl.trench (Vector3(0.0f, 0.0f, -12.0f)) (Vector3(0.0f, 0.0f, 12.0f)) 3.0f ]
             match LevelCompile.surfaceColumn level.Collision 0.0f 0.0f with
             | ValueSome(struct (height, normal)) ->
-                Assert.True(height < -1.0f, $"trench floor sits at {height}, expected it dug below ground")
+                Assert.True(height < -0.5f, $"trench floor sits at {height}, expected it dug below ground")
                 Assert.True(Movement.walkableNormal normal, "trench floor is not walkable")
             | ValueNone -> failwith "no surface inside the trench"
-            // The spoil bank beside it must stand above ground.
-            match LevelCompile.surfaceColumn level.Collision 1.8f 0.0f with
-            | ValueSome(struct (height, _)) -> Assert.True(height > 0.2f, $"spoil bank at {height} is not raised")
-            | ValueNone -> failwith "no surface on the trench bank"
+            // Beside the cut, the ground is back at grade — the trench is a
+            // channel you can step into, not a walled corridor.
+            match LevelCompile.surfaceColumn level.Collision 3.0f 0.0f with
+            | ValueSome(struct (height, _)) -> Assert.True(height > -0.2f, $"ground beside the trench sits at {height}")
+            | ValueNone -> failwith "no ground beside the trench"
 
         [<Fact>]
         let ``a trench gives cover to shelter in`` () =

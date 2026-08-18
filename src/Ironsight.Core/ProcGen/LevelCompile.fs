@@ -270,10 +270,11 @@ module LevelCompile =
         |> Seq.map (fun index -> mesh.Triangles[index])
         |> Seq.toArray
 
-    /// Highest walkable surface in an XZ column, with its normal. The shared
-    /// ground probe for nav nodes, spawn snapping and cover placement, so all
-    /// three agree about where the floor is.
-    let surfaceColumn (mesh: CollisionMesh) (x: float32) (z: float32) =
+    /// Highest surface in an XZ column, with its normal. `walkableOnly` picks
+    /// between "somewhere you could stand" and "wherever the ground is" — nav
+    /// wants the former, spawns and cover the latter, or a marker beside a
+    /// trench lip falls through the world because the surface there is steep.
+    let surfaceColumnWhere (walkableOnly: bool) (mesh: CollisionMesh) (x: float32) (z: float32) =
         let cell value = int (MathF.Floor(value / mesh.CellSize))
         let indices =
             match Map.tryFind (struct (cell x, cell z)) mesh.Cells with
@@ -285,7 +286,7 @@ module LevelCompile =
         let mutable bestNormal = Vector3.UnitY
         for index in indices do
             let triangle = mesh.Triangles[index]
-            if triangle.Normal.Y >= Tuning.MaxSlopeCosine then
+            if triangle.Normal.Y >= (if walkableOnly then Tuning.MaxSlopeCosine else 0.05f) then
                 match MathEx.rayTriangle origin -Vector3.UnitY triangle.A triangle.B triangle.C with
                 | ValueSome distance ->
                     let height = origin.Y - distance
@@ -294,6 +295,12 @@ module LevelCompile =
                         bestNormal <- triangle.Normal
                 | ValueNone -> ()
         if Single.IsNegativeInfinity bestHeight then ValueNone else ValueSome(struct (bestHeight, bestNormal))
+
+    /// The walkable ground probe, used by nav.
+    let surfaceColumn mesh x z = surfaceColumnWhere true mesh x z
+
+    /// Any ground at all, used to settle spawns and cover onto the map.
+    let surfaceUnderneath mesh x z = surfaceColumnWhere false mesh x z
 
     let private brush (minimum: Vector3) (maximum: Vector3) (material: Material) : Brush =
         { Bounds = { Min = minimum; Max = maximum }; Material = material }
@@ -440,7 +447,7 @@ module LevelCompile =
                         // ramps: a 2 m rise over 2 m is a 45 degree slope if the
                         // midpoint is halfway up, and a wall if it is not.
                         let climbable =
-                            rise <= 0.45f
+                            rise <= 0.55f
                             || (rise <= spacing * MathF.Tan(Tuning.MaxSlopeAngle * MathF.PI / 180.0f)
                                 && (match surfaceColumn collision ((position.X + other.X) * 0.5f) ((position.Z + other.Z) * 0.5f) with
                                     | ValueSome(struct (midHeight, _)) -> abs (midHeight - (position.Y + other.Y) * 0.5f) <= 0.35f
@@ -480,6 +487,23 @@ module LevelCompile =
                         Vector3.Distance(MathEx.horizontal (startPoint + segment * t), point) <= reach)
                 | _ -> None)
         let isCut x z = cut |> List.exists (fun test -> test x z)
+        // Trench footprints, paired with the floor height they cut down to, for
+        // notching any terrain they pass through.
+        let trenchCuts =
+            spec.Items
+            |> List.choose (function
+                | Trench(startPoint, endPoint, trenchWidth) ->
+                    let reach = trenchWidth * 0.5f + 0.35f
+                    let inside (x: float32) (z: float32) =
+                        let point = Vector3(x, 0.0f, z)
+                        let segment = MathEx.horizontal (endPoint - startPoint)
+                        let lengthSquared = segment.LengthSquared()
+                        let t =
+                            if lengthSquared < 0.000001f then 0.0f
+                            else MathEx.clamp01 (Vector3.Dot(point - startPoint, segment) / lengthSquared)
+                        Vector3.Distance(MathEx.horizontal (startPoint + segment * t), point) <= reach
+                    Some(inside, min startPoint.Y endPoint.Y - 0.9f)
+                | _ -> None)
         let groundCell = 2.0f
         let groundStepsX = max 1 (int (MathF.Ceiling(width * 2.0f / groundCell)))
         let groundStepsZ = max 1 (int (MathF.Ceiling(length / groundCell)))
@@ -521,7 +545,16 @@ module LevelCompile =
                         let reach = Vector3(size.X * 0.5f + 0.6f, 0.0f, size.Z * 0.5f + 0.6f) * facing
                         covers.Add { Pos = Vector3(center.X, 0.0f, center.Z) + reach; PeekDir = facing; Crouch = true; Owner = None }
             | Ramp(startPoint, endPoint, width, material) -> sloped.AddRange(rampTriangles startPoint endPoint width material)
-            | Heightfield(center, size, cells, height, material) -> sloped.AddRange(heightfieldTriangles center size cells height material)
+            | Heightfield(center, size, cells, height, material) ->
+                // Terrain is notched wherever a trench crosses it, so a trench
+                // network works on a hilltop and not only on flat ground. The
+                // trench lays its own floor slab inside the notch.
+                let notched x z =
+                    let raw = height x z
+                    trenchCuts
+                    |> List.fold (fun current (inside, floorOffset) ->
+                        if inside x z then min current (floorOffset - 0.35f) else current) raw
+                sloped.AddRange(heightfieldTriangles center size cells notched material)
             | Ruin(center, size, height, facade, condition) -> brushes.AddRange(ruinBrushes center size height facade condition)
             | SandbagLine(startPoint, endPoint, owner) ->
                 sloped.AddRange(orientedBoxTriangles startPoint endPoint 1.15f 0.55f Sandbag)
@@ -554,7 +587,10 @@ module LevelCompile =
                 // the channel floor drops below the authored line and the spoil
                 // is banked either side. Previously this emitted two parapets
                 // standing on flat ground and excavated nothing.
-                let depth = 1.5f
+                // Deep enough to be chest-high cover standing and full cover
+                // crouched, shallow enough to climb out of: the jump apex is
+                // 1.11 m, so a deeper cut would be a trap rather than a trench.
+                let depth = 0.9f
                 let floorStart = startPoint - Vector3.UnitY * depth
                 let floorEnd = endPoint - Vector3.UnitY * depth
                 sloped.AddRange(orientedBoxTriangles (floorStart - Vector3.UnitY * 0.3f) (floorEnd - Vector3.UnitY * 0.3f) 0.3f trenchWidth Mud)
@@ -563,7 +599,16 @@ module LevelCompile =
                 let direction = MathEx.normalizedOrZero (MathEx.horizontal (endPoint - startPoint))
                 let side = Vector3.Cross(Vector3.UnitY, direction) * (trenchWidth * 0.5f + 0.3f)
                 for offset in [| side; -side |] do
-                    sloped.AddRange(orientedBoxTriangles (floorStart + offset) (floorEnd + offset) (depth + 0.7f) 0.6f Mud)
+                    // The spoil stands only a step proud of the surrounding
+                    // ground, so a trench can be crossed and dropped into
+                    // anywhere along its length rather than only at the ends.
+                    sloped.AddRange(orientedBoxTriangles (floorStart + offset) (floorEnd + offset) depth 0.6f Mud)
+                    // A fire step halfway up each side. Authentic, and it turns
+                    // a 0.9 m wall into two steps, so the trench can be crossed
+                    // and fought from rather than trapping whoever drops in.
+                    let ledge = MathEx.normalizedOrZero offset * 0.35f
+                    sloped.AddRange(
+                        orientedBoxTriangles (floorStart + offset - ledge) (floorEnd + offset - ledge) (depth * 0.5f) 0.7f Mud)
                     // Stand inside the channel facing out over the bank, so the
                     // ground probe settles it on the trench floor rather than on
                     // top of the spoil.
@@ -633,13 +678,13 @@ module LevelCompile =
           Cover =
             covers.ToArray()
             |> Array.map (fun point ->
-                match surfaceColumn collision point.Pos.X point.Pos.Z with
+                match surfaceUnderneath collision point.Pos.X point.Pos.Z with
                 | ValueSome(struct (height, _)) -> { point with Pos = Vector3(point.Pos.X, height, point.Pos.Z) }
                 | ValueNone -> point)
           Spawns =
             spawns.ToArray()
             |> Array.map (fun struct (team, position) ->
-                match surfaceColumn collision position.X position.Z with
+                match surfaceUnderneath collision position.X position.Z with
                 | ValueSome(struct (height, _)) -> struct (team, Vector3(position.X, height, position.Z))
                 | ValueNone -> struct (team, position))
           MountedGuns = mountedGuns.ToArray()

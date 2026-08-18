@@ -79,7 +79,8 @@ module Movement =
             else
                 let stepped =
                     if wasGrounded then
-                        [ 0.1f; 0.2f; 0.3f; 0.4f ]
+                        // Up to half a metre, which clears a trench fire step.
+                        [ 0.1f; 0.2f; 0.3f; 0.4f; 0.5f ]
                         |> List.tryPick (fun height ->
                             let candidate = Vector3(horizontal.X, oldPosition.Y + height, horizontal.Z)
                             if collides level stance candidate then None else Some candidate)
