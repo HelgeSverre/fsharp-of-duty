@@ -115,10 +115,12 @@ download it from the server automatically, verified by content hash.
 | --- | --- |
 | `WASD` | Move |
 | Mouse | Look |
-| Left / right mouse | Fire / aim down sights |
+| Left mouse | Fire |
+| Right mouse | Aim down sights (hold; toggle mode in settings) |
 | Left Shift | Sprint |
-| Space | Jump |
-| Left Control / `Z` | Crouch (hold; toggle mode in settings) / prone |
+| Space | Jump; crouch mid-air to tuck the legs and clear higher ledges |
+| Left Control | Crouch (hold; toggle mode in settings) |
+| `Z` | Prone (hold) |
 | `R` | Start reload; restart after campaign death |
 | `G` | Hold to cook grenade, release to throw |
 | `1`–`5` | Weapon category; press again to cycle within it |
