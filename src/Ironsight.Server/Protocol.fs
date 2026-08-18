@@ -12,7 +12,9 @@ type WelcomeMessage =
       playerId: int
       sessionToken: string
       tickRate: int
-      snapshotRate: int }
+      snapshotRate: int
+      level: string
+      mapHash: string }
 
 [<CLIMutable>]
 type PlayerSnapshot =
@@ -151,13 +153,15 @@ module Protocol =
 
     let serialize<'a> (value: 'a) = JsonSerializer.SerializeToUtf8Bytes(value, jsonOptions)
 
-    let welcome (EntityId playerId) token =
+    let welcome (EntityId playerId) token levelName mapHash =
         { ``type`` = "welcome"
           version = Version
           playerId = playerId
           sessionToken = token
           tickRate = Tuning.TickRate
-          snapshotRate = 20 }
+          snapshotRate = 20
+          level = levelName
+          mapHash = mapHash }
 
     let snapshot state =
         let players =

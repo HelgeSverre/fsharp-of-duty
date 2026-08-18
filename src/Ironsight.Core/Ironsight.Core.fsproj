@@ -16,6 +16,12 @@
     <Compile Include="ProcGen/Humanoid.fs" />
     <Compile Include="ProcGen/LevelDsl.fs" />
     <Compile Include="ProcGen/LevelCompile.fs" />
+    <Compile Include="ProcGen/MapFile.fs" />
+    <Compile Include="Maps/Paintball.fs" />
+    <Compile Include="Maps/ScrapDepot.fs" />
+    <Compile Include="Maps/CanalYard.fs" />
+    <Compile Include="Maps/TrainingYard.fs" />
+    <Compile Include="Maps/OmahaDraw.fs" />
     <Compile Include="ProcGen/Levels.fs" />
     <Compile Include="Movement.fs" />
     <Compile Include="Weapons.fs" />

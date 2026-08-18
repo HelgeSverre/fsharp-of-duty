@@ -12,6 +12,7 @@
   </ItemGroup>
   <ItemGroup>
     <Compile Include="Settings.fs" />
+    <Compile Include="MapStore.fs" />
     <Compile Include="Menu.fs" />
     <Compile Include="SettingsUi.fs" />
     <Compile Include="Input.fs" />

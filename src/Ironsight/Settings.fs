@@ -74,11 +74,14 @@ module Settings =
     let deserialize (json: string) =
         JsonSerializer.Deserialize<GameSettings>(json, jsonOptions ()) |> clamp
 
-    let private filePath () =
-        Path.Combine(
-            Environment.GetFolderPath Environment.SpecialFolder.ApplicationData,
-            "ironsight",
-            "settings.json")
+    /// Root for everything the game persists (settings, downloaded maps).
+    /// IRONSIGHT_HOME overrides it for portable installs and tests.
+    let appDataDir () =
+        match Environment.GetEnvironmentVariable "IRONSIGHT_HOME" with
+        | value when not (String.IsNullOrWhiteSpace value) -> value
+        | _ -> Path.Combine(Environment.GetFolderPath Environment.SpecialFolder.ApplicationData, "ironsight")
+
+    let private filePath () = Path.Combine(appDataDir (), "settings.json")
 
     let load () =
         try

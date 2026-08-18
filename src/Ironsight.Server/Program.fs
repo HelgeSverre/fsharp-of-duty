@@ -14,9 +14,12 @@ open Microsoft.Extensions.DependencyInjection
 open Microsoft.Extensions.Hosting
 
 module Program =
-    type private MatchDirectory(level: Level) =
+    type private MatchDirectory(level: Level, mapBytes: byte array) =
         member val TeamDeathmatch = MatchHost(TeamDeathmatch, level)
         member val FreeForAll = MatchHost(FreeForAll, level)
+        member _.LevelName = level.Name
+        member _.MapBytes = mapBytes
+        member _.MapHash = Ironsight.ProcGen.MapFile.hash mapBytes
 
         member this.Leaderboard() =
             Protocol.leaderboard [| this.TeamDeathmatch.Snapshot(); this.FreeForAll.Snapshot() |]
@@ -70,7 +73,7 @@ module Program =
                     | Some(playerId, token) ->
                     try
                         try
-                            do! send (Protocol.welcome playerId token) socket cancellationToken
+                            do! send (Protocol.welcome playerId token matches.LevelName matches.MapHash) socket cancellationToken
                             let mutable connected = true
                             let mutable pendingReceive = receiveMessage socket cancellationToken
                             // The snapshot timer must keep its own cadence. Starting a
@@ -128,14 +131,25 @@ module Program =
                 WebRootPath = if IO.Directory.Exists sourceWebRoot then sourceWebRoot else null)
         let builder = WebApplication.CreateBuilder options
         builder.WebHost.UseUrls($"http://0.0.0.0:{port}") |> ignore
-        let matchLevel =
+        // IRONSIGHT_LEVEL is a builtin alias or a path to an .ironmap file. The
+        // resolved *spec* is kept so its encoded bytes can be served to clients
+        // that do not have the map (see /maps/{hash} below).
+        let matchSpec =
+            let builtin alias name =
+                String.Equals(alias, name, StringComparison.OrdinalIgnoreCase)
             match Environment.GetEnvironmentVariable "IRONSIGHT_LEVEL" with
-            | value when String.Equals(value, "training", StringComparison.OrdinalIgnoreCase) -> Ironsight.ProcGen.Levels.trainingYard
-            | value when String.Equals(value, "depot", StringComparison.OrdinalIgnoreCase) -> Ironsight.ProcGen.Levels.scrapDepot
-            | value when String.Equals(value, "canal", StringComparison.OrdinalIgnoreCase) -> Ironsight.ProcGen.Levels.canalYard
-            | value when String.Equals(value, "omaha", StringComparison.OrdinalIgnoreCase) -> Ironsight.ProcGen.Levels.omahaDraw
-            | _ -> Ironsight.ProcGen.Levels.paintballArena
-        let matches = MatchDirectory(matchLevel)
+            | value when builtin value "training" -> Ironsight.ProcGen.TrainingYardMap.spec
+            | value when builtin value "depot" -> Ironsight.ProcGen.ScrapDepotMap.spec
+            | value when builtin value "canal" -> Ironsight.ProcGen.CanalYardMap.spec
+            | value when builtin value "omaha" -> Ironsight.ProcGen.OmahaDrawMap.spec
+            | value when not (String.IsNullOrWhiteSpace value) && value.EndsWith(Ironsight.ProcGen.MapFile.Extension, StringComparison.OrdinalIgnoreCase) ->
+                match Ironsight.ProcGen.MapFile.decode (IO.File.ReadAllBytes value) with
+                | Ok spec -> spec
+                | Error message -> failwith $"IRONSIGHT_LEVEL '{value}' is not a valid map file: {message}"
+            | _ -> Ironsight.ProcGen.PaintballMap.spec
+        let mapBytes = Ironsight.ProcGen.MapFile.encode matchSpec
+        let matchLevel = Ironsight.ProcGen.LevelCompile.compile matchSpec
+        let matches = MatchDirectory(matchLevel, mapBytes)
         builder.Services.AddSingleton matches |> ignore
         builder.Services.AddHostedService(fun _ ->
             { new BackgroundService() with
@@ -164,6 +178,18 @@ module Program =
                 context.Response.Headers.CacheControl <- "public, max-age=300"
                 context.Response.Headers.AccessControlAllowOrigin <- "*"
                 Results.Json(Protocol.arsenal ())))
+        |> ignore
+        app.MapGet(
+            "/maps/{hash}",
+            Func<HttpContext, string, IResult>(fun context hash ->
+                // Content-addressed: the URL names the exact bytes, so an
+                // aggressive cache policy can never serve a stale map (the
+                // classic FastDL failure mode).
+                if String.Equals(hash, matches.MapHash, StringComparison.OrdinalIgnoreCase) then
+                    context.Response.Headers.CacheControl <- "public, max-age=31536000, immutable"
+                    context.Response.Headers.AccessControlAllowOrigin <- "*"
+                    Results.Bytes(matches.MapBytes, "application/octet-stream")
+                else Results.NotFound()))
         |> ignore
         app.Map("/play", Action<IApplicationBuilder>(fun branch ->
             branch.Run(fun context -> handleSocket matches context) |> ignore)) |> ignore

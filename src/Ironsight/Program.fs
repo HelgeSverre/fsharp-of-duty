@@ -50,6 +50,7 @@ module Program =
         let mutable reconciledTick = -1L
         let mutable lastOnlineEventId = 0L
         let mutable onlineSnapshot: OnlineSnapshot option = None
+        let mutable onlineLevel: Level option = None
         let mutable predictedFireCooldown = 0.0f
         let mutable predictedFireHeld = false
         let mutable subtitle: struct (string * float32<s>) option = None
@@ -80,8 +81,19 @@ module Program =
         let requestedMap =
             if args |> Array.contains "--training" then Some "training"
             else None
-        let mutable initialWorld = createOfflineWorld (requestedMap |> Option.defaultValue "paintball")
-        let mutable menu = if onlineRequested || requestedMap.IsSome then None else Some(StartMenu.create playerName)
+        // --map <file.ironmap>: play a custom map offline as a bot round.
+        let customMapWorld =
+            argumentValue "--map" args
+            |> Option.map (fun path ->
+                match Ironsight.ProcGen.MapFile.decode (IO.File.ReadAllBytes path) with
+                | Ok spec -> Sim.createRoundWorldFor (Ironsight.ProcGen.LevelCompile.compile spec) 0x1A0B3CUL
+                | Error message -> failwith $"--map {path}: {message}")
+        let mutable initialWorld =
+            customMapWorld
+            |> Option.defaultWith (fun () -> createOfflineWorld (requestedMap |> Option.defaultValue "paintball"))
+        let mutable menu =
+            if onlineRequested || requestedMap.IsSome || customMapWorld.IsSome then None
+            else Some(StartMenu.create playerName)
         let mutable previous = initialWorld
         let mutable current = previous
         let mutable accumulator = 0.0
@@ -91,6 +103,22 @@ module Program =
             try client.CloseAsync().GetAwaiter().GetResult()
             with _ -> ()
             (client :> IDisposable).Dispose()
+
+        /// Sync the server's announced map: builtin, hash cache, or download.
+        /// False means the map could not be obtained and play must not start.
+        let applyServerMap (client: OnlineClient) =
+            if String.IsNullOrEmpty client.MapHash then
+                onlineLevel <- None // pre-map-sync server; snapshot name fallback applies
+                true
+            else
+                match MapStore.resolve client.ServerUri client.MapHash with
+                | Ok level ->
+                    onlineLevel <- Some level
+                    true
+                | Error message ->
+                    Console.Error.WriteLine($"Map sync failed: {message}")
+                    window.Title <- "IRONSIGHT — MAP DOWNLOAD FAILED"
+                    false
 
         let beginReconnect generation token =
             task {
@@ -110,6 +138,7 @@ module Program =
             onlineClient |> Option.iter closeClient
             onlineClient <- None
             onlineSnapshot <- None
+            onlineLevel <- None
             pendingInputs.Clear()
             reconciledTick <- -1L
             predictedFireHeld <- false
@@ -141,8 +170,10 @@ module Program =
                 try
                     let client = new OnlineClient(OnlineDefaults.serverUri (), playerName, requestedMode, selectedOnlineWeapon)
                     client.ConnectAsync().GetAwaiter().GetResult()
-                    onlineClient <- Some client
-                    window.Title <- $"IRONSIGHT — ONLINE — {client.ServerUri.Host}"
+                    if applyServerMap client then
+                        onlineClient <- Some client
+                        window.Title <- $"IRONSIGHT — ONLINE — {client.ServerUri.Host}"
+                    else closeClient client
                 with error ->
                     Console.Error.WriteLine($"Online connection failed: {error.Message}")
                     window.Title <- "IRONSIGHT — CONNECTING")
@@ -169,7 +200,7 @@ module Program =
                     reconnectTask <- None
                     let struct (generation, result) = attempt.GetAwaiter().GetResult()
                     match result with
-                    | Some client when onlineRequested && generation = connectionGeneration ->
+                    | Some client when onlineRequested && generation = connectionGeneration && applyServerMap client ->
                         onlineClient |> Option.iter closeClient
                         onlineClient <- Some client
                         pendingInputs.Clear()
@@ -291,8 +322,11 @@ module Program =
                             | Some snapshot when snapshot.Tick > reconciledTick ->
                                 if snapshot.LevelName <> current.Level.Name then
                                     let level =
-                                        Ironsight.ProcGen.Levels.byName snapshot.LevelName
-                                        |> Option.defaultValue Ironsight.ProcGen.Levels.paintballArena
+                                        match onlineLevel with
+                                        | Some synced when synced.Name = snapshot.LevelName -> synced
+                                        | _ ->
+                                            Ironsight.ProcGen.Levels.byName snapshot.LevelName
+                                            |> Option.defaultValue Ironsight.ProcGen.Levels.paintballArena
                                     current <- { current with Level = level }
                                 let networkEvents =
                                     snapshot.Events

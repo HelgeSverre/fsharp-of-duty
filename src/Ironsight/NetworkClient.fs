@@ -67,6 +67,8 @@ type OnlineClient(serverUri: Uri, playerName: string, requestedMode: GameMode, w
     let mutable playerId = 0
     let requestedSessionToken = defaultArg resumeToken ""
     let mutable sessionToken = requestedSessionToken
+    let mutable levelName = ""
+    let mutable mapHash = ""
     // Estimated offset between the server tick counter and the local monotonic
     // clock, in ticks. Smoothing it (instead of re-anchoring on every snapshot
     // arrival) keeps the interpolation target advancing steadily through
@@ -264,6 +266,9 @@ type OnlineClient(serverUri: Uri, playerName: string, requestedMode: GameMode, w
     member _.ServerUri = serverUri
     member _.PlayerId = playerId
     member _.SessionToken = sessionToken
+    /// Announced by the server's welcome; "" on servers predating map sync.
+    member _.LevelName = levelName
+    member _.MapHash = mapHash
     member _.Connected = socket.State = WebSocketState.Open && not cancellation.IsCancellationRequested
 
     member _.ConnectAsync() = task {
@@ -290,6 +295,8 @@ type OnlineClient(serverUri: Uri, playerName: string, requestedMode: GameMode, w
             if getString "type" root <> "welcome" || getInt "version" root <> 1 then invalidOp "Incompatible server welcome."
             playerId <- getInt "playerId" root
             sessionToken <- getString "sessionToken" root
+            levelName <- getString "level" root
+            mapHash <- getString "mapHash" root
         do! sendJson {| ``type`` = "ready"; version = 1 |}
         receiveTask <- receiveLoop () :> Task
         sendTask <- senderLoop () :> Task

@@ -380,6 +380,12 @@ module Sim =
                       ResetIn = None
                       LastResult = None } }
 
+    /// Round-mode world for an arbitrary level (downloaded or custom map).
+    let createRoundWorldFor (level: Level) seed =
+        let axisSpawns =
+            level.Spawns |> Array.filter (fun struct (team, _) -> team = Some Axis) |> Array.length
+        createRoundWorld level (max 1 (min 5 axisSpawns)) seed
+
     let createPaintballWorld seed = createRoundWorld Levels.paintballArena 4 seed
 
     let createScrapDepotWorld seed = createRoundWorld Levels.scrapDepot 5 seed

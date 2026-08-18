@@ -24,6 +24,7 @@
     <Compile Include="ClientTests.fs" />
     <Compile Include="ServerTests.fs" />
     <Compile Include="MatchScript.fs" />
+    <Compile Include="MapFileTests.fs" />
     <Compile Include="IntegrationTests.fs" />
   </ItemGroup>
 </Project>
