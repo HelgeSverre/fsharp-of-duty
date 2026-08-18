@@ -17,14 +17,23 @@ unions model gameplay.
 - Fully procedural rendering and audio with no runtime content assets.
 - Fixed 60 Hz deterministic simulation with a functional core and imperative
   desktop shell.
-- Paintball Killhouse, Training Yard, Stalingrad Street, and a large generated
-  Normandy battlefield.
-- Kar98k, Thompson, M1911, scoped Kar98k, and M1897 Trench Gun.
-- ADS, sprinting, stances, recoil, penetration, grenades, regeneration, blood,
-  headshot gibs, and reload feedback.
+- Four arena maps — Paintball Killhouse, Scrap Depot, Canal Yard, and the
+  terrain-carved Omaha Draw with slopes, dug trenches, and a wadeable sea.
+- Maps are data: a versioned binary `.ironmap` format (spec, not geometry),
+  hash-verified map download from servers, and custom maps via
+  `IRONSIGHT_LEVEL=/path/map.ironmap` or `--map`.
+- Eleven player weapons — Kar98k, M1 Garand, Lee-Enfield, Thompson, STG-44,
+  MP40, M1911, Kar98k Sniper, FG42, M1897 Trench Gun, and BAR — plus mounted
+  MG42s.
+- ADS, sprinting, stances with crouch/prone accuracy bonuses, recoil,
+  penetration, grenades, regeneration, blood, headshot gibs, and reload
+  feedback.
 - Navgraph/A* bot navigation, cover behavior, suppression, and automatic reloads.
 - Authoritative 8v8-capable multiplayer with TDM and FFA rooms, prediction,
   interpolation, reconciliation, lag-compensated hits, and reconnect tokens.
+- A Half-Life-style server browser fed by a community `servers.json` (edit
+  yours in appdata, or PR the repo copy), an in-game loadout picker (`B`),
+  and an F3 wireframe/line-of-sight debug view.
 - A live public server and project website at
   [fsharp-of-duty.fly.dev](https://fsharp-of-duty.fly.dev/).
 
@@ -70,10 +79,9 @@ Run `just` to list every recipe.
 
 ```sh
 just run                         # open the game menu
-just training                    # launch Training Yard directly
-just stalingrad                  # launch Stalingrad Street directly
-just battlefield                 # launch the large generated battlefield
+just training                    # launch the Training Yard dev map directly
 just server                      # run a local Paintball server
+just server-map omaha            # run a local server with a chosen map
 just online-local Player         # connect to the local server
 just online Player               # connect to the official TDM server
 just ffa Player                  # connect to the official FFA server
@@ -94,8 +102,11 @@ dotnet run --project src/Ironsight/Ironsight.fsproj -- \
 ```
 
 Set `IRONSIGHT_SERVER=ws://127.0.0.1:8080/play` to use another server. Set
-`IRONSIGHT_LEVEL` to `paintball`, `training`, `stalingrad`, or `battlefield` on
-the server.
+`IRONSIGHT_LEVEL` on the server to `paintball`, `depot`, `canal`, `omaha`,
+`training`, or a path to an `.ironmap` file; clients that lack the map
+download it from the server automatically, verified by content hash.
+`--map /path/map.ironmap` plays a custom map offline against bots, and
+`tools/map-export.fsx` writes the built-in maps out as reference files.
 
 ## Controls
 
@@ -106,16 +117,19 @@ the server.
 | Left / right mouse | Fire / aim down sights |
 | Left Shift | Sprint |
 | Space | Jump |
-| Left Control / `Z` | Crouch / prone |
+| Left Control / `Z` | Crouch (hold; toggle mode in settings) / prone |
 | `R` | Start reload; restart after campaign death |
 | `G` | Hold to cook grenade, release to throw |
-| `1`–`5` | Select an offline weapon |
+| `1`–`5` | Weapon category; press again to cycle within it |
+| `B` | Open the loadout picker (offline and online) |
+| `F3` | Debug view: wireframes, lines of sight, aim rays |
 | Tab | Hold the online scoreboard |
-| Escape | Return to the menu; quit from the main menu |
+| Escape | Pause to the menu; quitting is the explicit QUIT item |
 
 Menus support the mouse or Up/Down and Enter. The callsign editor accepts normal
 typing and Backspace. The main menu's SETTINGS entry opens a persisted settings
-screen: field of view, contrast, mouse sensitivity, ADS toggle, and blood color
+screen: field of view, contrast, mouse sensitivity, ADS toggle, crouch
+toggle, and blood color
 saved as JSON under the platform application-data directory (`--reset-settings`
 restores defaults).
 
@@ -150,6 +164,37 @@ state machines, ballistics, AI/navigation, menus, online reconciliation,
 authoritative scoring, grenades, reconnects, and loadout replication. Rendering
 still benefits from a manual OpenGL smoke test because CI is headless.
 
+## Running a server
+
+The dedicated server is a headless ASP.NET Core app that listens on
+`http://0.0.0.0:8080` by default (override with `PORT`) and hosts the
+WebSocket rooms at `/play`, the static website, and the `/api` and `/health`
+endpoints.
+
+```sh
+just server                      # Paintball Killhouse on port 8080
+just server-map omaha            # paintball | depot | canal | omaha | training
+```
+
+Without `just`:
+
+```sh
+IRONSIGHT_LEVEL=omaha dotnet run --project src/Ironsight.Server/Ironsight.Server.fsproj
+```
+
+Or containerized:
+
+```sh
+just docker-build
+just docker-run                  # maps host 8080 to the container
+```
+
+Clients connect with `just online-local Player`, or by setting
+`IRONSIGHT_SERVER=ws://127.0.0.1:8080/play` before an `--online` launch. The
+server is authoritative: it accepts input intentions and recomputes movement,
+weapon state, hits, damage, and scores itself, so gameplay tuning in
+`Ironsight.Core` applies to online play without protocol changes.
+
 ## Server deployment
 
 The checked-in `Dockerfile` publishes only the headless server. `fly.toml` runs
@@ -176,6 +221,8 @@ loads damage and handling statistics generated from the actual
 
 - `GET /api/leaderboard` — live connected players, scores, and selected loadouts
 - `GET /api/arsenal` — player and mounted-weapon tuning values
+- `GET /maps/{hash}` — the server's current map as a content-addressed
+  `.ironmap` download
 
 Leaderboard state is intentionally volatile. It records the active server
 process, not accounts or historical rankings, and resets whenever Fly deploys or
