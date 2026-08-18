@@ -97,28 +97,38 @@ module ClientTests =
         Assert.Equal(ServerList, servers.Page)
         let struct (_, settingsAction) = StartMenu.update 1280 720 activate { StartMenu.initial with Selected = 4 }
         Assert.Equal(Some OpenSettings, settingsAction)
-        let struct (loadout, _) = StartMenu.update 1280 720 activate servers
-        Assert.Equal(OnlineLoadout, loadout.Page)
-        let struct (_, onlineAction) = StartMenu.update 1280 720 activate { loadout with Selected = 3 }
-        Assert.Equal(Some(StartOnline("Kar98k Sniper", TeamDeathmatch)), onlineAction)
+        // While the directory probe is still out, activating does not join.
+        let struct (waiting, waitingAction) = StartMenu.update 1280 720 activate servers
+        Assert.Equal(ServerList, waiting.Page)
+        Assert.True(waitingAction.IsNone)
 
-        // A populated server list offers one row per room; picking the second
-        // row carries the Free For All mode through to the online hello.
-        let status =
-            { PingMs = 42
-              Rooms =
-                [| { Mode = TeamDeathmatch; Phase = "Playing"; Players = 3; Capacity = 16 }
-                   { Mode = FreeForAll; Phase = "Waiting"; Players = 1; Capacity = 16 } |] }
-        let listed = { StartMenu.initial with Page = ServerList; ServerStatus = Some status }
-        let rows = StartMenu.items listed
-        Assert.Equal(3, rows.Length)
-        Assert.Contains("3/16", rows[0])
-        Assert.Contains("FREE FOR ALL", rows[1])
+        // The populated table shows one row per room with the server host as a
+        // column; picking a row carries both server and mode to the hello.
+        let official = { Name = "Official"; Url = Uri "wss://fsharp-of-duty.fly.dev/play" }
+        let community = { Name = "Community"; Url = Uri "ws://lan.example:8080/play" }
+        let rows =
+            [| { Server = official; Mode = TeamDeathmatch; Phase = "Playing"; Players = 3; Capacity = 16; PingMs = 42; Online = true }
+               { Server = official; Mode = FreeForAll; Phase = "Waiting"; Players = 1; Capacity = 16; PingMs = 42; Online = true }
+               { Server = community; Mode = TeamDeathmatch; Phase = ""; Players = 0; Capacity = 0; PingMs = 0; Online = false } |]
+        let listed = { StartMenu.initial with Page = ServerList; ServerRows = Some rows }
+        let items = StartMenu.items listed
+        Assert.Equal(4, items.Length)
+        Assert.Contains("fsharp-of-duty.fly.dev", items[0])
+        Assert.Contains("3/16", items[0])
+        Assert.Contains("FREE FOR ALL", items[1])
+        Assert.Contains("OFFLINE", items[2])
+        // Offline rows are not joinable.
+        let struct (still, offlineAction) = StartMenu.update 1280 720 activate { listed with Selected = 2 }
+        Assert.Equal(ServerList, still.Page)
+        Assert.True(offlineAction.IsNone)
         let struct (ffaLoadout, _) = StartMenu.update 1280 720 activate { listed with Selected = 1 }
         Assert.Equal(OnlineLoadout, ffaLoadout.Page)
         Assert.Equal(FreeForAll, ffaLoadout.OnlineMode)
+        Assert.Equal(official.Url, ffaLoadout.OnlineServer)
         let struct (_, ffaAction) = StartMenu.update 1280 720 activate { ffaLoadout with Selected = 1 }
-        Assert.Equal(Some(StartOnline("Thompson", FreeForAll)), ffaAction)
+        Assert.Equal(Some(StartOnline("Thompson", FreeForAll, official.Url)), ffaAction)
+        let struct (_, onlineAction) = StartMenu.update 1280 720 activate { ffaLoadout with Selected = 3 }
+        Assert.Equal(Some(StartOnline("Kar98k Sniper", FreeForAll, official.Url)), onlineAction)
 
         let struct (editing, _) = StartMenu.update 1280 720 activate (StartMenu.create "Old")
         let struct (edited, _) =
@@ -312,6 +322,29 @@ module ClientTests =
         let reconciled, _ = OnlineWorld.reconcile world.Level inputs 1 world snapshot
         Assert.InRange(Vector3.Distance(reconciled.Player.Position, final.Position), 0.0f, 0.0001f)
         Assert.InRange(Vector3.Distance(reconciled.Player.Velocity, final.Velocity), 0.0f, 0.0001f)
+
+    [<Fact>]
+    let ``server directory parses tolerantly and merges by precedence`` () =
+        // Junk documents and junk entries degrade to nothing, never throw.
+        Assert.Empty(ServerDirectory.parse "not json at all")
+        Assert.Empty(ServerDirectory.parse """{"servers": "wrong shape"}""")
+        let parsed =
+            ServerDirectory.parse
+                """{"servers":[
+                    {"name":"Good","url":"wss://one.example/play"},
+                    {"name":"","url":"wss://nameless.example/play"},
+                    {"name":"BadScheme","url":"https://web.example/"},
+                    {"name":"Broken","url":123},
+                    {"name":"Lan","url":"ws://192.168.1.10:8080/play"}]}"""
+        Assert.Equal<string list>(
+            [ "Good"; "Lan" ],
+            parsed |> List.map (fun entry -> entry.Name))
+        // First occurrence wins across lists: env/user entries shadow later ones.
+        let one = { Name = "Mine"; Url = Uri "wss://one.example/play" }
+        let shadowed = { Name = "Official copy"; Url = Uri "WSS://ONE.EXAMPLE/play" }
+        let other = { Name = "Other"; Url = Uri "ws://two.example/play" }
+        let merged = ServerDirectory.merge [ [ one ]; [ shadowed; other ] ]
+        Assert.Equal<string list>([ "Mine"; "Other" ], merged |> List.map (fun entry -> entry.Name))
 
     [<Fact>]
     let ``Fly hostname is the online default`` () =

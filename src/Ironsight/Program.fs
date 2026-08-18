@@ -39,6 +39,7 @@ module Program =
     let main args =
         let mutable onlineRequested = args |> Array.contains "--online"
         let mutable selectedOnlineMode = if args |> Array.contains "--ffa" then FreeForAll else TeamDeathmatch
+        let mutable selectedServerUri = OnlineDefaults.serverUri ()
         let mutable playerName =
             argumentValue "--name" args
             |> Option.defaultValue (Environment.GetEnvironmentVariable "USER" |> Option.ofObj |> Option.defaultValue "Soldier")
@@ -73,7 +74,7 @@ module Program =
         // smoothing): tiny corrections glide instead of snapping the camera.
         let mutable predictionError = System.Numerics.Vector3.Zero
         let mutable debugView = false
-        let mutable serverStatusTask: Task<ServerStatus option> option = None
+        let mutable serverStatusTask: Task<ServerRow array option> option = None
         let mutable serverStatusAt = DateTimeOffset.MinValue
         let mutable predictedFireCooldown = 0.0f
         let mutable predictedFireHeld = false
@@ -147,39 +148,16 @@ module Program =
                     window.Title <- "IRONSIGHT — MAP DOWNLOAD FAILED"
                     false
 
-        /// Ping the server's leaderboard endpoint: one HTTP round trip gives
-        /// both the latency figure and the per-room player counts.
-        let fetchServerStatus () =
-            task {
-                try
-                    let ws = OnlineDefaults.serverUri ()
-                    let scheme = if ws.Scheme = "wss" then "https" else "http"
-                    let target = UriBuilder(ws, Scheme = scheme, Path = "/api/leaderboard").Uri
-                    use http = new System.Net.Http.HttpClient(Timeout = TimeSpan.FromSeconds 5.0)
-                    let clock = System.Diagnostics.Stopwatch.StartNew()
-                    let! json = http.GetStringAsync target
-                    let ping = int clock.ElapsedMilliseconds
-                    use document = System.Text.Json.JsonDocument.Parse json
-                    let root = document.RootElement
-                    let capacity =
-                        match root.TryGetProperty "capacityPerRoom" with
-                        | true, value -> value.GetInt32()
-                        | _ -> 16
-                    let rooms =
-                        root.GetProperty("rooms").EnumerateArray()
-                        |> Seq.map (fun room ->
-                            { Mode = (if room.GetProperty("mode").GetString() = "FreeForAll" then FreeForAll else TeamDeathmatch)
-                              Phase = room.GetProperty("phase").GetString()
-                              Players = room.GetProperty("connectedPlayers").GetInt32()
-                              Capacity = capacity })
-                        |> Seq.toArray
-                    return Some { PingMs = ping; Rooms = rooms }
-                with _ -> return None
-            }
+        /// Load the server directory (packaged + user + community lists) and
+        /// probe every server in parallel for its rooms, counts and ping.
+        let fetchServerRows () =
+            System.Threading.Tasks.Task.Run(fun () ->
+                try (ServerDirectory.probeAll (ServerDirectory.load ())).GetAwaiter().GetResult() |> List.toArray |> Some
+                with _ -> None)
 
         let beginReconnect generation token =
             task {
-                let client = new OnlineClient(OnlineDefaults.serverUri (), playerName, selectedOnlineMode, selectedOnlineWeapon, ?resumeToken = token)
+                let client = new OnlineClient(selectedServerUri, playerName, selectedOnlineMode, selectedOnlineWeapon, ?resumeToken = token)
                 try
                     do! client.ConnectAsync()
                     return struct (generation, Some client)
@@ -228,7 +206,7 @@ module Program =
             with error -> Console.Error.WriteLine($"Audio unavailable: {error.Message}")
             if onlineRequested then
                 try
-                    let client = new OnlineClient(OnlineDefaults.serverUri (), playerName, selectedOnlineMode, selectedOnlineWeapon)
+                    let client = new OnlineClient(selectedServerUri, playerName, selectedOnlineMode, selectedOnlineWeapon)
                     client.ConnectAsync().GetAwaiter().GetResult()
                     if applyServerMap client then
                         onlineClient <- Some client
@@ -295,11 +273,11 @@ module Program =
                                     serverStatusTask <- None
                                     serverStatusAt <- DateTimeOffset.UtcNow
                                     match fetch.GetAwaiter().GetResult() with
-                                    | Some status -> { state with ServerStatus = Some status }
+                                    | Some rows -> { state with ServerRows = Some rows }
                                     | None -> state
                                 | Some _ -> state
-                                | None when DateTimeOffset.UtcNow - serverStatusAt > TimeSpan.FromSeconds 3.0 ->
-                                    serverStatusTask <- Some(fetchServerStatus ())
+                                | None when DateTimeOffset.UtcNow - serverStatusAt > TimeSpan.FromSeconds 5.0 ->
+                                    serverStatusTask <- Some(fetchServerRows ())
                                     state
                                 | None -> state
                         match settingsOverlay with
@@ -336,11 +314,12 @@ module Program =
                                         current <- initialWorld
                                         setScreen Screen.Playing
                                         window.Title <- $"IRONSIGHT — {current.Level.Name}"
-                                    | StartOnline(weaponName, mode) ->
+                                    | StartOnline(weaponName, mode, server) ->
                                         disconnectOnline ()
                                         onlineRequested <- true
                                         selectedOnlineWeapon <- weaponName
                                         selectedOnlineMode <- mode
+                                        selectedServerUri <- server
                                         reconnectAfter <- DateTimeOffset.MinValue
                                         setScreen Screen.Playing
                                         window.Title <- "IRONSIGHT — CONNECTING TO FLY.IO"

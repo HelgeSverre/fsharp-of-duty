@@ -81,6 +81,18 @@ Implemented client message types are `hello`, `ready`, `input`, `loadout`, and
 `leave`. A `loadout` message (`{"type":"loadout","weapon":"STG-44"}`) changes the
 player's weapon with no restrictions: instantly outside live play, otherwise on
 the next spawn.
+## Server directory
+
+The server browser is a Half-Life-style table: one row per room with the
+server host, mode, player count, phase and ping as columns. The list of
+servers comes from `servers.json`, merged in precedence order: the
+`IRONSIGHT_SERVER` environment override, the user's own copy at
+`<appdata>/ironsight/servers.json`, the community master list fetched from the
+repo (`raw.githubusercontent.com/HelgeSverre/fsharp-of-duty/main/servers.json`,
+cached for offline runs), the copy packaged beside the executable, and a
+compiled-in default. Hosting your own server means adding one JSON entry —
+or PRing it into the repo's list so every installed client picks it up.
+
 ## Maps and map download
 
 Maps are specs (DSL items), stored as versioned binary `.ironmap` files (encode
