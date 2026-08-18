@@ -6,7 +6,7 @@
   <meta name="description" content="The real damage model and weapon statistics powering IRONSIGHT.">
   <meta name="theme-color" content="#090b08">
   <meta name="ironsight-api" content="https://fsharp-of-duty.fly.dev">
-  <title>IRONSIGHT Arsenal — Unreasonably Classified Weapon Statistics</title>
+  <title>IRONSIGHT Arsenal — live weapon statistics</title>
   <link rel="icon" href="favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="styles.css">
   <script src="app.js" defer></script>
@@ -26,17 +26,17 @@
   <div class="noise" aria-hidden="true"></div>
   <header class="site-header">
     <a class="brand" href="index.html" aria-label="IRONSIGHT home"><span class="brand-mark">I/S</span><span>IRONSIGHT</span><small>F# OF DUTY</small></a>
-    <nav aria-label="Main navigation"><a href="index.html#intel">Intel</a><a href="index.html#leaderboard">War room</a><a class="active" href="arsenal.html">Arsenal</a><a href="index.html#features">Technology</a></nav>
-    <a class="button button-small" href="https://github.com/HelgeSverre/fsharp-of-duty">Acquire source</a>
+    <nav aria-label="Main navigation"><a href="index.html#intel">Overview</a><a href="index.html#leaderboard">Live server</a><a class="active" href="arsenal.html">Arsenal</a><a href="index.html#features">Technology</a></nav>
+    <a class="button button-small" href="https://github.com/HelgeSverre/fsharp-of-duty">GitHub</a>
   </header>
 
   <main>
     <section class="arsenal-hero shell">
-      <div class="eyebrow">QUARTERMASTER TERMINAL // CLEARANCE: UNNECESSARILY HIGH</div>
+      <div class="eyebrow">WEAPON DATA // LIVE FROM THE SERVER</div>
       <h1>Weapon systems<br><em>damage dossier.</em></h1>
-      <p>Live specifications generated from the same F# records that decide whether
-        the next shot is heroic, embarrassing, or eight pellets into a nearby fence.</p>
-      <div class="data-source"><span class="live-dot"></span><b id="arsenal-status">REQUESTING BALLISTICS</b><small id="arsenal-source">No marketing estimates permitted</small></div>
+      <p>Live specifications generated from the same F# records the simulation
+        uses to resolve every shot.</p>
+      <div class="data-source"><span class="live-dot"></span><b id="arsenal-status">REQUESTING BALLISTICS</b><small id="arsenal-source">Source: Ironsight.Core.Tuning</small></div>
     </section>
 
     <section class="arsenal-controls shell" aria-label="Arsenal controls">
@@ -44,21 +44,21 @@
     </section>
 
     <section class="weapon-dossier shell" id="weapon-dossier" aria-live="polite">
-      <div class="dossier-loading">BREAKING OPEN THE AMMUNITION CRATE…</div>
+      <div class="dossier-loading">LOADING WEAPON DATA…</div>
     </section>
 
     <section class="damage-doctrine shell">
-      <div class="section-number">DAMAGE MODEL // LEGALLY DISTINCT TERMINAL VELOCITY</div>
+      <div class="section-number">DAMAGE MODEL</div>
       <div class="doctrine-grid">
-        <article><b>01</b><h2>Server authoritative</h2><p>The server traces every projectile. Your client may suggest violence; command approves it.</p></article>
-        <article><b>02</b><h2>Per-projectile damage</h2><p>Shotgun pellets travel and hit independently. “Maximum” assumes all pellets cooperate, which they rarely do.</p></article>
+        <article><b>01</b><h2>Server authoritative</h2><p>The client sends intentions; the server traces every projectile and resolves the outcome.</p></article>
+        <article><b>02</b><h2>Per-projectile damage</h2><p>Shotgun pellets travel and hit independently; maximum damage assumes every pellet connects.</p></article>
         <article><b>03</b><h2>Material penetration</h2><p>Each shot carries a penetration budget consumed by world geometry. The wall is part of the equation.</p></article>
-        <article><b>04</b><h2>Headshot consequences</h2><p>Damage regions and head-gib effects exist. Tasteful restraint has been assigned to another project.</p></article>
+        <article><b>04</b><h2>Headshot consequences</h2><p>Hits are resolved per body region; headshots apply a damage multiplier.</p></article>
       </div>
       <p class="fine-print">Figures are implementation values, not promises of realism. Spread values are angular offsets used by the simulation. Damage does not include target-region multipliers or material loss.</p>
     </section>
   </main>
 
-  <footer class="site-footer shell"><span>IRONSIGHT // BALLISTICS DIVISION</span><span>All statistics subject to balancing and developer mood.</span><a href="index.html">RETURN TO FRONT</a></footer>
+  <footer class="site-footer shell"><span>IRONSIGHT // BALLISTICS DIVISION</span><span>Values change as the game is balanced.</span><a href="index.html">HOME</a></footer>
 </body>
 </html>

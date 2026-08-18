@@ -8,56 +8,149 @@ on:
 permissions:
   contents: write
 
+env:
+  DOTNET_NOLOGO: true
+
 jobs:
-  build:
+  linux:
     runs-on: ubuntu-latest
     timeout-minutes: 30
-
     steps:
-      - name: Check out repository
-        uses: actions/checkout@v7
-
-      - name: Set up .NET
-        uses: actions/setup-dotnet@v6
+      - uses: actions/checkout@v7
+      - uses: actions/setup-dotnet@v6
         with:
           dotnet-version: 10.0.x
-
-      # Self-contained cross-publish: no AOT, so one Linux runner can build
-      # every RID. The SDK sets the exec bit on unix apphosts; tar keeps it.
-      - name: Publish client for each platform
+      - name: Publish, tar, and build .deb
         run: |
           set -euo pipefail
-          for rid in win-x64 linux-x64 osx-x64 osx-arm64; do
+          VERSION="${GITHUB_REF_NAME#v}"; [[ "$VERSION" == "$GITHUB_REF_NAME" ]] && VERSION="0.0.0"
+          dotnet publish src/Ironsight/Ironsight.fsproj \
+            --configuration Release --runtime linux-x64 --self-contained \
+            --output publish/linux-x64
+          tar -czf ironsight-linux-x64.tar.gz -C publish/linux-x64 .
+
+          root="deb/ironsight_${VERSION}_amd64"
+          mkdir -p "$root/DEBIAN" "$root/opt/ironsight" "$root/usr/bin" \
+            "$root/usr/share/applications" "$root/usr/share/icons/hicolor/512x512/apps"
+          cp -r publish/linux-x64/. "$root/opt/ironsight/"
+          ln -s /opt/ironsight/Ironsight "$root/usr/bin/ironsight"
+          cp packaging/icon-512.png "$root/usr/share/icons/hicolor/512x512/apps/ironsight.png"
+          cat > "$root/usr/share/applications/ironsight.desktop" <<EOF
+          [Desktop Entry]
+          Type=Application
+          Name=IRONSIGHT
+          Comment=Asset-free WWII shooter written in F#
+          Exec=/opt/ironsight/Ironsight
+          Icon=ironsight
+          Categories=Game;
+          EOF
+          cat > "$root/DEBIAN/control" <<EOF
+          Package: ironsight
+          Version: $VERSION
+          Section: games
+          Priority: optional
+          Architecture: amd64
+          Maintainer: Helge Sverre <helge.sverre@gmail.com>
+          Description: IRONSIGHT - asset-free WWII shooter written in F#
+           Self-contained build; no .NET runtime dependency.
+          EOF
+          dpkg-deb --build --root-owner-group "$root" "ironsight-linux-x64.deb"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: linux
+          path: |
+            ironsight-linux-x64.tar.gz
+            ironsight-linux-x64.deb
+
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: 10.0.x
+      - name: Publish, zip, and build installer
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME#v}"; [[ "$VERSION" == "$GITHUB_REF_NAME" ]] && VERSION="0.0.0"
+          dotnet publish src/Ironsight/Ironsight.fsproj \
+            --configuration Release --runtime win-x64 --self-contained \
+            --output publish/win-x64
+          7z a -bso0 ironsight-win-x64.zip ./publish/win-x64/*
+          "/c/Program Files (x86)/Inno Setup 6/ISCC.exe" \
+            "-DVersion=$VERSION" \
+            "-DPublish=$(cygpath -w "$PWD/publish/win-x64")" \
+            "-DOutputDir=$(cygpath -w "$PWD")" \
+            packaging/ironsight.iss
+      - uses: actions/upload-artifact@v7
+        with:
+          name: windows
+          path: |
+            ironsight-win-x64.zip
+            ironsight-win-x64-setup.exe
+
+  macos:
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: 10.0.x
+      - name: Publish both arches and build universal .app + .pkg
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME#v}"; [[ "$VERSION" == "$GITHUB_REF_NAME" ]] && VERSION="0.0.0"
+          for rid in osx-x64 osx-arm64; do
             dotnet publish src/Ironsight/Ironsight.fsproj \
               --configuration Release --runtime "$rid" --self-contained \
               --output "publish/$rid"
-            case "$rid" in
-              win-*) (cd "publish/$rid" && zip -qr "$GITHUB_WORKSPACE/ironsight-$rid.zip" .) ;;
-              *) tar -czf "ironsight-$rid.tar.gz" -C "publish/$rid" . ;;
-            esac
+            tar -czf "ironsight-$rid.tar.gz" -C "publish/$rid" .
           done
 
-      - name: Upload build artifacts
-        uses: actions/upload-artifact@v7
-        with:
-          name: ironsight-builds
-          path: |
-            ironsight-*.zip
-            ironsight-*.tar.gz
+          app="Ironsight.app"
+          mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
+          sed "s/@VERSION@/$VERSION/g" packaging/Info.plist > "$app/Contents/Info.plist"
+          cp packaging/icon.icns "$app/Contents/Resources/icon.icns"
+          install -m 755 packaging/launcher.sh "$app/Contents/MacOS/Ironsight"
+          cp -R publish/osx-x64 "$app/Contents/MacOS/x64"
+          cp -R publish/osx-arm64 "$app/Contents/MacOS/arm64"
+          # Ad-hoc signature: not notarized, but keeps arm64 macOS from
+          # refusing to exec entirely (unsigned arm64 binaries won't run).
+          codesign --force --deep -s - "$app"
 
-      - name: Create release
-        if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v3
+          pkgbuild --component "$app" --install-location /Applications \
+            --identifier com.helgesverre.ironsight --version "$VERSION" \
+            ironsight-macos-universal.pkg
+      - uses: actions/upload-artifact@v7
+        with:
+          name: macos
+          path: |
+            ironsight-macos-universal.pkg
+            ironsight-osx-x64.tar.gz
+            ironsight-osx-arm64.tar.gz
+
+  release:
+    needs: [linux, windows, macos]
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/download-artifact@v7
+        with:
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v3
         with:
           files: |
-            ironsight-*.zip
-            ironsight-*.tar.gz
+            ironsight-*
           body: |
-            Self-contained builds — no .NET install required. Unpack and run `Ironsight` (`Ironsight.exe` on Windows). An OpenGL 4.1-capable desktop is required.
+            Self-contained builds — no .NET install required. An OpenGL 4.1-capable desktop is required.
 
-            - **Windows x64**: `ironsight-win-x64.zip`
-            - **Linux x64**: `ironsight-linux-x64.tar.gz`
-            - **macOS Apple Silicon**: `ironsight-osx-arm64.tar.gz`
-            - **macOS Intel**: `ironsight-osx-x64.tar.gz`
+            - **Windows**: `ironsight-win-x64-setup.exe` installer (per-user, no admin), or the plain `ironsight-win-x64.zip`
+            - **macOS**: `ironsight-macos-universal.pkg` — one installer for Apple Silicon and Intel, installs `Ironsight.app` to /Applications
+            - **Debian/Ubuntu**: `sudo apt install ./ironsight-linux-x64.deb`
+            - **Other Linux**: `ironsight-linux-x64.tar.gz`, unpack and run `./Ironsight`
 
-            macOS builds are unsigned: run `xattr -dr com.apple.quarantine Ironsight` after unpacking, or right-click → Open.
+            Builds are not code-signed or notarized: Windows SmartScreen and macOS Gatekeeper will warn on first launch (More info → Run anyway / System Settings → Privacy & Security → Open Anyway).

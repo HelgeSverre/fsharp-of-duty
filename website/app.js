@@ -101,13 +101,13 @@
         const response = await fetch(`${apiRoot}/api/leaderboard`, { cache: "no-store" });
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         latest = await response.json();
-        text(byId("server-status"), "TELEMETRY LIVE");
+        text(byId("server-status"), "LIVE");
         text(byId("persistence-note"), latest.persistence);
         text(byId("last-updated"), `Updated ${new Date(latest.generatedAt).toLocaleTimeString()}`);
         render();
       } catch {
-        text(byId("server-status"), "TELEMETRY LOST");
-        text(byId("last-updated"), "Command is reconsidering its network choices");
+        text(byId("server-status"), "OFFLINE");
+        text(byId("last-updated"), "Server unreachable");
       }
     }
 
@@ -183,7 +183,7 @@
       const panel = document.createElement("div");
       panel.className = "stat-panel";
       const header = document.createElement("header");
-      const heading = document.createElement("b"); text(heading, "CERTIFIED COMBAT VALUES");
+      const heading = document.createElement("b"); text(heading, "TUNING VALUES");
       const identity = document.createElement("span"); text(identity, `ORD-${String(selected + 1).padStart(3, "0")} // LIVE TUNING`);
       header.append(heading, identity);
       const stats = document.createElement("div"); stats.className = "stat-grid";
@@ -199,7 +199,7 @@
       );
       const note = document.createElement("div"); note.className = "damage-note";
       text(note, weapon.projectilesPerShot > 1
-        ? `${weapon.projectilesPerShot} independently traced projectiles leave per trigger pull. Maximum damage assumes a diplomatic agreement among every pellet.`
+        ? `${weapon.projectilesPerShot} independently traced projectiles per trigger pull. Maximum damage assumes every pellet hits.`
         : "One projectile is traced per trigger pull. Regional multipliers and penetration loss are resolved during impact.");
       panel.append(header, stats, note);
       grid.append(visual, panel);
@@ -208,7 +208,7 @@
 
     function loadPayload(payload, isOffline = false) {
       weapons = Array.isArray(payload.weapons) ? payload.weapons : [];
-      text(byId("arsenal-status"), isOffline ? "OFFLINE DOSSIER" : "BALLISTICS VERIFIED");
+      text(byId("arsenal-status"), isOffline ? "BUNDLED DATA" : "LIVE DATA");
       text(byId("arsenal-source"), payload.generatedFrom);
       weapons.forEach((weapon, index) => {
         const button = document.createElement("button");
@@ -230,8 +230,8 @@
         try {
           loadPayload(JSON.parse(fallback?.textContent ?? "{}"), true);
         } catch {
-          text(byId("arsenal-status"), "QUARTERMASTER UNAVAILABLE");
-          text(byId("arsenal-source"), "The statistics refused to deploy");
+          text(byId("arsenal-status"), "DATA UNAVAILABLE");
+          text(byId("arsenal-source"), "Could not load weapon data");
         }
       });
   }

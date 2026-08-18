@@ -265,7 +265,7 @@ module Protocol =
                   connectedPlayers = players.Length
                   players = players })
         { generatedAt = DateTimeOffset.UtcNow
-          persistence = "Memory, bravely surviving until the next deploy."
+          persistence = "Stats are in-memory and reset on redeploy."
           capacityPerRoom = 16
           rooms = rooms }
 

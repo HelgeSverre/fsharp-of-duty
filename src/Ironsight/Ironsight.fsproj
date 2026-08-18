@@ -2,6 +2,8 @@
   <PropertyGroup>
     <OutputType>Exe</OutputType>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <!-- Embedded into the Windows apphost; ignored on other platforms. -->
+    <ApplicationIcon>../../packaging/icon.ico</ApplicationIcon>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="../Ironsight.Core/Ironsight.Core.fsproj" />
