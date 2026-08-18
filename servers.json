@@ -1,0 +1,5 @@
+{
+  "servers": [
+    { "name": "Official Fly.io", "url": "wss://fsharp-of-duty.fly.dev/play" }
+  ]
+}
