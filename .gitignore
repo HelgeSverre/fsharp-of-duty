@@ -3,6 +3,7 @@
 **/obj/
 artifacts/
 publish/
+.build/
 
 # Tests and coverage
 TestResults/
