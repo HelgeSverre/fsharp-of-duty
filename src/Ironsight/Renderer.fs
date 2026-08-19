@@ -135,14 +135,17 @@ type Renderer(gl: GL) =
                             if distance < reach then
                                 let away = chest - impulse.Position + Vector3(0.0f, 0.5f, 0.0f)
                                 let direction = if away.LengthSquared() < 0.001f then Vector3.UnitY else Vector3.Normalize away
-                                direction * (7.5f * (1.0f - distance / reach))
+                                direction * (10.0f * (1.0f - distance / reach))
                             else Vector3.Zero
                         elif Vector3.Distance(chest, impulse.Position) < 1.6f then impulse.Push
                         else Vector3.Zero)
                     |> List.fold (fun (best: Vector3) (push: Vector3) -> if push.LengthSquared() > best.LengthSquared() then push else best) Vector3.Zero
                 let impulse =
                     if candidate.LengthSquared() < 0.05f then MathEx.yawForward soldier.Facing * 1.5f
-                    else candidate
+                    else
+                        // A touch of lift makes the body get thrown rather than
+                        // just shoved: knocked off its feet before it crumples.
+                        candidate + Vector3.UnitY * (candidate.Length() * 0.25f)
                 ragdolls.Spawn(soldier.Id, Humanoid.worldSkeleton soldier, impulse)
             | _ -> ()
         let dt = float32 (Stopwatch.GetElapsedTime ragdollClock).TotalSeconds
@@ -420,9 +423,9 @@ type Renderer(gl: GL) =
             events
             |> List.choose (function
                 | BloodImpact(position, direction, headshot) ->
-                    Some { Expires = expires; Position = position; Push = direction * (if headshot then 4.5f else 3.0f); Radius = 0.0f }
+                    Some { Expires = expires; Position = position; Push = direction * (if headshot then 6.5f else 4.5f); Radius = 0.0f }
                 | HeadGib(position, direction) ->
-                    Some { Expires = expires; Position = position; Push = direction * 5.0f; Radius = 0.0f }
+                    Some { Expires = expires; Position = position; Push = direction * 7.0f; Radius = 0.0f }
                 | Explosion(position, radius) ->
                     Some { Expires = expires; Position = position; Push = Vector3.Zero; Radius = radius }
                 | _ -> None)
