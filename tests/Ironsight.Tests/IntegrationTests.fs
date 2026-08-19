@@ -161,9 +161,14 @@ module IntegrationTests =
                 Join "Climber"   // first in: Allies, the assaulting side
                 Join "Anchor"
                 WaitUntil("the match reaches Playing", 30.0, fun snapshot -> snapshot.Phase = Playing)
-                Expect("the attacker respawns in the surf", fun snapshot ->
+                // Beach-side is a Z fact, not a height fact: the Allies squad
+                // spawns at z <= -23, the Axis squad at z = +25. Asserting on
+                // height was flaky — one legitimate surf spawn sits on a dune
+                // at y = 0.59, and which spawn a player rolls depends on the
+                // server tick at round start (wall-clock timing).
+                Expect("the attacker respawns on the beach side", fun snapshot ->
                     match MatchScript.selfOf "Climber" snapshot with
-                    | Some self -> self.Position.Y < 0.5f
+                    | Some self -> self.Position.Z < -20.0f
                     | None -> false)
 
                 // West along the surf until level with the draw's breach lane.
