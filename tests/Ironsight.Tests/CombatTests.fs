@@ -182,7 +182,7 @@ module CombatTests =
         let closeTarget = soldier (grenade.Position + Vector3(0.0f, -1.0f, -0.5f))
         let updated, events = Grenades.applyExplosions openLevel [| grenade.Position |] [| closeTarget |]
         Assert.True(updated[0].Health < Units.health 100.0f)
-        Assert.Contains(events, function Explosion(_, radius) when radius = 6.0f -> true | _ -> false)
+        Assert.Contains(events, function Explosion(_, radius) when radius = Grenades.BlastRadius -> true | _ -> false)
 
     [<Fact>]
     let ``the previewed grenade path matches where the simulation actually throws it`` () =
