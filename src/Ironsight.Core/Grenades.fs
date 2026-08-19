@@ -10,7 +10,10 @@ module Grenades =
         Ballistics.directionFromAngles player.Yaw player.Pitch Vector2.Zero
 
     [<Literal>]
-    let BlastRadius = 6.0f
+    let BlastRadius = 7.0f
+
+    [<Literal>]
+    let BlastDamage = 125.0f
 
     /// Shared occlusion-and-falloff rule for every explosion consumer
     /// (campaign soldiers, the campaign player, and the multiplayer server).
@@ -18,7 +21,7 @@ module Grenades =
         let torso = targetPosition + Vector3(0.0f, 1.0f, 0.0f)
         let distance = Vector3.Distance(position, torso)
         if distance < BlastRadius && Ballistics.lineOfSight position torso level then
-            Some(Units.health (110.0f * (1.0f - distance / BlastRadius) ** 1.5f))
+            Some(Units.health (BlastDamage * (1.0f - distance / BlastRadius) ** 1.5f))
         else None
 
     /// The grenade a player would release right now. Shared by the throw itself
