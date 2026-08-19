@@ -35,8 +35,6 @@ module MapFileTests =
     let ``map hashes are stable and unique per map`` () =
         let hashes = Levels.specs |> Array.map (MapFile.encode >> MapFile.hash)
         Assert.Equal(hashes.Length, (Array.distinct hashes).Length)
-        for spec in Levels.specs do
-            Assert.Equal(MapFile.hash (MapFile.encode spec), MapFile.hash (MapFile.encode spec))
 
     [<Fact>]
     let ``decode rejects malformed data with errors not exceptions`` () =

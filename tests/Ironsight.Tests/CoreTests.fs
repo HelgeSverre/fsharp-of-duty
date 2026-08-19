@@ -17,7 +17,6 @@ module CoreTests =
         Assert.Equal("Paintball Killhouse", world.Level.Name)
         Assert.Empty(allies)
         Assert.Equal(4, axis.Length)
-        Assert.Equal(5, 1 + allies.Length + axis.Length)
         Assert.Equal("Thompson", world.Player.Slots[world.Player.Active].Class.Name)
         Assert.Equal(8, world.Level.Spawns |> Array.filter (fun struct (team, _) -> team = Some Allies) |> Array.length)
         Assert.Equal(8, world.Level.Spawns |> Array.filter (fun struct (team, _) -> team = Some Axis) |> Array.length)
@@ -333,3 +332,15 @@ module CoreTests =
         let name = "  " + String.replicate 30 "⚙" + "  "
         let sanitized = Multiplayer.sanitizeName name
         Assert.Equal(24, sanitized.EnumerateRunes() |> Seq.length)
+
+    [<Fact>]
+    let ``every online weapon has sane firing tuning`` () =
+        // Weapons.step divides by RoundsPerMin and the arsenal ships whatever
+        // Tuning contains — a typo'd zero must fail here, not at the range.
+        for weapon in Tuning.onlineWeapons do
+            Assert.True(weapon.RoundsPerMin > 0.0f, weapon.Name)
+            Assert.True(weapon.MagSize > 0, weapon.Name)
+            Assert.True(weapon.Pellets >= 1, weapon.Name)
+            Assert.True(weapon.ReloadTime > Units.seconds 0.0f, weapon.Name)
+            Assert.True(Units.raw weapon.Damage > 0.0f, weapon.Name)
+            Assert.True(weapon.AdsSpread <= weapon.HipSpread, weapon.Name)

@@ -377,6 +377,9 @@ module GeometryTests =
             let sharp = compile [ LevelDsl.heightfield Vector3.Zero (Vector2(24.0f, 24.0f)) 12 (fun x _ -> max 0.0f (12.0f - abs x * 4.0f)) Mud ]
             match LevelCompile.surfaceColumn sharp.Collision 2.0f 0.0f with
             | ValueSome(struct (_, normal)) -> Assert.False(Movement.walkableNormal normal, "a 4:1 slope should not be walkable")
+            // No standable column at all on the flank is equally "not
+            // navigable" — the walkable-normal check only applies when the
+            // compiler did report ground there.
             | ValueNone -> ()
 
         [<Fact>]

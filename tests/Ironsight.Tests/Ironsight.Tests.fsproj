@@ -15,6 +15,9 @@
     </PackageReference>
   </ItemGroup>
   <ItemGroup>
+    <!-- Collections run serially: several modules mutate process-global env
+         vars (IRONSIGHT_LEVEL, IRONSIGHT_HOME) and would race in parallel. -->
+    <Content Include="xunit.runner.json" CopyToOutputDirectory="PreserveNewest" />
     <Compile Include="TestKit.fs" />
     <Compile Include="CoreTests.fs" />
     <Compile Include="GeometryTests.fs" />

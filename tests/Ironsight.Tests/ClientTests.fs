@@ -109,7 +109,8 @@ module ClientTests =
         let listed = { StartMenu.initial with Page = ServerList; ServerRows = Some rows }
         let items = StartMenu.items listed
         Assert.Equal(4, items.Length)
-        Assert.Contains("FSHARP-OF-DUTY.FLY.DEV", items[0])
+        // The row label is the directory's display name, not the raw host.
+        Assert.Contains("OFFICIAL", items[0])
         // Columns are structured cells drawn at fixed x offsets, not padded text.
         let cells = (StartMenu.serverCells listed).Value
         Assert.Equal(3, cells.Length)
@@ -154,9 +155,7 @@ module ClientTests =
     let ``loadout picker supports mouse hover and click-to-equip`` () =
         let idle = TestKit.idleMenuInput
         let rowsRect = LoadoutMenu.rowsRect (LoadoutMenu.panelRect 1280 720)
-        let middleOf index =
-            let slot = Rect.slot LoadoutMenu.RowHeight index rowsRect
-            Vector2(slot.X + slot.W * 0.5f, slot.Y + slot.H * 0.5f)
+        let middleOf index = TestKit.rowMiddle LoadoutMenu.RowHeight index rowsRect
         let struct (hoveredIndex, browsing) =
             LoadoutMenu.update 1280 720 { idle with Pointer = Some(middleOf 3) } 0
         Assert.Equal(3, hoveredIndex)
@@ -168,6 +167,23 @@ module ClientTests =
         let struct (_, outside) =
             LoadoutMenu.update 1280 720 { idle with Pointer = Some(Vector2(5.0f, 5.0f)); Clicked = true } 0
         Assert.Equal(LoadoutMenu.Browsing, outside)
+
+    [<Fact>]
+    let ``dpad still navigates while the pointer rests on a row`` () =
+        // A parked cursor must not eat Up/Down (gamepad dpad and arrow keys
+        // share these flags): hover selects the row, then the step applies.
+        let idle = TestKit.idleMenuInput
+        let loadoutRows = LoadoutMenu.rowsRect (LoadoutMenu.panelRect 1280 720)
+        let loadoutMiddle index = TestKit.rowMiddle LoadoutMenu.RowHeight index loadoutRows
+        let struct (stepped, _) =
+            LoadoutMenu.update 1280 720 { idle with Pointer = Some(loadoutMiddle 2); Down = true } 0
+        Assert.Equal(3, stepped)
+        let mainCount = (StartMenu.items StartMenu.initial).Length
+        let mainRows = MenuLayout.rowsRect (MenuLayout.panelRect 1280 720 mainCount) mainCount
+        let mainMiddle = TestKit.rowMiddle MenuLayout.RowHeight 1 mainRows
+        let struct (menuStepped, _) =
+            StartMenu.update 1280 720 { idle with Pointer = Some mainMiddle; Up = true } StartMenu.initial
+        Assert.Equal(0, menuStepped.Selected)
 
     [<Fact>]
     let ``row slot geometry round-trips between drawing and hit-testing`` () =
@@ -300,42 +316,21 @@ module ClientTests =
               AlliesScore = 2
               AxisScore = 1
               Players =
-                [| { Id = 7
-                     Name = "Local"
-                     Team = Allies
-                     Position = Vector3(-10.0f, 0.0f, 10.0f)
-                     Velocity = Vector3.Zero
-                     Yaw = 0.0f
-                     Pitch = 0.0f
-                     Stance = Standing
-                     Health = 75.0f
-                     Alive = true
-                     Ready = true
-                     Ads = 0.0f
-                     Ammo = 20
-                     Reserve = 60
-                     WeaponName = "Kar98k Sniper"
-                     Kills = 2
-                     Deaths = 1
-                     AcknowledgedInput = 10L }
-                   { Id = 8
-                     Name = "Remote"
-                     Team = Axis
-                     Position = Vector3(4.0f, 0.0f, -4.0f)
-                     Velocity = Vector3.Zero
-                     Yaw = 3.14f
-                     Pitch = 0.0f
-                     Stance = Standing
-                     Health = 100.0f
-                     Alive = true
-                     Ready = true
-                     Ads = 0.0f
-                     Ammo = 5
-                     Reserve = 20
-                     WeaponName = "M1897 Trench Gun"
-                     Kills = 1
-                     Deaths = 2
-                     AcknowledgedInput = 9L } |]
+                [| { TestKit.onlinePlayer 7 "Local" Allies (Vector3(-10.0f, 0.0f, 10.0f)) with
+                        Health = 75.0f
+                        Ammo = 20
+                        WeaponName = "Kar98k Sniper"
+                        Kills = 2
+                        Deaths = 1
+                        AcknowledgedInput = 10L }
+                   { TestKit.onlinePlayer 8 "Remote" Axis (Vector3(4.0f, 0.0f, -4.0f)) with
+                        Yaw = 3.14f
+                        Ammo = 5
+                        Reserve = 20
+                        WeaponName = "M1897 Trench Gun"
+                        Kills = 1
+                        Deaths = 2
+                        AcknowledgedInput = 9L } |]
               Grenades = [||]
               Events = [||] }
         let pending =
@@ -377,24 +372,13 @@ module ClientTests =
               AlliesScore = 0
               AxisScore = 0
               Players =
-                [| { Id = 1
-                     Name = "Local"
-                     Team = Allies
-                     Position = atAck.Position
-                     Velocity = atAck.Velocity
-                     Yaw = atAck.Yaw
-                     Pitch = atAck.Pitch
-                     Stance = atAck.Stance
-                     Health = 100.0f
-                     Alive = true
-                     Ready = true
-                     Ads = atAck.Ads
-                     Ammo = 30
-                     Reserve = 60
-                     WeaponName = "Thompson"
-                     Kills = 0
-                     Deaths = 0
-                     AcknowledgedInput = 18L } |]
+                [| { TestKit.onlinePlayer 1 "Local" Allies atAck.Position with
+                        Velocity = atAck.Velocity
+                        Yaw = atAck.Yaw
+                        Pitch = atAck.Pitch
+                        Stance = atAck.Stance
+                        Ads = atAck.Ads
+                        AcknowledgedInput = 18L } |]
               Grenades = [||]
               Events = [||] }
         let reconciled, _ = OnlineWorld.reconcile world.Level inputs 1 world snapshot

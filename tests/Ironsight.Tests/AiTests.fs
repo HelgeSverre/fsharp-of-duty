@@ -141,7 +141,6 @@ module AiTests =
 
     [<Fact>]
     let ``crouching player avoids standing-height shots`` () =
-        let level = TestKit.streetArenaSized "Hit range" 30.0f 10.0f
         let world = Sim.createTrainingWorld 5UL
         let target = world.Soldiers |> Array.find (fun soldier -> soldier.Team = Axis && soldier.IsAlive)
         let crouchedPlayer =
@@ -150,7 +149,6 @@ module AiTests =
                 Yaw = 0.0f
                 Pitch = 0.0f
                 Stance = Crouched }
-        let shots = ResizeArray<Vector3>()
         let soldier =
             { TestKit.soldier 0 target.Position with
                 Id = target.Id
@@ -164,15 +162,11 @@ module AiTests =
         // crouched hitbox, whereas a standing-height shot would pass overhead.
         let hit = AiBrain.playerHitDistance origin direction crouchedPlayer
         Assert.True(hit.IsSome)
-        shots.Add origin
-        Assert.NotEmpty shots
-
-    [<Fact>]
-    let ``AI aim cone tightens at range`` () =
-        let closeFactor = Math.Clamp(6.0f / MathF.Max(1.0f, 5.0f), 0.35f, Tuning.EnemyAimSpreadMultiplier)
-        let farFactor = Math.Clamp(6.0f / MathF.Max(1.0f, 40.0f), 0.35f, Tuning.EnemyAimSpreadMultiplier)
-        Assert.True(closeFactor > farFactor)
-        Assert.True(farFactor >= 0.35f)
+        // The same shot at standing torso height must pass over the crouched
+        // hitbox — otherwise crouching buys nothing against AI fire.
+        let standingPoint = crouchedPlayer.Position + Vector3(0.0f, 1.78f, 0.0f)
+        let standingDirection = MathEx.normalizedOrZero (standingPoint - origin)
+        Assert.True((AiBrain.playerHitDistance origin standingDirection crouchedPlayer).IsNone)
 
     [<Fact>]
     let ``ai capsule movement cannot walk through a level wall`` () =

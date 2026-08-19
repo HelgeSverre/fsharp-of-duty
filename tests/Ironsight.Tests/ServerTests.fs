@@ -364,3 +364,88 @@ module ServerTests =
         Assert.True state.Players.IsEmpty
         Assert.Equal(0, state.AlliesScore)
         Assert.Equal(0, state.AxisScore)
+
+    [<Fact>]
+    let ``server snapshot round-trips through the client wire parser`` () =
+        // The writer (Protocol.snapshot) and the reader (SnapshotWire) are
+        // independently-maintained mirrors; the reader's getters default a
+        // missing or renamed field to 0/false/"", so only a full round trip
+        // catches drift between them.
+        let host = MatchHost(TeamDeathmatch, TestKit.streetArenaWithSpawns "Wire range")
+        let allyId, _ = host.TryAddPlayer("Ally").Value
+        let axisId, _ = host.TryAddPlayer("Axis").Value
+        TestKit.readyUp host [ allyId; axisId ]
+        // Move and fire so velocity, look, and events all carry real values.
+        TestKit.applyCustom 1L 1.0f 0.2f 3 host axisId
+        host.AdvanceTick()
+        let state = host.Snapshot()
+        use document = System.Text.Json.JsonDocument.Parse(Protocol.serialize (Protocol.snapshot state))
+        let parsed = Ironsight.Shell.SnapshotWire.parseSnapshot document.RootElement
+        Assert.Equal(state.Tick, parsed.Tick)
+        Assert.Equal(state.Mode, parsed.Mode)
+        Assert.Equal(state.Phase, parsed.Phase)
+        Assert.Equal(state.AlliesScore, parsed.AlliesScore)
+        Assert.Equal(state.AxisScore, parsed.AxisScore)
+        let server = state.Players[axisId]
+        let wire = parsed.Players |> Array.find (fun player -> player.Name = "Axis")
+        Assert.Equal((let (EntityId id) = server.Id in id), wire.Id)
+        Assert.Equal(server.Team, wire.Team)
+        Assert.Equal(server.Position, wire.Position)
+        Assert.Equal(server.Velocity, wire.Velocity)
+        Assert.Equal(server.Yaw, wire.Yaw)
+        Assert.Equal(server.Pitch, wire.Pitch)
+        Assert.Equal(server.Stance, wire.Stance)
+        Assert.Equal(Units.raw server.Health, wire.Health)
+        Assert.Equal(server.Alive, wire.Alive)
+        Assert.Equal(server.Ready, wire.Ready)
+        Assert.Equal(server.Ads, wire.Ads)
+        Assert.Equal(server.Weapon.InMag, wire.Ammo)
+        Assert.Equal(server.Weapon.Reserve, wire.Reserve)
+        Assert.Equal(server.Weapon.Class.Name, wire.WeaponName)
+        Assert.Equal(server.Kills, wire.Kills)
+        Assert.Equal(server.Deaths, wire.Deaths)
+        Assert.Equal(server.LastInputSequence, wire.AcknowledgedInput)
+        Assert.NotEmpty parsed.Events
+        let shot = parsed.Events |> Array.find (fun event -> event.Kind = "shot")
+        Assert.False(String.IsNullOrEmpty shot.Text)
+
+    [<Fact>]
+    let ``lag compensation rewinds targets to the shooter's estimated tick`` () =
+        // The ally turns ~90 degrees on the spot, then sprints off the axis
+        // rifleman's fire line for `runTicks`. A shot aimed straight down the
+        // original line hits only if the server rewinds the ally to where the
+        // shooter's (lagged) estimated tick saw them — standing on the line.
+        let run (estimatedTickFor: MatchHost -> int64) =
+            let host = MatchHost(TeamDeathmatch, TestKit.streetArenaWithSpawns "Rewind range")
+            let allyId, _ = host.TryAddPlayer("Ally").Value
+            let axisId, _ = host.TryAddPlayer("Axis").Value
+            TestKit.readyUp host [ allyId; axisId ]
+            let mutable sequence = 1L
+            for _ in 1..7 do
+                TestKit.applyCustom sequence 0.0f 0.25f 0 host allyId
+                // The rifleman pre-aims (ADS ramps over several ticks) so the
+                // eventual single shot flies at ADS spread, not hip spread.
+                TestKit.applyCustom sequence 0.0f 0.0f 2 host axisId
+                host.AdvanceTick()
+                sequence <- sequence + 1L
+            let lineTick = host.Snapshot().Tick
+            let onLine = host.Snapshot().Players[allyId].Position
+            let runTicks = 11
+            for _ in 1..runTicks do
+                TestKit.applyCustom sequence 1.0f 0.0f 4 host allyId
+                TestKit.applyCustom sequence 0.0f 0.0f 2 host axisId
+                host.AdvanceTick()
+                sequence <- sequence + 1L
+            let offLine = host.Snapshot().Players[allyId].Position
+            // The setup only proves anything if the sprint actually cleared
+            // the widest hit capsule.
+            Assert.True(Vector3.Distance(onLine, offLine) > 0.6f, "ally failed to leave the fire line")
+            TestKit.applyCustomAt sequence 0.0f 0.0f 3 (estimatedTickFor host) host axisId
+            host.AdvanceTick()
+            Assert.True(host.Snapshot().Tick - lineTick <= 12L, "test outran the 12-tick history window")
+            host.Snapshot().Events
+            |> List.exists (fun event -> match event.Event with HitConfirmed _ -> true | _ -> false)
+        // Estimated tick = when the ally was still on the line: the rewind hits.
+        Assert.True(run (fun host -> host.Snapshot().Tick - 11L))
+        // Estimated tick = now: no rewind, the ally has left the line, miss.
+        Assert.False(run (fun host -> host.Snapshot().Tick))

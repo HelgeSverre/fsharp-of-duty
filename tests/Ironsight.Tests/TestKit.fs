@@ -86,17 +86,33 @@ module TestKit =
         currentPlayer, current, List.ofSeq events
 
     /// A menu input frame with nothing pressed; record-update what you need.
-    let idleMenuInput: MenuInput =
-        { Up = false
-          Down = false
-          Left = false
-          Right = false
-          Activate = false
-          Back = false
-          Backspace = false
-          TextInput = ""
-          Pointer = None
-          Clicked = false }
+    let idleMenuInput: MenuInput = MenuInput.empty
+
+    /// A healthy standing online-player snapshot; record-update what you need.
+    let onlinePlayer id name team position : OnlinePlayer =
+        { Id = id
+          Name = name
+          Team = team
+          Position = position
+          Velocity = Vector3.Zero
+          Yaw = 0.0f
+          Pitch = 0.0f
+          Stance = Standing
+          Health = 100.0f
+          Alive = true
+          Ready = true
+          Ads = 0.0f
+          Ammo = 30
+          Reserve = 60
+          WeaponName = "Thompson"
+          Kills = 0
+          Deaths = 0
+          AcknowledgedInput = 0L }
+
+    /// Center point of row `index` in a rows rect (mirrors Rect.slot).
+    let rowMiddle rowHeight index rowsRect =
+        let slot = Rect.slot rowHeight index rowsRect
+        Vector2(slot.X + slot.W * 0.5f, slot.Y + slot.H * 0.5f)
 
     /// Triangle triples from an indexed mesh.
     let triangles (vertices: MeshVertex array) (indices: uint32 array) =
@@ -122,6 +138,13 @@ module TestKit =
     let applyCustom sequence moveY lookX buttons (host: MatchHost) id =
         use document =
             JsonDocument.Parse(FormattableString.Invariant($"""{{"type":"input","sequence":{sequence},"moveX":0,"moveY":{moveY},"lookX":{lookX},"lookY":0,"buttons":{buttons}}}"""))
+        host.ApplyInput(id, document.RootElement)
+
+    /// Like applyCustom, but with the client's estimated server tick attached,
+    /// which drives the server's lag-compensation rewind.
+    let applyCustomAt sequence moveY lookX buttons (estimatedServerTick: int64) (host: MatchHost) id =
+        use document =
+            JsonDocument.Parse(FormattableString.Invariant($"""{{"type":"input","sequence":{sequence},"moveX":0,"moveY":{moveY},"lookX":{lookX},"lookY":0,"estimatedServerTick":{estimatedServerTick},"buttons":{buttons}}}"""))
         host.ApplyInput(id, document.RootElement)
 
     let applyInput sequence host id = applyCustom sequence 1.0f 0.0f 4 host id
