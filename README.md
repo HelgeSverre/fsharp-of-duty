@@ -109,7 +109,7 @@ Set `IRONSIGHT_SERVER=ws://127.0.0.1:8080/play` to use another server. Set
 `training`, or a path to an `.ironmap` file; clients that lack the map
 download it from the server automatically, verified by content hash.
 `--map /path/map.ironmap` plays a custom map offline against bots, and
-`tools/map-export.fsx` writes the built-in maps out as reference files.
+`tools/MapExport.fsx` writes the built-in maps out as reference files.
 
 ## Controls
 

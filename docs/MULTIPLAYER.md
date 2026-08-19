@@ -110,7 +110,7 @@ simply a new hash and a fresh download, and the immutable hash URL makes any
 HTTP cache in the path safe.
 
 Servers host custom maps with `IRONSIGHT_LEVEL=/path/to/map.ironmap`; the client
-plays one offline with `--map /path/to/map.ironmap`. `tools/map-export.fsx`
+plays one offline with `--map /path/to/map.ironmap`. `tools/MapExport.fsx`
 writes every built-in map to `.ironmap` files as reference material.
 
 Implemented server message types are `welcome` and `snapshot`; combat events are

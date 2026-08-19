@@ -153,11 +153,23 @@ test-release: _sdk
 [group('test')]
 check: lint build test smoke
 
-# Draw a level's plan and elevation to map-preview.svg.
+# Draw a level's plan and elevation to debug/map-preview/<level>.svg.
 [group('tools')]
 map-preview level="paintball": _sdk
     {{ dotnet }} build src/Ironsight.Core/Ironsight.Core.fsproj --nologo -v quiet
-    {{ dotnet }} fsi tools/map-preview.fsx "{{ level }}"
+    {{ dotnet }} fsi tools/MapPreview.fsx "{{ level }}"
+
+# Write every built-in map out as a .ironmap to debug/maps/ (or a given dir).
+[group('tools')]
+map-export dir="": _sdk
+    {{ dotnet }} build src/Ironsight.Core/Ironsight.Core.fsproj --nologo -v quiet
+    {{ dotnet }} fsi tools/MapExport.fsx {{ dir }}
+
+# Draw a weapon's side/top/front views to debug/gun-preview/ ("all" for every gun).
+[group('tools')]
+gun-preview weapon="all": _sdk
+    {{ dotnet }} build src/Ironsight.Core/Ironsight.Core.fsproj --nologo -v quiet
+    {{ dotnet }} fsi tools/GunPreview.fsx "{{ weapon }}"
 
 # Regenerate the bundled arsenal JSON in website/arsenal.html from Tuning.
 [group('tools')]

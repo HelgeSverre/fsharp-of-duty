@@ -180,7 +180,12 @@ let highest = level.Brushes |> Array.fold (fun acc b -> max acc b.Bounds.Max.Y) 
 line $"""<text class="label" x="%.1f{margin}" y="%.1f{margin - 14.0f}">%s{level.Name} — %.0f{spanX}m x %.0f{spanZ}m — %d{level.Brushes.Length} brushes, %d{level.Nav.Length} nav nodes (%d{navLinks} links), %d{coverCount} cover, spawns %d{alliesSpawns}A/%d{axisSpawns}X, tallest %.1f{highest}m</text>"""
 line "</svg>"
 
-let output = IO.Path.Combine(__SOURCE_DIRECTORY__, "..", "map-preview.svg") |> IO.Path.GetFullPath
+// One file per level under debug/, so previewing a second map does not
+// overwrite the first and the repo root stays free of build artefacts.
+let outputDir = IO.Path.Combine(__SOURCE_DIRECTORY__, "..", "debug", "map-preview") |> IO.Path.GetFullPath
+IO.Directory.CreateDirectory outputDir |> ignore
+let slug = level.Name.ToLowerInvariant().Replace(" ", "-")
+let output = IO.Path.Combine(outputDir, slug + ".svg")
 IO.File.WriteAllText(output, svg.ToString())
 
 printfn "%s: %.0fm x %.0fm" level.Name spanX spanZ
