@@ -13,6 +13,7 @@ type GameSettings =
     { Fov: float32
       Contrast: float32
       MouseSensitivity: float32
+      GamepadSensitivity: float32
       AdsToggle: bool
       CrouchToggle: bool
       BloodColor: BloodColor }
@@ -23,17 +24,23 @@ module Settings =
         { Fov = 65.0f
           Contrast = 1.0f
           MouseSensitivity = 1.0f
+          GamepadSensitivity = 1.0f
           AdsToggle = false
           // Hold-to-crouch by default; toggle is opt-in like ADS toggle.
           CrouchToggle = false
           BloodColor = Crimson }
 
     /// Reject out-of-range values from hand-edited or old config files.
+    /// The same bounds drive the SettingsUi sliders — keep the two in sync.
     let clamp (settings: GameSettings) =
         { settings with
             Fov = Math.Clamp(settings.Fov, 55.0f, 95.0f)
             Contrast = Math.Clamp(settings.Contrast, 0.8f, 1.3f)
-            MouseSensitivity = Math.Clamp(settings.MouseSensitivity, 0.2f, 3.0f) }
+            MouseSensitivity = Math.Clamp(settings.MouseSensitivity, 0.2f, 3.0f)
+            // 0 means the field was absent from an older settings.json.
+            GamepadSensitivity =
+                if settings.GamepadSensitivity = 0.0f then 1.0f
+                else Math.Clamp(settings.GamepadSensitivity, 0.2f, 3.0f) }
 
     let bloodColors = [| Crimson; Blue; Green; Black; Yellow; Pink |]
 

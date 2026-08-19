@@ -24,7 +24,11 @@ module OnlineWorld =
         | "head-gib" -> Some(HeadGib(event.Position, event.Direction))
         | "explosion" -> Some(Explosion(event.Position, event.Value))
         | "footstep" -> Some(FootStep(event.Position, material))
-        | "subtitle" -> Some(Subtitle("RADIO", event.Text))
+        | "hurt" -> Some(PlayerHurt(event.Direction, Units.health event.Value))
+        // The wire text already carries "{speaker}: {line}" pre-formatted, so
+        // the speaker slot stays empty — the HUD must not prefix it again.
+        | "subtitle" -> Some(Subtitle("", event.Text))
+        | "objective" -> Some(ObjectiveUpdated event.EntityId)
         | _ -> None
 
     let private weaponFor (player: OnlinePlayer) =

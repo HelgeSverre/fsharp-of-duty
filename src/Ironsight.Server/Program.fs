@@ -148,18 +148,14 @@ module Program =
         // resolved *spec* is kept so its encoded bytes can be served to clients
         // that do not have the map (see /maps/{hash} below).
         let matchSpec =
-            let builtin alias name =
-                String.Equals(alias, name, StringComparison.OrdinalIgnoreCase)
-            match Environment.GetEnvironmentVariable "IRONSIGHT_LEVEL" with
-            | value when builtin value "training" -> Ironsight.ProcGen.TrainingYardMap.spec
-            | value when builtin value "depot" -> Ironsight.ProcGen.ScrapDepotMap.spec
-            | value when builtin value "canal" -> Ironsight.ProcGen.CanalYardMap.spec
-            | value when builtin value "omaha" -> Ironsight.ProcGen.OmahaDrawMap.spec
-            | value when not (String.IsNullOrWhiteSpace value) && value.EndsWith(Ironsight.ProcGen.MapFile.Extension, StringComparison.OrdinalIgnoreCase) ->
+            let value = Environment.GetEnvironmentVariable "IRONSIGHT_LEVEL"
+            match Ironsight.ProcGen.Levels.specByAlias value with
+            | Some spec -> spec
+            | None when not (String.IsNullOrWhiteSpace value) && value.EndsWith(Ironsight.ProcGen.MapFile.Extension, StringComparison.OrdinalIgnoreCase) ->
                 match Ironsight.ProcGen.MapFile.decode (IO.File.ReadAllBytes value) with
                 | Ok spec -> spec
                 | Error message -> failwith $"IRONSIGHT_LEVEL '{value}' is not a valid map file: {message}"
-            | _ -> Ironsight.ProcGen.PaintballMap.spec
+            | None -> Ironsight.ProcGen.PaintballMap.spec
         let mapBytes = Ironsight.ProcGen.MapFile.encode matchSpec
         let matchLevel = Ironsight.ProcGen.LevelCompile.compile matchSpec
         let matches = MatchDirectory(matchLevel, mapBytes)

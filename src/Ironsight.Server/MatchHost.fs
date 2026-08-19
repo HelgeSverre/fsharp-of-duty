@@ -393,6 +393,9 @@ type MatchHost(mode: GameMode, ?matchLevel: Level, ?disconnectGrace: TimeSpan) =
                         if after.Health < before.Health then
                             let damaged = { before with Health = after.Health; RegenIn = Tuning.RegenDelay }
                             combatState <- { combatState with Players = Map.add targetId damaged combatState.Players }
+                            // The victim's damage-direction indicator; the
+                            // shot's travel direction points at the victim.
+                            emitOnly targetId (PlayerHurt(direction, damaged.Health))
                             if after.IsDead then
                                 combatState <- Multiplayer.recordKill shooterId targetId combatState
                 | _ -> ()
@@ -416,6 +419,9 @@ type MatchHost(mode: GameMode, ?matchLevel: Level, ?disconnectGrace: TimeSpan) =
                         combatState <-
                             { combatState with
                                 Players = Map.add targetId { target with Health = health; RegenIn = Tuning.RegenDelay } combatState.Players }
+                        // Same torso-relative direction Grenades.applyExplosionsToPlayer uses offline.
+                        let torso = target.Position + Vector3(0.0f, 1.0f, 0.0f)
+                        emitOnly targetId (PlayerHurt(MathEx.normalizedOrZero (torso - position), health))
                         if health <= Units.health 0.0f then
                             if ownerId <> targetId then combatState <- Multiplayer.recordKill ownerId targetId combatState
                             else combatState <- Multiplayer.markDead targetId combatState
