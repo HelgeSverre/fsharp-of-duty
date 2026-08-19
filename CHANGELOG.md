@@ -1,5 +1,20 @@
 # Changelog
 
+## v0.0.3 — 2026-08-19
+
+### Added
+
+- Ragdoll physics on death: bodies collapse under a verlet ragdoll seeded by the killing blow — explosions throw corpses radially with falloff, shots push along the bullet direction, with lift so bodies get knocked off their feet. Purely client-side; online corpses (which previously snapped flat instantly) now fall naturally too.
+- SEO/OpenGraph meta tags and a generated 1200×630 OG card for the website, plus an ICBM geotag pointing at the server's actual datacenter coordinates.
+
+### Changed
+
+- Grenades hit harder: blast radius 6m → 7m, peak damage 110 → 125.
+
+### Fixed
+
+- README arsenal listing was missing the Luger P08 (twelve player weapons, not eleven).
+
 ## v0.0.2 — 2026-08-18
 
 Server hardening for long-running public hosts, plus UI and packaging polish.
