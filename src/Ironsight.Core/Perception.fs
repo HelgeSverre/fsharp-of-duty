@@ -29,7 +29,3 @@ module Perception =
             else aged
         { soldier with Contacts = contacts }
 
-    let heardShot source radius (soldier: Soldier) =
-        if soldier.IsAlive && Vector3.Distance(source, soldier.Position) <= radius then
-            { soldier with Contacts = Map.add (EntityId -1) (struct (source, Units.seconds 0.0f)) soldier.Contacts }
-        else soldier

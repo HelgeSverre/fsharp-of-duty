@@ -426,3 +426,13 @@ module Sim =
 
     let createOmahaWorld seed = createRoundWorld Levels.omahaDraw 5 seed
 
+    /// Offline bot round for a map alias (Levels.offlineAliases / argv);
+    /// unknown aliases fall back to the paintball arena.
+    let createOfflineWorld (alias: string) seed =
+        match alias with
+        | "training" -> createTrainingWorld seed
+        | "depot" -> createScrapDepotWorld seed
+        | "canal" -> createCanalYardWorld seed
+        | "omaha" -> createOmahaWorld seed
+        | _ -> createPaintballWorld seed
+

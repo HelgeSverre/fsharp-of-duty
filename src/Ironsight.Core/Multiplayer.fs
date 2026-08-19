@@ -55,10 +55,9 @@ type MatchState =
 
 [<RequireQualifiedAccess>]
 module Multiplayer =
-    let scoreLimit = function FreeForAll -> 30 | TeamDeathmatch -> 75 | Campaign -> 0
+    let scoreLimit = function FreeForAll -> 30 | TeamDeathmatch -> 75
 
     let create mode =
-        if mode = Campaign then invalidArg (nameof mode) "Campaign cannot run on a multiplayer server."
         { Tick = 0L
           Mode = mode
           LevelName = ""
@@ -83,7 +82,6 @@ module Multiplayer =
         match mode with
         | FreeForAll -> first.Id <> second.Id
         | TeamDeathmatch -> first.Team <> second.Team
-        | Campaign -> false
 
     /// Kills the given player: zeroes health, starts the respawn timer, and
     /// clears spawn protection so a suicide respawn can't inherit stale
@@ -123,4 +121,3 @@ module Multiplayer =
         match state.Mode with
         | TeamDeathmatch -> state.AlliesScore >= state.ScoreLimit || state.AxisScore >= state.ScoreLimit
         | FreeForAll -> state.Players |> Map.exists (fun _ player -> player.Kills >= state.ScoreLimit)
-        | Campaign -> false

@@ -137,8 +137,6 @@ module Ballistics =
             | [||] -> None
             | hits -> Some(Array.minBy (function SurfaceHit(distance, _, _, _) | SoldierHit(distance, _, _) -> distance) hits)
 
-    let traceFiltered canHit origin direction (level: Level) (soldiers: Soldier array) =
-        traceFilteredExcluding canHit Set.empty origin direction level soldiers
 
     let applyShotFiltered canHit (origin: Vector3) (direction: Vector3) (damage: float32<hp>) (penetration: float32) (headshotMultiplier: float32) (kind: WeaponKind) (level: Level) (soldiers: Soldier array) =
         let mutable currentOrigin = origin

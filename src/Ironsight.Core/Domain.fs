@@ -7,7 +7,7 @@ type EntityId = EntityId of int
 
 type Team = Allies | Axis
 
-type GameMode = Campaign | FreeForAll | TeamDeathmatch
+type GameMode = FreeForAll | TeamDeathmatch
 
 type FireMode = SemiAuto | FullAuto | BoltAction
 

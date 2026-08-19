@@ -161,7 +161,6 @@ module MeshGen =
     let translate (offset: Vector3) mesh = transform (Matrix4x4.CreateTranslation offset) mesh
     let rotateX angle mesh = transform (Matrix4x4.CreateRotationX angle) mesh
     let rotateY angle mesh = transform (Matrix4x4.CreateRotationY angle) mesh
-    let rotateZ angle mesh = transform (Matrix4x4.CreateRotationZ angle) mesh
     let scale (amount: Vector3) mesh = transform (Matrix4x4.CreateScale amount) mesh
     let paint material (mesh: ProceduralMesh) =
         { mesh with Vertices = mesh.Vertices |> Array.map (fun vertex -> { vertex with MaterialId = Materials.id material }) }

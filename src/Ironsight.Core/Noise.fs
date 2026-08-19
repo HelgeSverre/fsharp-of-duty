@@ -30,7 +30,3 @@ module Noise =
             amplitude <- amplitude * 0.5f
         total / max 0.0001f normalizer
 
-    let domainWarp2 seed (strength: float32) (point: Vector2) =
-        let x = fbm2 seed 4 (point + Vector2(5.2f, 1.3f))
-        let y = fbm2 (seed + 7919) 4 (point + Vector2(1.7f, 9.2f))
-        point + (Vector2(x, y) * 2.0f - Vector2.One) * strength

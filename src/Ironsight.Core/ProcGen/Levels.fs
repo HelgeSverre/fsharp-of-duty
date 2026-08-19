@@ -14,9 +14,21 @@ module Levels =
     /// MapFile encoding (map downloads, exports, identity hashes).
     let specs = [| PaintballMap.spec; ScrapDepotMap.spec; CanalYardMap.spec; TrainingYardMap.spec; OmahaDrawMap.spec |]
 
-    let specByName name = specs |> Array.tryFind (fun spec -> spec.Name = name)
+    /// Short aliases shared by the client's map menu / argv and the server's
+    /// IRONSIGHT_LEVEL — the one table both sides resolve builtin maps from.
+    let specByAlias (alias: string) =
+        match (if isNull alias then "" else alias.ToLowerInvariant()) with
+        | "paintball" -> Some PaintballMap.spec
+        | "depot" -> Some ScrapDepotMap.spec
+        | "canal" -> Some CanalYardMap.spec
+        | "omaha" -> Some OmahaDrawMap.spec
+        // Training Yard stays as the dev/test fixture but is not on the menu.
+        | "training" -> Some TrainingYardMap.spec
+        | _ -> None
 
-    // Training Yard stays as the dev/test fixture but is not offered on the map menu.
+    /// The aliases offered on the offline map menu, in menu order.
+    let offlineAliases = [| "paintball"; "depot"; "canal"; "omaha" |]
+
     let all = [| paintballArena; scrapDepot; canalYard; trainingYard; omahaDraw |]
 
     let byName name = all |> Array.tryFind (fun level -> level.Name = name)
