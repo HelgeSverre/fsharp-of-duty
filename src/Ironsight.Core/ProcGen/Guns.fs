@@ -62,9 +62,14 @@ module Guns =
                MeshGen.box (Vector3(0.10f, 0.02f, 0.16f)) Metal |> placed (Vector3(0.0f, -0.06f, -0.40f))
                MeshGen.box (Vector3(0.02f, 0.07f, 0.02f)) Metal |> placed (Vector3(0.0f, -0.02f, -0.34f))
                MeshGen.box (Vector3(0.02f, 0.07f, 0.02f)) Metal |> placed (Vector3(0.0f, -0.02f, -0.48f))
-               // Walnut stock, angled grip and metal buttplate.
-               MeshGen.wedge (Vector3(0.22f, 0.30f, 0.60f)) Wood |> placed (Vector3(0.0f, -0.11f, 0.16f))
-               MeshGen.box (Vector3(0.10f, 0.30f, 0.16f)) Wood |> MeshGen.rotateX -0.30f |> placed (Vector3(0.0f, -0.21f, 0.20f))
+               // Walnut stock: wrist, grip, butt, buttplate. Every piece
+               // overlaps the one ahead of it — a `wedge` cannot serve as a
+               // butt here because its forward end is a knife edge along the
+               // BOTTOM, so the wrist would be hollow exactly where the stock
+               // has to meet the receiver.
+               MeshGen.box (Vector3(0.16f, 0.15f, 0.52f)) Wood |> placed (Vector3(0.0f, -0.035f, -0.10f))
+               MeshGen.box (Vector3(0.11f, 0.22f, 0.15f)) Wood |> MeshGen.rotateX -0.30f |> placed (Vector3(0.0f, -0.16f, 0.02f))
+               MeshGen.box (Vector3(0.20f, 0.27f, 0.42f)) Wood |> MeshGen.rotateX 0.06f |> placed (Vector3(0.0f, -0.09f, 0.26f))
                MeshGen.box (Vector3(0.20f, 0.26f, 0.03f)) Metal |> placed (Vector3(0.0f, -0.10f, 0.46f)) |]
 
     let private kar98kSniper =
@@ -103,7 +108,9 @@ module Guns =
                MeshGen.box (Vector3(0.13f, 0.46f, 0.12f)) Metal |> placed (Vector3(0.0f, -0.19f, -0.31f))
                // Distinct pistol grip behind the trigger, ahead of the stock.
                MeshGen.box (Vector3(0.11f, 0.24f, 0.13f)) Wood |> MeshGen.rotateX -0.42f |> placed (Vector3(0.0f, -0.155f, -0.055f))
-               MeshGen.box (Vector3(0.20f, 0.25f, 0.55f)) Wood |> MeshGen.rotateX 0.15f |> placed (Vector3(0.0f, -0.06f, 0.18f))
+               // Long enough to bite into the receiver; at 0.55 the rotated
+               // box only just touched its rear face.
+               MeshGen.box (Vector3(0.20f, 0.25f, 0.62f)) Wood |> MeshGen.rotateX 0.15f |> placed (Vector3(0.0f, -0.06f, 0.15f))
                MeshGen.box (Vector3(0.055f, 0.10f, 0.035f)) Metal |> placed (Vector3(0.0f, 0.18f, -0.54f)) |]
 
     let private m1911 =
@@ -113,7 +120,8 @@ module Guns =
                MeshGen.box (Vector3(0.16f, 0.09f, 0.48f)) Metal |> placed (Vector3(0.0f, 0.09f, -0.28f))
                // Wooden grip with an exposed hammer spur at the rear.
                MeshGen.box (Vector3(0.13f, 0.28f, 0.18f)) Wood |> MeshGen.rotateX -0.18f |> placed (Vector3(0.0f, -0.15f, -0.08f))
-               MeshGen.box (Vector3(0.05f, 0.07f, 0.03f)) Metal |> MeshGen.rotateX 0.55f |> placed (Vector3(0.0f, 0.115f, 0.005f))
+               // Sits against the rear of the slide, not floating behind it.
+               MeshGen.box (Vector3(0.05f, 0.07f, 0.03f)) Metal |> MeshGen.rotateX 0.55f |> placed (Vector3(0.0f, 0.115f, -0.02f))
                // Trigger guard loop under the frame.
                MeshGen.box (Vector3(0.10f, 0.02f, 0.13f)) Metal |> placed (Vector3(0.0f, -0.075f, -0.28f))
                MeshGen.box (Vector3(0.02f, 0.05f, 0.02f)) Metal |> placed (Vector3(0.0f, -0.05f, -0.34f))
@@ -129,8 +137,9 @@ module Guns =
                // than the M1911 so the two pistols read differently at a glance.
                MeshGen.box (Vector3(0.11f, 0.08f, 0.34f)) Metal |> placed (Vector3(0.0f, 0.01f, -0.20f))
                MeshGen.cylinder 10 0.048f 0.30f Metal |> placed (Vector3(0.0f, 0.085f, -0.22f))
-               // Long thin exposed barrel — no slide wrapping it.
-               MeshGen.cylinder 10 0.026f 0.36f Metal |> placed (Vector3(0.0f, 0.085f, -0.66f))
+               // Long thin exposed barrel — no slide wrapping it. Runs back
+               // into the receiver; at 0.36 it floated well clear of it.
+               MeshGen.cylinder 10 0.026f 0.50f Metal |> placed (Vector3(0.0f, 0.085f, -0.59f))
                // Toggle-lock knuckle: the sideways disc pair at the rear of the
                // receiver is the Luger's signature.
                MeshGen.cylinder 8 0.038f 0.17f Metal |> MeshGen.rotateY (MathF.PI * 0.5f) |> placed (Vector3(0.0f, 0.135f, -0.03f))
@@ -147,21 +156,31 @@ module Guns =
 
     let private m1897 =
         MeshGen.union
-            [| // Walnut stock and a long ribbed pump distinguish the trench gun silhouette.
-               MeshGen.wedge (Vector3(0.25f, 0.30f, 0.74f)) Wood |> placed (Vector3(0.0f, -0.10f, 0.14f))
+            [| // Walnut stock and a long ribbed pump distinguish the trench gun
+               // silhouette. Wrist then butt, both overlapping the receiver
+               // chain — see the Kar98k stock for why this is not a wedge.
+               // Narrower than the receiver so their side faces do not end up
+               // coplanar and z-fighting.
+               MeshGen.box (Vector3(0.18f, 0.17f, 0.52f)) Wood |> placed (Vector3(0.0f, -0.02f, -0.02f))
+               MeshGen.box (Vector3(0.23f, 0.29f, 0.36f)) Wood |> MeshGen.rotateX 0.06f |> placed (Vector3(0.0f, -0.09f, 0.33f))
                MeshGen.box (Vector3(0.19f, 0.20f, 0.43f)) Metal |> placed (Vector3(0.0f, 0.02f, -0.33f))
                MeshGen.cylinder 12 0.043f 0.86f Metal |> placed (Vector3(0.0f, 0.08f, -0.96f))
                MeshGen.cylinder 12 0.034f 0.78f Metal |> placed (Vector3(0.0f, -0.015f, -0.89f))
                MeshGen.box (Vector3(0.23f, 0.17f, 0.34f)) Wood |> placed (Vector3(0.0f, -0.09f, -0.74f))
                MeshGen.box (Vector3(0.055f, 0.09f, 0.045f)) Metal |> placed (Vector3(0.0f, 0.18f, -0.51f))
                MeshGen.box (Vector3(0.045f, 0.075f, 0.04f)) Metal |> placed (Vector3(0.0f, 0.16f, -1.38f))
-               MeshGen.box (Vector3(0.11f, 0.32f, 0.15f)) Wood |> MeshGen.rotateX -0.30f |> placed (Vector3(0.0f, -0.19f, 0.17f)) |]
+               MeshGen.box (Vector3(0.11f, 0.30f, 0.15f)) Wood |> MeshGen.rotateX -0.30f |> placed (Vector3(0.0f, -0.19f, 0.10f)) |]
 
     let private m1Garand =
         MeshGen.union
-            [| // Full-length walnut stock with the long upper handguard.
-               MeshGen.wedge (Vector3(0.22f, 0.28f, 0.58f)) Wood |> placed (Vector3(0.0f, -0.10f, 0.16f))
-               MeshGen.box (Vector3(0.10f, 0.28f, 0.15f)) Wood |> MeshGen.rotateX -0.28f |> placed (Vector3(0.0f, -0.20f, 0.19f))
+            [| // Full-length walnut stock with the long upper handguard. Wrist
+               // and butt are separate overlapping boxes so the stock stays
+               // joined to the receiver — see the Kar98k stock for why.
+               // Width differs from the receiver's on purpose: matching it
+               // exactly would leave the two side faces coplanar and z-fighting.
+               MeshGen.box (Vector3(0.16f, 0.14f, 0.50f)) Wood |> placed (Vector3(0.0f, -0.02f, -0.12f))
+               MeshGen.box (Vector3(0.10f, 0.22f, 0.15f)) Wood |> MeshGen.rotateX -0.28f |> placed (Vector3(0.0f, -0.15f, 0.02f))
+               MeshGen.box (Vector3(0.20f, 0.26f, 0.40f)) Wood |> MeshGen.rotateX 0.06f |> placed (Vector3(0.0f, -0.08f, 0.25f))
                MeshGen.box (Vector3(0.14f, 0.10f, 0.78f)) Wood |> placed (Vector3(0.0f, 0.02f, -0.62f))
                MeshGen.box (Vector3(0.12f, 0.055f, 0.62f)) Wood |> placed (Vector3(0.0f, 0.125f, -0.66f))
                // Receiver hump with the en-bloc clip well and op-rod nub.
@@ -188,13 +207,18 @@ module Guns =
             [| // Stamped-metal receiver with the gas tube above the barrel.
                MeshGen.box (Vector3(0.15f, 0.17f, 0.46f)) Metal |> placed (Vector3(0.0f, 0.04f, -0.30f))
                MeshGen.cylinder 10 0.035f 0.46f Metal |> placed (Vector3(0.0f, 0.115f, -0.76f))
-               MeshGen.cylinder 10 0.028f 0.34f Metal |> placed (Vector3(0.0f, 0.03f, -0.86f))
+               // Runs back into the receiver. At 0.34 it reached neither the
+               // receiver nor the gas tube above it and floated in mid-air.
+               MeshGen.cylinder 10 0.028f 0.53f Metal |> placed (Vector3(0.0f, 0.03f, -0.765f))
                // Long banana magazine, approximated as two angled segments.
                MeshGen.box (Vector3(0.075f, 0.30f, 0.11f)) Metal |> MeshGen.rotateX -0.16f |> placed (Vector3(0.0f, -0.17f, -0.44f))
-               MeshGen.box (Vector3(0.07f, 0.22f, 0.10f)) Metal |> MeshGen.rotateX -0.42f |> placed (Vector3(0.0f, -0.38f, -0.50f))
+               // Overlaps the upper segment: rotating each about its own centre
+               // walks the lower one away in z as well as y.
+               MeshGen.box (Vector3(0.07f, 0.22f, 0.10f)) Metal |> MeshGen.rotateX -0.42f |> placed (Vector3(0.0f, -0.31f, -0.44f))
                // Pistol grip and wooden butt stock.
                MeshGen.box (Vector3(0.10f, 0.22f, 0.12f)) Wood |> MeshGen.rotateX -0.40f |> placed (Vector3(0.0f, -0.15f, -0.04f))
-               MeshGen.box (Vector3(0.13f, 0.15f, 0.42f)) Wood |> placed (Vector3(0.0f, 0.00f, 0.24f))
+               // Reaches forward into the receiver rather than starting behind it.
+               MeshGen.box (Vector3(0.13f, 0.15f, 0.56f)) Wood |> placed (Vector3(0.0f, 0.00f, 0.17f))
                // Hooded front sight and rear ladder.
                MeshGen.box (Vector3(0.05f, 0.09f, 0.03f)) Metal |> placed (Vector3(0.0f, 0.17f, -1.00f))
                MeshGen.box (Vector3(0.06f, 0.05f, 0.03f)) Metal |> placed (Vector3(0.0f, 0.145f, -0.30f)) |]
@@ -205,8 +229,10 @@ module Guns =
                MeshGen.cylinder 12 0.052f 0.34f Metal |> placed (Vector3(0.0f, 0.05f, -0.26f))
                MeshGen.cylinder 10 0.030f 0.30f Metal |> placed (Vector3(0.0f, 0.05f, -0.58f))
                MeshGen.box (Vector3(0.04f, 0.03f, 0.10f)) Metal |> placed (Vector3(0.0f, -0.01f, -0.66f))
-               // Straight vertical magazine doubling as the front grip.
-               MeshGen.box (Vector3(0.075f, 0.34f, 0.10f)) Metal |> placed (Vector3(0.0f, -0.20f, -0.36f))
+               // Straight vertical magazine doubling as the front grip. Tall
+               // enough to reach the round receiver's underside, which sits
+               // above y=0 once the tube's curvature is accounted for.
+               MeshGen.box (Vector3(0.075f, 0.38f, 0.10f)) Metal |> placed (Vector3(0.0f, -0.17f, -0.36f))
                // Bakelite grip frame and folded stock rails going back.
                MeshGen.box (Vector3(0.10f, 0.20f, 0.11f)) Wood |> MeshGen.rotateX -0.35f |> placed (Vector3(0.0f, -0.13f, -0.02f))
                MeshGen.box (Vector3(0.12f, 0.10f, 0.16f)) Metal |> placed (Vector3(0.0f, 0.01f, 0.02f))
@@ -220,16 +246,19 @@ module Guns =
         MeshGen.union
             [| // Straight-line receiver and stock, barrel on the bore axis.
                MeshGen.box (Vector3(0.14f, 0.15f, 0.52f)) Metal |> placed (Vector3(0.0f, 0.04f, -0.28f))
-               MeshGen.box (Vector3(0.12f, 0.13f, 0.36f)) Wood |> placed (Vector3(0.0f, 0.03f, 0.20f))
-               MeshGen.cylinder 12 0.032f 0.52f Metal |> placed (Vector3(0.0f, 0.05f, -0.88f))
+               // Stock and barrel both run into the receiver; at their old
+               // lengths each stopped just short of it, leaving a visible gap.
+               MeshGen.box (Vector3(0.12f, 0.13f, 0.44f)) Wood |> placed (Vector3(0.0f, 0.03f, 0.16f))
+               MeshGen.cylinder 12 0.032f 0.62f Metal |> placed (Vector3(0.0f, 0.05f, -0.83f))
                // Signature side-mounted magazine sticking out to the left.
                MeshGen.box (Vector3(0.26f, 0.075f, 0.11f)) Metal |> placed (Vector3(-0.20f, 0.05f, -0.36f))
                // Sharply raked pistol grip.
                MeshGen.box (Vector3(0.09f, 0.22f, 0.11f)) Metal |> MeshGen.rotateX -0.62f |> placed (Vector3(0.0f, -0.13f, -0.10f))
-               // Scope tube with bells, mounted low over the receiver.
-               MeshGen.cylinder 14 0.050f 0.42f Metal |> placed (Vector3(0.0f, 0.175f, -0.34f))
-               MeshGen.cylinder 14 0.068f 0.08f Metal |> placed (Vector3(0.0f, 0.175f, -0.57f))
-               MeshGen.cylinder 14 0.062f 0.08f Metal |> placed (Vector3(0.0f, 0.175f, -0.11f))
+               // Scope tube with bells, sitting on the receiver rather than
+               // hovering a centimetre above it.
+               MeshGen.cylinder 14 0.050f 0.42f Metal |> placed (Vector3(0.0f, 0.160f, -0.34f))
+               MeshGen.cylinder 14 0.068f 0.08f Metal |> placed (Vector3(0.0f, 0.160f, -0.57f))
+               MeshGen.cylinder 14 0.062f 0.08f Metal |> placed (Vector3(0.0f, 0.160f, -0.11f))
                // Folded bipod legs hugging the barrel, muzzle device up front.
                MeshGen.cylinder 6 0.012f 0.42f Metal |> placed (Vector3(0.045f, 0.005f, -0.86f))
                MeshGen.cylinder 6 0.012f 0.42f Metal |> placed (Vector3(-0.045f, 0.005f, -0.86f))
@@ -244,8 +273,10 @@ module Guns =
                MeshGen.cylinder 10 0.024f 0.40f Metal |> placed (Vector3(0.0f, 0.005f, -0.90f))
                // Bottom 20-round magazine.
                MeshGen.box (Vector3(0.08f, 0.22f, 0.13f)) Metal |> MeshGen.rotateX -0.10f |> placed (Vector3(0.0f, -0.15f, -0.38f))
-               // Wooden butt, grip and forearm.
-               MeshGen.wedge (Vector3(0.20f, 0.28f, 0.50f)) Wood |> placed (Vector3(0.0f, -0.08f, 0.20f))
+               // Wooden butt, grip and forearm. Wrist then butt — see the
+               // Kar98k stock for why this is not a wedge.
+               MeshGen.box (Vector3(0.15f, 0.15f, 0.42f)) Wood |> placed (Vector3(0.0f, -0.01f, -0.06f))
+               MeshGen.box (Vector3(0.19f, 0.26f, 0.36f)) Wood |> MeshGen.rotateX 0.06f |> placed (Vector3(0.0f, -0.07f, 0.27f))
                MeshGen.box (Vector3(0.10f, 0.22f, 0.13f)) Wood |> MeshGen.rotateX -0.32f |> placed (Vector3(0.0f, -0.16f, 0.02f))
                MeshGen.box (Vector3(0.15f, 0.10f, 0.26f)) Wood |> placed (Vector3(0.0f, -0.02f, -0.62f))
                // Folded bipod at the muzzle and flash hider.
@@ -256,20 +287,29 @@ module Guns =
                // Rear sight ladder.
                MeshGen.box (Vector3(0.06f, 0.06f, 0.03f)) Metal |> placed (Vector3(0.0f, 0.155f, -0.24f)) |]
 
+    /// Every weapon by name, so callers can iterate the set without repeating
+    /// the list. `forWeapon` falls back to the Kar98k for anything unlisted.
+    let names =
+        [| "Thompson"; "M1911"; "Luger P08"; "M1897 Trench Gun"; "Kar98k"; "Kar98k Sniper"
+           "M1 Garand"; "STG-44"; "MP40"; "Lee-Enfield"; "FG42"; "BAR" |]
+
+    /// The gun alone, without the arms holding it — what the geometry preview
+    /// in tools/GunPreview.fsx inspects.
+    let meshFor name =
+        match name with
+        | "Thompson" -> thompson
+        | "M1911" -> m1911
+        | "Luger P08" -> luger
+        | "M1897 Trench Gun" -> m1897
+        | "Kar98k Sniper" -> kar98kSniper
+        | "M1 Garand" -> m1Garand
+        | "STG-44" -> stg44
+        | "MP40" -> mp40
+        | "Lee-Enfield" -> leeEnfield
+        | "FG42" -> fg42
+        | "BAR" -> bar
+        | _ -> kar98k
+
     let forWeapon name =
-        let weapon =
-            match name with
-            | "Thompson" -> thompson
-            | "M1911" -> m1911
-            | "Luger P08" -> luger
-            | "M1897 Trench Gun" -> m1897
-            | "Kar98k Sniper" -> kar98kSniper
-            | "M1 Garand" -> m1Garand
-            | "STG-44" -> stg44
-            | "MP40" -> mp40
-            | "Lee-Enfield" -> leeEnfield
-            | "FG42" -> fg42
-            | "BAR" -> bar
-            | _ -> kar98k
         let arms = if name = "M1911" || name = "Luger P08" then pistolArms else rifleArms
-        MeshGen.union [| weapon; arms |]
+        MeshGen.union [| meshFor name; arms |]

@@ -81,6 +81,49 @@ module ClientTests =
         Assert.Contains(shot.Samples, fun sample -> abs (int sample) > 1000)
 
     [<Fact>]
+    let ``every weapon mesh is one connected lump`` () =
+        // Voxelise each triangle's bounding box and flood fill. A part that
+        // floats clear of the gun body shows up as a second component — the
+        // Kar98k butt stock did exactly that, sitting 0.15 behind and 0.21
+        // below the receiver it was supposed to be bolted to, and four other
+        // guns had the same hole.
+        //
+        // Guns.meshFor, not forWeapon: the arms are a genuinely separate lump.
+        //
+        // ponytail: triangle AABBs over-approximate the surface, so this
+        // catches a part that has drifted off the body, not a hairline seam.
+        // Tighten by rasterising the triangles properly if that ever matters.
+        let cell = 0.02f
+        let neighbours =
+            [| struct (1, 0, 0); struct (-1, 0, 0); struct (0, 1, 0)
+               struct (0, -1, 0); struct (0, 0, 1); struct (0, 0, -1) |]
+        for name in Guns.names do
+            let mesh = Guns.meshFor name
+            let occupied = Collections.Generic.HashSet<struct (int * int * int)>()
+            for triangle in 0 .. mesh.Indices.Length / 3 - 1 do
+                let corners =
+                    [| for offset in 0..2 -> mesh.Vertices[int mesh.Indices[triangle * 3 + offset]].Position |]
+                let slot (pick: Vector3 -> float32) choose =
+                    int (floor (choose (corners |> Array.map pick) / cell))
+                for x in slot (fun p -> p.X) Array.min .. slot (fun p -> p.X) Array.max do
+                    for y in slot (fun p -> p.Y) Array.min .. slot (fun p -> p.Y) Array.max do
+                        for z in slot (fun p -> p.Z) Array.min .. slot (fun p -> p.Z) Array.max do
+                            occupied.Add(struct (x, y, z)) |> ignore
+            let reached = Collections.Generic.HashSet<struct (int * int * int)>()
+            let pending = Collections.Generic.Queue<struct (int * int * int)>()
+            let start = Seq.head occupied
+            pending.Enqueue start
+            reached.Add start |> ignore
+            while pending.Count > 0 do
+                let struct (x, y, z) = pending.Dequeue()
+                for struct (dx, dy, dz) in neighbours do
+                    let next = struct (x + dx, y + dy, z + dz)
+                    if occupied.Contains next && reached.Add next then pending.Enqueue next
+            Assert.True(
+                reached.Count = occupied.Count,
+                $"{name}: {occupied.Count - reached.Count} of {occupied.Count} voxels float free of the body")
+
+    [<Fact>]
     let ``start menu supports keyboard map selection and the Fly server`` () =
         let idle = TestKit.idleMenuInput
         let activate = { idle with Activate = true }
