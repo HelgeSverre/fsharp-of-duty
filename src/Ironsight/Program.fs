@@ -15,6 +15,10 @@ module Program =
         |> Array.tryFindIndex ((=) name)
         |> Option.bind (fun index -> if index + 1 < args.Length then Some args[index + 1] else None)
 
+    let private weaponKeys =
+        InputButtons.Weapon1 ||| InputButtons.Weapon2 ||| InputButtons.Weapon3
+        ||| InputButtons.Weapon4 ||| InputButtons.Weapon5
+
     let private hitMarkerKind events =
         let hits = events |> List.choose (function HitConfirmed(_, lethal) -> Some lethal | _ -> None)
         if List.isEmpty hits then None else Some(List.contains true hits)
@@ -26,6 +30,59 @@ module Program =
         |> Option.bind (fun struct (payload, remaining) ->
             let next = remaining - Tuning.TickDuration
             if next > Units.seconds 0.0f then Some(struct (payload, next)) else None)
+
+    /// Transient HUD feedback the fixed-step loop accumulates and the render
+    /// pass reads: subtitle, damage direction, hit marker, inventory flash.
+    /// Pure so it stays testable without a window.
+    type FeedbackState =
+        { Subtitle: struct (string * float32<s>) option
+          DamageDirection: struct (Vector3 * float32<s>) option
+          HitMarkerRemaining: float32<s>
+          HitMarkerLethal: bool
+          InventoryShow: float32<s> }
+
+    [<RequireQualifiedAccess>]
+    module Feedback =
+        let empty =
+            { Subtitle = None
+              DamageDirection = None
+              HitMarkerRemaining = Units.seconds 0.0f
+              HitMarkerLethal = false
+              InventoryShow = Units.seconds 0.0f }
+
+        let hitMarkerDuration lethal = Units.seconds (if lethal then 0.34f else 0.22f)
+
+        /// One fixed tick of decay for every timed element.
+        let tick (state: FeedbackState) =
+            let hitMarker = max (Units.seconds 0.0f) (state.HitMarkerRemaining - Tuning.TickDuration)
+            { state with
+                Subtitle = tickTimer state.Subtitle
+                DamageDirection = tickTimer state.DamageDirection
+                HitMarkerRemaining = hitMarker
+                HitMarkerLethal = state.HitMarkerLethal && hitMarker > Units.seconds 0.0f
+                InventoryShow = max (Units.seconds 0.0f) (state.InventoryShow - Tuning.TickDuration) }
+
+        /// Subtitle / damage-direction / hit-marker pickup in one event scan,
+        /// shared by the offline and online drains. Offline events carry a
+        /// speaker; online subtitles arrive pre-formatted with an empty one.
+        let applyEvents (events: GameEvent list) (state: FeedbackState) =
+            let state =
+                events
+                |> List.rev
+                |> List.tryPick (function
+                    | Subtitle("", line) -> Some line
+                    | Subtitle(speaker, line) -> Some $"{speaker}: {line}"
+                    | _ -> None)
+                |> Option.map (fun text -> { state with Subtitle = Some(struct (text, Units.seconds 4.0f)) })
+                |> Option.defaultValue state
+            let state =
+                events
+                |> List.tryPick (function PlayerHurt(direction, _) -> Some direction | _ -> None)
+                |> Option.map (fun direction -> { state with DamageDirection = Some(struct (direction, Units.seconds 0.75f)) })
+                |> Option.defaultValue state
+            match hitMarkerKind events with
+            | Some lethal -> { state with HitMarkerLethal = lethal; HitMarkerRemaining = hitMarkerDuration lethal }
+            | None -> state
 
     type MenuHome =
         /// The boot menu: no session behind it, Esc on the root page does nothing.
@@ -87,18 +144,7 @@ module Program =
         let mutable serverStatusAt = DateTimeOffset.MinValue
         let mutable predictedFireCooldown = 0.0f
         let mutable predictedFireHeld = false
-        let mutable subtitle: struct (string * float32<s>) option = None
-        let mutable damageDirection: struct (Vector3 * float32<s>) option = None
-        let mutable hitMarkerRemaining = Units.seconds 0.0f
-        let hitMarkerDuration lethal = Units.seconds (if lethal then 0.34f else 0.22f)
-        let mutable hitMarkerLethal = false
-        let applyHitMarker events =
-            match hitMarkerKind events with
-            | Some lethal ->
-                hitMarkerLethal <- lethal
-                hitMarkerRemaining <- hitMarkerDuration lethal
-            | None -> ()
-        let mutable inventoryShow = Units.seconds 0.0f
+        let mutable feedback = Feedback.empty
         let mutable lastActiveWeaponName = ""
         let mutable lastActiveInMag = -1
         let mutable grenadeButtonHeld = false
@@ -107,18 +153,9 @@ module Program =
         let mutable settings =
             if args |> Array.contains "--reset-settings" then Settings.defaults else Settings.load ()
         let applySettings () =
-            sampler |> Option.iter (fun input ->
-                input.SetSensitivity settings.MouseSensitivity
-                input.SetAdsToggle settings.AdsToggle
-                input.SetCrouchToggle settings.CrouchToggle)
+            sampler |> Option.iter (fun input -> input.ApplySettings settings)
             renderer |> Option.iter (fun value -> value.SetSettings settings)
-        let createOfflineWorld map =
-            match map with
-            | "training" -> Sim.createTrainingWorld 0x1A0B3CUL
-            | "depot" -> Sim.createScrapDepotWorld 0x1A0B3CUL
-            | "canal" -> Sim.createCanalYardWorld 0x1A0B3CUL
-            | "omaha" -> Sim.createOmahaWorld 0x1A0B3CUL
-            | _ -> Sim.createPaintballWorld 0x1A0B3CUL
+        let createOfflineWorld map = Sim.createOfflineWorld map 0x1A0B3CUL
         let requestedMap =
             if args |> Array.contains "--training" then Some "training"
             else None
@@ -234,11 +271,7 @@ module Program =
         window.add_Update(fun elapsed ->
             accumulator <- min 0.25 (accumulator + elapsed)
             while accumulator >= fixedStep do
-                subtitle <- tickTimer subtitle
-                damageDirection <- tickTimer damageDirection
-                hitMarkerRemaining <- max (Units.seconds 0.0f) (hitMarkerRemaining - Tuning.TickDuration)
-                if hitMarkerRemaining <= Units.seconds 0.0f then hitMarkerLethal <- false
-                inventoryShow <- max (Units.seconds 0.0f) (inventoryShow - Tuning.TickDuration)
+                feedback <- Feedback.tick feedback
                 predictionError <- predictionError * 0.75f
                 predictedFireCooldown <- max 0.0f (predictedFireCooldown - float32 fixedStep)
                 match reconnectTask with
@@ -334,6 +367,10 @@ module Program =
                                         screen <- Screen.Menu(home, nextMenu, Some(SettingsUi.create settings))
                                     | ExitGame -> window.Close())
                     | Screen.Playing | Screen.Loadout _ ->
+                        // Captured before the loadout branch can flip screen to
+                        // Playing, so the closing frame is still masked below —
+                        // otherwise a held Enter/A leaks into the sim as-is.
+                        let wasLoadout = match screen with Screen.Loadout _ -> true | _ -> false
                         (match screen with
                          | Screen.Playing ->
                              if inputSampler.ConsumeDebugToggle() then debugView <- not debugView
@@ -345,37 +382,42 @@ module Program =
                                  // and the server coasts the idle player.
                                  setScreen (Screen.Menu(Pause, StartMenu.create playerName, None))
                          | Screen.Loadout selected ->
-                             let struct (nextSelected, choice) = LoadoutMenu.update window.Size.X window.Size.Y (inputSampler.ConsumeMenuInput()) selected
-                             match choice with
-                             | LoadoutMenu.Browsing -> screen <- Screen.Loadout nextSelected
-                             | LoadoutMenu.Closed -> setScreen Screen.Playing
-                             | LoadoutMenu.Chosen weaponName ->
-                                 setScreen Screen.Playing
-                                 match onlineClient with
-                                 | Some client when client.Connected ->
-                                     selectedOnlineWeapon <- weaponName
-                                     client.RequestLoadout weaponName
-                                 | _ ->
-                                     current.Player.Slots
-                                     |> Array.tryFindIndex (fun slot -> slot.Class.Name = weaponName)
-                                     |> Option.iter (fun index ->
-                                         if index <> current.Player.Active then
-                                             current <- { current with Player = { current.Player with Active = index; Ads = 0.0f } }
-                                             previous <- current)
+                             // The key/button that opened the picker (B / Y)
+                             // also closes it.
+                             if inputSampler.ConsumeLoadoutToggle() then setScreen Screen.Playing
+                             else
+                                 let struct (nextSelected, choice) = LoadoutMenu.update window.Size.X window.Size.Y (inputSampler.ConsumeMenuInput()) selected
+                                 match choice with
+                                 | LoadoutMenu.Browsing -> screen <- Screen.Loadout nextSelected
+                                 | LoadoutMenu.Closed -> setScreen Screen.Playing
+                                 | LoadoutMenu.Chosen weaponName ->
+                                     setScreen Screen.Playing
+                                     match onlineClient with
+                                     | Some client when client.Connected ->
+                                         selectedOnlineWeapon <- weaponName
+                                         client.RequestLoadout weaponName
+                                     | _ ->
+                                         current.Player.Slots
+                                         |> Array.tryFindIndex (fun slot -> slot.Class.Name = weaponName)
+                                         |> Option.iter (fun index ->
+                                             if index <> current.Player.Active then
+                                                 current <- { current with Player = { current.Player with Active = index; Ads = 0.0f } }
+                                                 previous <- current)
                          | Screen.Menu _ -> ())
                         let sampledFrame = inputSampler.Sample()
                         // While the loadout picker is open the world keeps
                         // simulating, but the player stands idle (CS buy-menu
                         // feel); online the server coasts us the same way.
+                        // Masked when the tick started OR ended on the picker,
+                        // so neither the opening nor the closing frame leaks
+                        // held movement/buttons into the sim.
+                        let isLoadout = match screen with Screen.Loadout _ -> true | _ -> false
                         let inputFrame =
-                            match screen with
-                            | Screen.Loadout _ ->
+                            if wasLoadout || isLoadout then
                                 { sampledFrame with Move = Vector2.Zero; Look = Vector2.Zero; Buttons = InputButtons.None }
-                            | _ -> sampledFrame
-                        let weaponKeys =
-                            InputButtons.Weapon1 ||| InputButtons.Weapon2 ||| InputButtons.Weapon3
-                            ||| InputButtons.Weapon4 ||| InputButtons.Weapon5
-                        if inputFrame.Buttons &&& weaponKeys <> InputButtons.None then inventoryShow <- Units.seconds 2.5f
+                            else sampledFrame
+                        if inputFrame.Buttons &&& weaponKeys <> InputButtons.None then
+                            feedback <- { feedback with InventoryShow = Units.seconds 2.5f }
                         grenadeButtonHeld <- inputFrame.Buttons.HasFlag InputButtons.Grenade
                         previous <- current
                         match onlineClient with
@@ -386,7 +428,10 @@ module Program =
                             let inLiveMatch = onlineSnapshot |> Option.exists (fun snapshot -> snapshot.Phase = Playing)
                             let triggerEdge = firePressed && not predictedFireHeld
                             let mayRepeat = localWeapon.Class.Mode = FullAuto && firePressed
+                            // ponytail: cosmetic predictor mirrors Weapons.step's gate by hand;
+                            // route through Sim.stepLocomotion if it drifts again.
                             if inLiveMatch && current.Player.IsAlive && localWeapon.InMag > 0
+                               && localWeapon.State = Ready
                                && not current.Player.Sprinting
                                && predictedFireCooldown <= 0.0f && (triggerEdge || mayRepeat) then
                                 let origin = Ballistics.playerMuzzleOrigin current.Player localWeapon.Class
@@ -409,7 +454,7 @@ module Program =
                             if current.Round.IsNone && current.Player.IsDead && inputFrame.Buttons.HasFlag InputButtons.Reload then
                                 current <- initialWorld
                                 previous <- initialWorld
-                                subtitle <- None
+                                feedback <- { feedback with Subtitle = None }
                             elif current.Player.IsAlive || current.Round.IsSome then
                                 let previousWeaponState = current.Player.Slots[current.Player.Active].State
                                 // A fallen player no longer steers the body or the
@@ -434,14 +479,7 @@ module Program =
                                 if events |> List.exists (function ShotFired(Some shooter, _, _, _) -> shooter = current.Player.Id | _ -> false) then
                                     renderer |> Option.iter (fun value -> value.KickWeapon())
                                 audio |> Option.iter (fun value -> value.Handle events)
-                                events
-                                |> List.rev
-                                |> List.tryPick (function Subtitle(speaker, line) -> Some $"{speaker}: {line}" | _ -> None)
-                                |> Option.iter (fun text -> subtitle <- Some(struct (text, Units.seconds 4.0f)))
-                                events
-                                |> List.tryPick (function PlayerHurt(direction, _) -> Some direction | _ -> None)
-                                |> Option.iter (fun direction -> damageDirection <- Some(struct (direction, Units.seconds 0.75f)))
-                                applyHitMarker events
+                                feedback <- Feedback.applyEvents events feedback
                 | None -> ()
                 // The receive half of the online session runs on every screen,
                 // so the match keeps flowing behind the pause menu and a
@@ -477,10 +515,7 @@ module Program =
                             lastOnlineEventId <- max lastOnlineEventId (snapshot.Events |> Array.maxBy (fun event -> event.Id)).Id
                         renderer |> Option.iter (fun value -> value.HandleEvents presentationEvents)
                         audio |> Option.iter (fun value -> value.Handle presentationEvents)
-                        networkEvents
-                        |> List.tryPick (function Subtitle(_, line) -> Some line | _ -> None)
-                        |> Option.iter (fun text -> subtitle <- Some(struct (text, Units.seconds 4.0f)))
-                        applyHitMarker networkEvents
+                        feedback <- Feedback.applyEvents networkEvents feedback
                         let beforeReconcile = current.Player.Position
                         let reconciled, remaining = OnlineWorld.reconcile current.Level (pendingInputs |> Seq.toList) client.PlayerId current snapshot
                         let error = predictionError + (beforeReconcile - reconciled.Player.Position)
@@ -508,8 +543,8 @@ module Program =
                 | _ -> ()
                 let activeSlot = current.Player.Slots[current.Player.Active]
                 if activeSlot.Class.Name <> lastActiveWeaponName then
-                    if lastActiveWeaponName <> "" then inventoryShow <- Units.seconds 2.5f
-                elif activeSlot.Class.Name = "M1 Garand" && activeSlot.InMag = 0 && lastActiveInMag > 0 then
+                    if lastActiveWeaponName <> "" then feedback <- { feedback with InventoryShow = Units.seconds 2.5f }
+                elif activeSlot.Class.Name = Tuning.m1Garand.Name && activeSlot.InMag = 0 && lastActiveInMag > 0 then
                     // The Garand's en-bloc clip ejects with its famous ping.
                     audio |> Option.iter (fun value -> value.PlayPing current.Player.Position)
                 lastActiveWeaponName <- activeSlot.Class.Name
@@ -539,16 +574,16 @@ module Program =
                 let interpolated = RenderInterpolation.world alpha previous current
                 if predictionError = Vector3.Zero then interpolated
                 else { interpolated with Player = { interpolated.Player with Position = interpolated.Player.Position + predictionError } }
-            let subtitleText = subtitle |> Option.map (fun struct (text, _) -> text)
+            let subtitleText = feedback.Subtitle |> Option.map (fun struct (text, _) -> text)
             let hudInfo =
                 { Online = onlineSnapshot
                   LocalPlayerId = onlineClient |> Option.map (fun client -> client.PlayerId)
                   ShowScoreboard = sampler |> Option.exists (fun input -> input.ScoreboardHeld)
-                  DamageDirection = damageDirection |> Option.map (fun struct (direction, _) -> direction)
-                  HitMarker = MathEx.clamp01 (hitMarkerRemaining / hitMarkerDuration hitMarkerLethal)
-                  HitMarkerLethal = hitMarkerLethal
+                  DamageDirection = feedback.DamageDirection |> Option.map (fun struct (direction, _) -> direction)
+                  HitMarker = MathEx.clamp01 (feedback.HitMarkerRemaining / Feedback.hitMarkerDuration feedback.HitMarkerLethal)
+                  HitMarkerLethal = feedback.HitMarkerLethal
                   Subtitle = subtitleText
-                  ShowInventory = inventoryShow > Units.seconds 0.0f
+                  ShowInventory = feedback.InventoryShow > Units.seconds 0.0f
                   DebugView = debugView
                   GrenadeCooking =
                     (match current.Player.Grenade with Cooking _ -> true | _ -> false)

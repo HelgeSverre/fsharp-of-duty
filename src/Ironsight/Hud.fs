@@ -21,13 +21,13 @@ type HudInfo =
       Subtitle: string option
       /// Show the weapon category list (recent switch activity).
       ShowInventory: bool
+      /// Wireframe + line-of-sight overlay (F3). Deliberately a wallhack —
+      /// this is an experiment sandbox, not a secured competitive game.
+      DebugView: bool
       /// Whether the local player is holding a grenade ready to throw, which
       /// drives the trajectory preview. Decided by the caller rather than read
       /// from World.Player.Grenade: online the client never advances the hand
       /// state, so the world would always report idle.
-      /// Wireframe + line-of-sight overlay (F3). Deliberately a wallhack —
-      /// this is an experiment sandbox, not a secured competitive game.
-      DebugView: bool
       GrenadeCooking: bool
       /// In-game loadout picker: Some selectedIndex while open.
       LoadoutScreen: int option
@@ -130,9 +130,7 @@ type Hud(gl: GL) =
             solid r.X r.Y r.W accentHeight accent
         /// Centered overlay screen: optional fullscreen dim, panel chrome, and
         /// the prompt footer. Returns the panel rect the caller lays out in.
-        let overlay dim (accentAlpha: float32) (panelWidth: float32) (panelHeight: float32) (prompt: string) =
-            let r =
-                { X = centerX - panelWidth * 0.5f; Y = centerY - panelHeight * 0.5f; W = panelWidth; H = panelHeight }
+        let overlay dim (accentAlpha: float32) (r: Rect) (prompt: string) =
             if dim then solid 0.0f 0.0f (float32 width) (float32 height) (Vector4(0.005f, 0.009f, 0.008f, 0.63f))
             panel r (Vector4(0.025f, 0.040f, 0.034f, 0.94f)) 5.0f (Vector4(0.82f, 0.22f, 0.08f, accentAlpha))
             addTextCentered centerX (r.Y + r.H - 30.0f) 0.9f (Vector4(0.64f, 0.67f, 0.61f, 1.0f)) prompt
@@ -160,7 +158,14 @@ type Hud(gl: GL) =
                 addText (rows.X + rowTextPad + offset) (Rect.textY scale slot) scale color text
         let weapon = world.Player.Slots[world.Player.Active]
         let scoped = weapon.Class.Kind = SniperRifle && world.Player.Ads >= 0.72f
-        if scoped then
+        let panelBack = Vector4(0.015f, 0.022f, 0.018f, 0.66f)
+        let accent = Vector4(0.82f, 0.22f, 0.08f, 0.92f)
+        let label = Vector4(0.70f, 0.74f, 0.67f, 0.95f)
+        let weaponPanelWidth, weaponPanelHeight = 226.0f, 66.0f
+        let weaponPanelX = float32 width - weaponPanelWidth - 20.0f
+        let weaponPanelY = float32 height - weaponPanelHeight - 18.0f
+        // ---- Draw blocks. Defined here, invoked in order at the bottom. ----
+        let drawScopeMask () =
             let radius = min (float32 width * 0.46f) (float32 height * 0.47f)
             let left, right = centerX - radius, centerX + radius
             let black = Vector4(0.0f, 0.0f, 0.0f, 1.0f)
@@ -182,16 +187,16 @@ type Hud(gl: GL) =
             solid (centerX - 1.5f) (centerY - radius) 3.0f (radius * 2.0f) reticleEdge
             solid (centerX - 0.5f) (centerY - radius) 1.0f (radius * 2.0f) reticle
             solid (centerX - 2.0f) (centerY - 2.0f) 4.0f 4.0f reticle
-        else
+        let drawCrosshair () =
             if world.Player.IsAlive then
                 let spread = 7.0f + (weapon.Class.HipSpread + (weapon.Class.AdsSpread - weapon.Class.HipSpread) * world.Player.Ads) * 220.0f
                 solid (centerX - spread - 8.0f) (centerY - 1.0f) 8.0f 2.0f white
                 solid (centerX + spread) (centerY - 1.0f) 8.0f 2.0f white
                 solid (centerX - 1.0f) (centerY - spread - 8.0f) 2.0f 8.0f white
                 solid (centerX - 1.0f) (centerY + spread) 2.0f 8.0f white
-        if info.HitMarker > 0.0f then
-            // Corner brackets that snap in tight and expand outward while
-            // fading — the pop reads as impact instead of four static dashes.
+        // Corner brackets that snap in tight and expand outward while
+        // fading — the pop reads as impact instead of four static dashes.
+        let drawHitMarker () =
             let strength = MathEx.clamp01 info.HitMarker
             let pop = 1.0f + (1.0f - strength) * 0.6f
             let alpha = 0.30f + 0.70f * strength
@@ -208,22 +213,17 @@ type Hud(gl: GL) =
             solid (centerX + reach - arm) (centerY + reach - thick) arm thick hit
             solid (centerX + reach - thick) (centerY + reach - arm) thick arm hit
         // ---- Bottom-right weapon panel: name, magazine, reserve, grenades ----
-        let panelBack = Vector4(0.015f, 0.022f, 0.018f, 0.66f)
-        let accent = Vector4(0.82f, 0.22f, 0.08f, 0.92f)
-        let label = Vector4(0.70f, 0.74f, 0.67f, 0.95f)
-        let weaponPanelWidth, weaponPanelHeight = 226.0f, 66.0f
-        let weaponPanelX = float32 width - weaponPanelWidth - 20.0f
-        let weaponPanelY = float32 height - weaponPanelHeight - 18.0f
-        panel { X = weaponPanelX; Y = weaponPanelY; W = weaponPanelWidth; H = weaponPanelHeight } panelBack 3.0f accent
-        let weaponName = weapon.Class.Name.ToUpperInvariant()
-        addText (weaponPanelX + 14.0f) (weaponPanelY + 10.0f) 1.0f label weaponName
-        let magText = $"{weapon.InMag}"
-        addText (weaponPanelX + 14.0f) (weaponPanelY + 28.0f) 2.2f white magText
-        addText (weaponPanelX + 18.0f + textWidth 2.2f magText) (weaponPanelY + 40.0f) 1.1f label $"/ {weapon.Reserve}"
-        let grenadeCount = match world.Player.Grenade with GrenadeIdle count -> count | Cooking(_, count) -> count
-        addText (weaponPanelX + weaponPanelWidth - 74.0f) (weaponPanelY + 40.0f) 1.1f label $"GREN {grenadeCount}"
+        let drawWeaponPanel () =
+            panel { X = weaponPanelX; Y = weaponPanelY; W = weaponPanelWidth; H = weaponPanelHeight } panelBack 3.0f accent
+            let weaponName = weapon.Class.Name.ToUpperInvariant()
+            addText (weaponPanelX + 14.0f) (weaponPanelY + 10.0f) 1.0f label weaponName
+            let magText = $"{weapon.InMag}"
+            addText (weaponPanelX + 14.0f) (weaponPanelY + 28.0f) 2.2f white magText
+            addText (weaponPanelX + 18.0f + textWidth 2.2f magText) (weaponPanelY + 40.0f) 1.1f label $"/ {weapon.Reserve}"
+            let grenadeCount = match world.Player.Grenade with GrenadeIdle count -> count | Cooking(_, count) -> count
+            addText (weaponPanelX + weaponPanelWidth - 74.0f) (weaponPanelY + 40.0f) 1.1f label $"GREN {grenadeCount}"
         // Half-Life-style category list, shown briefly after switch activity.
-        if info.ShowInventory && world.Player.Slots.Length > 1 then
+        let drawInventory () =
             let dim = Vector4(0.62f, 0.66f, 0.60f, 0.62f)
             let highlight = Vector4(1.0f, 0.86f, 0.30f, 0.98f)
             Sim.weaponCategories
@@ -236,37 +236,40 @@ type Hud(gl: GL) =
                 let x = float32 width - textWidth 1.0f row - 28.0f
                 solid (x - 6.0f) (y - 3.0f) (textWidth 1.0f row + 12.0f) 18.0f (Vector4(0.0f, 0.0f, 0.0f, if active then 0.55f else 0.34f))
                 addText x y 1.0f (if active then highlight else dim) row)
-        match weapon.State with
-        | Reloading remaining ->
-            let progress = MathEx.clamp01 (1.0f - Units.raw remaining / max 0.01f (Units.raw weapon.Class.ReloadTime))
-            let barWidth = weaponPanelWidth
-            let barLeft = weaponPanelX
-            let barTop = weaponPanelY - 16.0f
-            let reloadText = sprintf "RELOADING %d%%" (int (progress * 100.0f))
-            solid (barLeft - 2.0f) (barTop - 2.0f) (barWidth + 4.0f) 12.0f (Vector4(0.0f, 0.0f, 0.0f, 0.72f))
-            meter { X = barLeft; Y = barTop; W = barWidth; H = 8.0f } progress
-                (Vector4(0.16f, 0.18f, 0.16f, 0.92f)) (Vector4(0.92f, 0.55f, 0.14f, 1.0f))
-            addTextRight (barLeft - 14.0f) (barTop - 3.0f) 1.0f white reloadText
-        | _ -> ()
+        let drawReloadBar () =
+            match weapon.State with
+            | Reloading remaining ->
+                let progress = MathEx.clamp01 (1.0f - Units.raw remaining / max 0.01f (Units.raw weapon.Class.ReloadTime))
+                let barWidth = weaponPanelWidth
+                let barLeft = weaponPanelX
+                let barTop = weaponPanelY - 16.0f
+                let reloadText = sprintf "RELOADING %d%%" (int (progress * 100.0f))
+                solid (barLeft - 2.0f) (barTop - 2.0f) (barWidth + 4.0f) 12.0f (Vector4(0.0f, 0.0f, 0.0f, 0.72f))
+                meter { X = barLeft; Y = barTop; W = barWidth; H = 8.0f } progress
+                    (Vector4(0.16f, 0.18f, 0.16f, 0.92f)) (Vector4(0.92f, 0.55f, 0.14f, 1.0f))
+                addTextRight (barLeft - 14.0f) (barTop - 3.0f) 1.0f white reloadText
+            | _ -> ()
         // ---- Bottom-left health panel with a color-shifting bar ----
-        let healthPanelWidth, healthPanelHeight = 196.0f, 48.0f
-        let healthPanelX, healthPanelY = 20.0f, float32 height - 48.0f - 18.0f
-        panel { X = healthPanelX; Y = healthPanelY; W = healthPanelWidth; H = healthPanelHeight } panelBack 3.0f accent
-        let healthRatio = MathEx.clamp01 (Units.raw world.Player.Health / 100.0f)
-        let healthFill = Vector4(0.85f - 0.42f * healthRatio, 0.16f + 0.52f * healthRatio, 0.12f + 0.20f * healthRatio, 0.95f)
-        addText (healthPanelX + 14.0f) (healthPanelY + 10.0f) 1.0f label "HEALTH"
-        addTextRight (healthPanelX + healthPanelWidth - 14.0f) (healthPanelY + 8.0f) 1.4f white $"{int (Units.raw world.Player.Health)}"
-        meter { X = healthPanelX + 14.0f; Y = healthPanelY + 30.0f; W = healthPanelWidth - 28.0f; H = 9.0f } healthRatio
-            (Vector4(0.10f, 0.12f, 0.10f, 0.9f)) healthFill
-        if info.DebugView then
+        let drawHealthPanel () =
+            let healthPanelWidth, healthPanelHeight = 196.0f, 48.0f
+            let healthPanelX, healthPanelY = 20.0f, float32 height - 48.0f - 18.0f
+            panel { X = healthPanelX; Y = healthPanelY; W = healthPanelWidth; H = healthPanelHeight } panelBack 3.0f accent
+            let healthRatio = MathEx.clamp01 (Units.raw world.Player.Health / 100.0f)
+            let healthFill = Vector4(0.85f - 0.42f * healthRatio, 0.16f + 0.52f * healthRatio, 0.12f + 0.20f * healthRatio, 0.95f)
+            addText (healthPanelX + 14.0f) (healthPanelY + 10.0f) 1.0f label "HEALTH"
+            addTextRight (healthPanelX + healthPanelWidth - 14.0f) (healthPanelY + 8.0f) 1.4f white $"{int (Units.raw world.Player.Health)}"
+            meter { X = healthPanelX + 14.0f; Y = healthPanelY + 30.0f; W = healthPanelWidth - 28.0f; H = 9.0f } healthRatio
+                (Vector4(0.10f, 0.12f, 0.10f, 0.9f)) healthFill
+        let drawDebugLabel () =
             addText 22.0f 8.0f 1.0f (Vector4(1.0f, 0.74f, 0.30f, 0.95f)) "DEBUG VIEW [F3]  GREEN: CLEAR LOS  RED: BLOCKED"
-        let heading = ((world.Player.Yaw * 180.0f / MathF.PI) % 360.0f + 360.0f) % 360.0f
-        let directions = [| "N"; "NE"; "E"; "SE"; "S"; "SW"; "W"; "NW" |]
-        let direction = directions[(int (MathF.Round(heading / 45.0f))) % directions.Length]
-        let compass = sprintf "%s  %03d" direction (int heading)
-        let compassY = if info.Online.IsSome || world.Round.IsSome then 48.0f else 8.0f
-        addTextCentered centerX compassY 0.9f white compass
-        if info.Online.IsNone then
+        let drawCompass () =
+            let heading = ((world.Player.Yaw * 180.0f / MathF.PI) % 360.0f + 360.0f) % 360.0f
+            let directions = [| "N"; "NE"; "E"; "SE"; "S"; "SW"; "W"; "NW" |]
+            let direction = directions[(int (MathF.Round(heading / 45.0f))) % directions.Length]
+            let compass = sprintf "%s  %03d" direction (int heading)
+            let compassY = if info.Online.IsSome || world.Round.IsSome then 48.0f else 8.0f
+            addTextCentered centerX compassY 0.9f white compass
+        let drawOfflineScore () =
             match world.Round with
             | Some round ->
                 let score = $"YOU {round.PlayerScore}   BOTS {round.EnemyScore}   ROUND {round.Number}"
@@ -278,57 +281,58 @@ type Hud(gl: GL) =
                 world.Objectives
                 |> Array.tryFind (fun objective -> not objective.Done)
                 |> Option.iter (fun objective -> addText 24.0f 28.0f 1.25f white objective.Text)
-        match info.Online with
-        | Some online ->
-            let score =
-                match online.Mode with
-                | FreeForAll ->
-                    let local = info.LocalPlayerId |> Option.bind (fun id -> online.Players |> Array.tryFind (fun player -> player.Id = id))
-                    let leader = online.Players |> Array.sortByDescending (fun player -> player.Kills) |> Array.tryHead
-                    let own = local |> Option.map (fun player -> $"YOU {player.Kills}/{player.Deaths}") |> Option.defaultValue "YOU 0/0"
-                    let leading = leader |> Option.map (fun player -> $"LEADER {player.Name} {player.Kills}") |> Option.defaultValue "LEADER --"
-                    $"{own}   {online.Phase}   {leading}"
-                | _ -> $"ALLIES {online.AlliesScore}   {online.Phase}   AXIS {online.AxisScore}"
-            addTextCentered centerX 22.0f 1.25f white score
-        | None when world.Script.Ended -> addText (centerX - 110.0f) 70.0f 1.6f white "MISSION COMPLETE"
-        | None -> ()
-        match info.Online with
-        | Some online when info.ShowScoreboard || online.Phase = Results ->
-            let panelWidth, rowHeight = 620.0f, 25.0f
-            let sorted =
-                online.Players
-                |> Array.sortBy (fun player ->
+        let drawOnlineScore () =
+            match info.Online with
+            | Some online ->
+                let score =
                     match online.Mode with
-                    | TeamDeathmatch -> (if player.Team = Allies then 0 else 1), -player.Kills, player.Deaths
-                    | _ -> 0, -player.Kills, player.Deaths)
-            let panelRect =
-                { X = centerX - panelWidth * 0.5f; Y = 105.0f; W = panelWidth; H = 72.0f + rowHeight * float32 sorted.Length }
-            panel panelRect (Vector4(0.015f, 0.02f, 0.018f, 0.88f)) 4.0f (Vector4(0.62f, 0.14f, 0.08f, 0.95f))
-            let rows = { X = panelRect.X + 18.0f; Y = panelRect.Y + 64.0f; W = panelRect.W - 36.0f; H = rowHeight * float32 sorted.Length }
-            let columns = [| 0.0f, "PLAYER"; 340.0f, "TEAM"; 460.0f, "K   D" |]
-            addText (rows.X + rowTextPad) (panelRect.Y + 17.0f) 1.35f white (if online.Mode = FreeForAll then "FREE FOR ALL" else "TEAM DEATHMATCH")
-            tableHeader rows (panelRect.Y + 46.0f) 0.95f white columns
-            sorted
-            |> Array.iteri (fun index player ->
-                let isLocal = info.LocalPlayerId = Some player.Id
-                if isLocal then
-                    // "You" tint, not the amber selection bar: the scoreboard
-                    // has no cursor, it marks the local player's own row.
-                    let bar = Rect.inset 0.0f 3.0f (Rect.slot rowHeight index rows)
-                    solid bar.X bar.Y bar.W bar.H (Vector4(0.30f, 0.34f, 0.18f, 0.48f))
-                let rowColor = if isLocal then Vector4(1.0f, 0.92f, 0.58f, 1.0f) else white
-                let team = if online.Mode = FreeForAll then "--" else string player.Team
-                tableRow rows rowHeight index false rowColor
-                    [ fst columns[0], 1.0f, player.Name
-                      fst columns[1], 1.0f, team
-                      fst columns[2], 1.0f, $"{player.Kills}   {player.Deaths}" ])
-        | _ -> ()
-        info.Subtitle
-        |> Option.iter (fun subtitle ->
+                    | FreeForAll ->
+                        let local = info.LocalPlayerId |> Option.bind (fun id -> online.Players |> Array.tryFind (fun player -> player.Id = id))
+                        let leader = online.Players |> Array.sortByDescending (fun player -> player.Kills) |> Array.tryHead
+                        let own = local |> Option.map (fun player -> $"YOU {player.Kills}/{player.Deaths}") |> Option.defaultValue "YOU 0/0"
+                        let leading = leader |> Option.map (fun player -> $"LEADER {player.Name} {player.Kills}") |> Option.defaultValue "LEADER --"
+                        $"{own}   {online.Phase}   {leading}"
+                    | _ -> $"ALLIES {online.AlliesScore}   {online.Phase}   AXIS {online.AxisScore}"
+                addTextCentered centerX 22.0f 1.25f white score
+            | None when world.Script.Ended -> addText (centerX - 110.0f) 70.0f 1.6f white "MISSION COMPLETE"
+            | None -> ()
+        let drawScoreboard () =
+            match info.Online with
+            | Some online when info.ShowScoreboard || online.Phase = Results ->
+                let panelWidth, rowHeight = 620.0f, 25.0f
+                let sorted =
+                    online.Players
+                    |> Array.sortBy (fun player ->
+                        match online.Mode with
+                        | TeamDeathmatch -> (if player.Team = Allies then 0 else 1), -player.Kills, player.Deaths
+                        | _ -> 0, -player.Kills, player.Deaths)
+                let panelRect =
+                    { X = centerX - panelWidth * 0.5f; Y = 105.0f; W = panelWidth; H = 72.0f + rowHeight * float32 sorted.Length }
+                panel panelRect (Vector4(0.015f, 0.02f, 0.018f, 0.88f)) 4.0f (Vector4(0.62f, 0.14f, 0.08f, 0.95f))
+                let rows = { X = panelRect.X + 18.0f; Y = panelRect.Y + 64.0f; W = panelRect.W - 36.0f; H = rowHeight * float32 sorted.Length }
+                let columns = [| 0.0f, "PLAYER"; 340.0f, "TEAM"; 460.0f, "K   D" |]
+                addText (rows.X + rowTextPad) (panelRect.Y + 17.0f) 1.35f white (if online.Mode = FreeForAll then "FREE FOR ALL" else "TEAM DEATHMATCH")
+                tableHeader rows (panelRect.Y + 46.0f) 0.95f white columns
+                sorted
+                |> Array.iteri (fun index player ->
+                    let isLocal = info.LocalPlayerId = Some player.Id
+                    if isLocal then
+                        // "You" tint, not the amber selection bar: the scoreboard
+                        // has no cursor, it marks the local player's own row.
+                        let bar = Rect.inset 0.0f 3.0f (Rect.slot rowHeight index rows)
+                        solid bar.X bar.Y bar.W bar.H (Vector4(0.30f, 0.34f, 0.18f, 0.48f))
+                    let rowColor = if isLocal then Vector4(1.0f, 0.92f, 0.58f, 1.0f) else white
+                    let team = if online.Mode = FreeForAll then "--" else string player.Team
+                    tableRow rows rowHeight index false rowColor
+                        [ fst columns[0], 1.0f, player.Name
+                          fst columns[1], 1.0f, team
+                          fst columns[2], 1.0f, $"{player.Kills}   {player.Deaths}" ])
+            | _ -> ()
+        let drawSubtitle (subtitle: string) =
             solid 0.0f (float32 height - 118.0f) (float32 width) 46.0f (Vector4(0.0f,0.0f,0.0f,0.55f))
-            addTextCentered centerX (float32 height - 106.0f) 1.25f white subtitle)
+            addTextCentered centerX (float32 height - 106.0f) 1.25f white subtitle
         let hurt = MathEx.clamp01 (1.0f - Units.raw world.Player.Health / 100.0f)
-        if hurt > 0.01f then
+        let drawDamageVignette () =
             let blood = Settings.bloodRgb info.Settings.BloodColor
             let red = Vector4(blood.X, blood.Y, blood.Z, hurt * 0.55f)
             let clearRed = Vector4(blood.X, blood.Y, blood.Z, 0.0f)
@@ -337,25 +341,23 @@ type Hud(gl: GL) =
             gradientQuad 0.0f (float32 height - thickness) (float32 width) thickness clearRed clearRed red red
             gradientQuad 0.0f thickness thickness (float32 height - thickness * 2.0f) red clearRed clearRed red
             gradientQuad (float32 width - thickness) thickness thickness (float32 height - thickness * 2.0f) clearRed red red clearRed
-        info.DamageDirection
-        |> Option.iter (fun direction ->
+        let drawDamageDirection (direction: Vector3) =
             let forward = MathEx.yawForward world.Player.Yaw
             let right = MathEx.yawRight world.Player.Yaw
             let horizontal = MathEx.horizontal direction |> MathEx.normalizedOrZero
             let x = centerX + Vector3.Dot(horizontal, right) * 125.0f
             let y = centerY - Vector3.Dot(horizontal, forward) * 82.0f
-            solid (x - 18.0f) (y - 3.0f) 36.0f 6.0f (Vector4(0.85f, 0.03f, 0.02f, 0.88f)))
-        if world.Player.IsDead && info.Online.IsNone then
+            solid (x - 18.0f) (y - 3.0f) 36.0f 6.0f (Vector4(0.85f, 0.03f, 0.02f, 0.88f))
+        let drawDeathOverlay () =
             solid (centerX - 250.0f) (centerY - 45.0f) 500.0f 90.0f (Vector4(0.0f, 0.0f, 0.0f, 0.72f))
             addText (centerX - 92.0f) (centerY - 24.0f) 1.6f white "YOU WERE KILLED"
             let restart = if world.Round.IsSome then "NEXT ROUND..." else "PRESS R TO RESTART"
             addTextCentered centerX (centerY + 10.0f) 1.0f white restart
-        info.LoadoutScreen
-        |> Option.iter (fun selected ->
+        let drawLoadoutScreen (selected: int) =
             let weapons = Tuning.onlineWeapons
             let rowHeight = LoadoutMenu.RowHeight
             let picker = LoadoutMenu.panelRect width height
-            let panelRect = overlay false accent.W picker.W picker.H "UP/DOWN, MOUSE   ENTER/CLICK EQUIP   ESC CLOSE"
+            let panelRect = overlay false accent.W picker "UP/DOWN, MOUSE   ENTER/CLICK EQUIP   ESC CLOSE"
             addText (panelRect.X + 26.0f) (panelRect.Y + 20.0f) 2.0f white "LOADOUT"
             let hint = if info.Online.IsSome then "ARMS ON YOUR NEXT SPAWN" else "SWAPS IMMEDIATELY"
             addTextRight (panelRect.X + panelRect.W - 26.0f) (panelRect.Y + 30.0f) 1.0f label hint
@@ -377,13 +379,12 @@ type Hud(gl: GL) =
                       fst columns[2], 1.0f, $"{int weaponClass.RoundsPerMin}"
                       fst columns[3], 1.0f, $"{weaponClass.MagSize}" ]
                 let cells = if isCurrent then cells @ [ 500.0f, 1.0f, "<" ] else cells
-                tableRow rows rowHeight index isSelected color cells))
-        info.Menu
-        |> Option.iter (fun menu ->
+                tableRow rows rowHeight index isSelected color cells)
+        let drawStartMenu (menu: StartMenuState) =
             let options = StartMenu.items menu
             let firstVisible, visibleCount = StartMenu.visibleRange menu
             let panelRect =
-                overlay true 1.0f (MenuLayout.panelWidth width) (MenuLayout.panelHeight visibleCount)
+                overlay true 1.0f (MenuLayout.panelRect width height visibleCount)
                     "UP/DOWN OR MOUSE   ENTER/CLICK TO SELECT   ESC TO BACK"
             // The exact rect StartMenu hit-tests hover against: pixels and
             // hitboxes cannot disagree.
@@ -410,14 +411,12 @@ type Hud(gl: GL) =
                     | Some serverRows when index < serverRows.Length ->
                         [ for offset, text in serverRows[index] -> offset, 1.3f, text ]
                     | _ -> [ 0.0f, 1.3f, options[index] ]
-                tableRow rows MenuLayout.RowHeight slot selected color rowCells)
-        info.SettingsScreen
-        |> Option.iter (fun screen ->
+                tableRow rows MenuLayout.RowHeight slot selected color rowCells
+        let drawSettingsScreen (screen: SettingsUi.State) =
             let rowHeight = SettingsUi.RowHeight
             let visible = SettingsUi.visibleRows screen
-            let settingsPanel = SettingsUi.panelRect width height visible.Length
             let panelRect =
-                overlay true 1.0f settingsPanel.W settingsPanel.H
+                overlay true 1.0f (SettingsUi.panelRect width height visible.Length)
                     "UP/DOWN, MOUSE   LEFT/RIGHT ADJUST   ENTER/CLICK CONFIRM   ESC BACK"
             addTextCentered centerX (panelRect.Y + 26.0f) 2.4f white "SETTINGS"
             let rows = SettingsUi.rowsRect panelRect visible.Length
@@ -434,7 +433,26 @@ type Hud(gl: GL) =
                     else row.Value
                 if value <> "" then
                     let slot = Rect.slot rowHeight index rows
-                    addTextRight (panelRect.X + panelRect.W - 70.0f) (Rect.textY 1.25f slot) 1.25f labelColor value))
+                    addTextRight (panelRect.X + panelRect.W - 70.0f) (Rect.textY 1.25f slot) 1.25f labelColor value)
+        // ---- Draw order: later blocks paint over earlier ones. ----
+        if scoped then drawScopeMask () else drawCrosshair ()
+        if info.HitMarker > 0.0f then drawHitMarker ()
+        drawWeaponPanel ()
+        if info.ShowInventory && world.Player.Slots.Length > 1 then drawInventory ()
+        drawReloadBar ()
+        drawHealthPanel ()
+        if info.DebugView then drawDebugLabel ()
+        drawCompass ()
+        if info.Online.IsNone then drawOfflineScore ()
+        drawOnlineScore ()
+        drawScoreboard ()
+        info.Subtitle |> Option.iter drawSubtitle
+        if hurt > 0.01f then drawDamageVignette ()
+        info.DamageDirection |> Option.iter drawDamageDirection
+        if world.Player.IsDead && info.Online.IsNone then drawDeathOverlay ()
+        info.LoadoutScreen |> Option.iter drawLoadoutScreen
+        info.Menu |> Option.iter drawStartMenu
+        info.SettingsScreen |> Option.iter drawSettingsScreen
         let data = vertices.ToArray()
         if data.Length > 0 then
             gl.Disable EnableCap.DepthTest

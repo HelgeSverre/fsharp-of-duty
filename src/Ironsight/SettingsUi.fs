@@ -6,7 +6,7 @@ open System
 module SettingsUi =
     type RowKind =
         | Header
-        | Slider of minimum: float32 * maximum: float32 * step: float32
+        | Slider
         | Toggle
         | Cycle
         | Action
@@ -34,46 +34,34 @@ module SettingsUi =
 
     let rowsRect (panel: Rect) (visibleCount: int) = Rect.rowsIn FirstRowTop RowHeight visibleCount panel
 
-    let rows (settings: GameSettings) : Row array =
-        [| { Label = "VIDEO"
-             Kind = Header
-             Get = (fun _ -> "")
-             Step = (fun current _ -> current) }
-           { Label = "FIELD OF VIEW"
-             Kind = Slider(55.0f, 95.0f, 5.0f)
-             Get = (fun current -> string (int current.Fov))
-             Step =
-                 (fun current direction ->
-                     { current with Fov = Math.Clamp(current.Fov + float32 direction * 5.0f, 55.0f, 95.0f) }) }
-           { Label = "CONTRAST"
-             Kind = Slider(0.8f, 1.3f, 0.05f)
-             Get = (fun current -> $"{current.Contrast:F2}")
-             Step =
-                 (fun current direction ->
-                     { current with Contrast = Math.Clamp(current.Contrast + float32 direction * 0.05f, 0.8f, 1.3f) }) }
-           { Label = "GAMEPLAY"
-             Kind = Header
-             Get = (fun _ -> "")
-             Step = (fun current _ -> current) }
-           { Label = "MOUSE SENSITIVITY"
-             Kind = Slider(0.2f, 3.0f, 0.1f)
-             Get = (fun current -> $"{current.MouseSensitivity:F1}")
-             Step =
-                 (fun current direction ->
-                     { current with
-                         MouseSensitivity = Math.Clamp(current.MouseSensitivity + float32 direction * 0.1f, 0.2f, 3.0f) }) }
-           { Label = "ADS TOGGLE"
-             Kind = Toggle
-             Get = (fun current -> if current.AdsToggle then "ON" else "OFF")
-             Step = (fun current _ -> { current with AdsToggle = not current.AdsToggle }) }
-           { Label = "CROUCH TOGGLE"
-             Kind = Toggle
-             Get = (fun current -> if current.CrouchToggle then "ON" else "OFF")
-             Step = (fun current _ -> { current with CrouchToggle = not current.CrouchToggle }) }
-           { Label = "EFFECTS"
-             Kind = Header
-             Get = (fun _ -> "")
-             Step = (fun current _ -> current) }
+    let private header label =
+        { Label = label; Kind = Header; Get = (fun _ -> ""); Step = (fun current _ -> current) }
+
+    /// The same bounds are enforced on load by Settings.clamp — keep in sync.
+    let private slider label lo hi step format (get: GameSettings -> float32) set =
+        { Label = label
+          Kind = Slider
+          Get = get >> format
+          Step = (fun current direction -> set (Math.Clamp(get current + float32 direction * step, lo, hi)) current) }
+
+    let private toggle label (get: GameSettings -> bool) set =
+        { Label = label
+          Kind = Toggle
+          Get = (fun current -> if get current then "ON" else "OFF")
+          Step = (fun current _ -> set (not (get current)) current) }
+
+    let rows: Row array =
+        [| header "VIDEO"
+           slider "FIELD OF VIEW" 55.0f 95.0f 5.0f (int >> string) (fun c -> c.Fov) (fun v c -> { c with Fov = v })
+           slider "CONTRAST" 0.8f 1.3f 0.05f (sprintf "%.2f") (fun c -> c.Contrast) (fun v c -> { c with Contrast = v })
+           header "GAMEPLAY"
+           slider "MOUSE SENSITIVITY" 0.2f 3.0f 0.1f (sprintf "%.1f") (fun c -> c.MouseSensitivity) (fun v c ->
+               { c with MouseSensitivity = v })
+           slider "GAMEPAD SENSITIVITY" 0.2f 3.0f 0.1f (sprintf "%.1f") (fun c -> c.GamepadSensitivity) (fun v c ->
+               { c with GamepadSensitivity = v })
+           toggle "ADS TOGGLE" (fun c -> c.AdsToggle) (fun v c -> { c with AdsToggle = v })
+           toggle "CROUCH TOGGLE" (fun c -> c.CrouchToggle) (fun v c -> { c with CrouchToggle = v })
+           header "EFFECTS"
            { Label = "BLOOD COLOR"
              Kind = Cycle
              Get = (fun current -> Settings.bloodNames[Settings.bloodColorIndex current.BloodColor])
@@ -83,28 +71,15 @@ module SettingsUi =
              Get = (fun _ -> "")
              Step = (fun _ _ -> Settings.defaults) } |]
 
-    let private selectableIndexes (all: Row array) =
-        all
+    let private selectableIndexes =
+        rows
         |> Array.indexed
         |> Array.choose (fun (index, row) -> if row.Kind = Header then None else Some index)
 
     let create (settings: GameSettings) =
-        let indexes = selectableIndexes (rows settings)
         { Settings = settings
-          Selected = indexes[0]
+          Selected = selectableIndexes[0]
           FirstVisible = 0 }
-
-    let private move (all: Row array) direction selected =
-        let indexes = selectableIndexes all
-        if indexes.Length = 0 then selected
-        else
-            let position = indexes |> Array.tryFindIndex ((=) selected) |> Option.defaultValue 0
-            indexes[(position + direction + indexes.Length) % indexes.Length]
-
-    let private scroll (all: Row array) maxVisible selected firstVisible =
-        if all.Length <= maxVisible then 0
-        else
-            Math.Clamp(Math.Clamp(firstVisible, selected - maxVisible + 1, selected), 0, all.Length - maxVisible)
 
     type RowVisual =
         { Label: string
@@ -115,43 +90,38 @@ module SettingsUi =
 
     /// The row window the HUD draws, with the selected row always in view.
     let visibleRows (state: State) =
-        let all = rows state.Settings
-        let last = min (all.Length - 1) (state.FirstVisible + MaxVisibleRows - 1)
+        let last = min (rows.Length - 1) (state.FirstVisible + MaxVisibleRows - 1)
         [ for index in state.FirstVisible..last ->
-            { Label = all[index].Label
-              Value = all[index].Get state.Settings
-              Header = all[index].Kind = Header
+            { Label = rows[index].Label
+              Value = rows[index].Get state.Settings
+              Header = rows[index].Kind = Header
               Adjustable =
-                  match all[index].Kind with
-                  | Slider _ | Toggle | Cycle -> true
+                  match rows[index].Kind with
+                  | Slider | Toggle | Cycle -> true
                   | _ -> false
               Selected = index = state.Selected } ]
 
     let update (width: int) (height: int) (input: MenuInput) (state: State) =
-        let all = rows state.Settings
         // Hover hits the drawn window; header rows are labels, not targets.
-        let visibleCount = min MaxVisibleRows all.Length
+        let visibleCount = min MaxVisibleRows rows.Length
         let hovered =
             input.Pointer
             |> Option.bind (fun pointer ->
                 rowsRect (panelRect width height visibleCount) visibleCount
                 |> Rect.slotAt RowHeight visibleCount pointer)
-            |> Option.map (fun slot -> min (state.FirstVisible + slot) (all.Length - 1))
-            |> Option.filter (fun index -> all[index].Kind <> Header)
-        let mutable selected = state.Selected
-        hovered |> Option.iter (fun index -> selected <- index)
-        if input.Up then selected <- move all -1 selected
-        if input.Down then selected <- move all 1 selected
-        let row = all[selected]
+            |> Option.map (fun slot -> min (state.FirstVisible + slot) (rows.Length - 1))
+            |> Option.filter (fun index -> rows[index].Kind <> Header)
+        let selected = MenuNav.stepSelection selectableIndexes input hovered state.Selected
+        let row = rows[selected]
         let direction = if input.Left then -1 elif input.Right then 1 else 0
         let activate = input.Activate || (input.Clicked && hovered.IsSome)
         let stepWhen condition = if condition then row.Step state.Settings direction else state.Settings
         let settings =
             match row.Kind with
             | Header -> state.Settings
-            | Slider _ -> stepWhen (direction <> 0)
+            | Slider -> stepWhen (direction <> 0)
             | Toggle | Cycle -> stepWhen (direction <> 0 || activate)
             | Action -> stepWhen activate
         { Settings = settings
           Selected = selected
-          FirstVisible = scroll all MaxVisibleRows selected state.FirstVisible }
+          FirstVisible = MenuNav.scrollWindow rows.Length MaxVisibleRows selected state.FirstVisible }

@@ -51,6 +51,38 @@ type MenuInput =
       Pointer: Vector2 option
       Clicked: bool }
 
+[<RequireQualifiedAccess>]
+module MenuInput =
+    let empty =
+        { Up = false
+          Down = false
+          Left = false
+          Right = false
+          Activate = false
+          Back = false
+          Backspace = false
+          TextInput = ""
+          Pointer = None
+          Clicked = false }
+
+/// Row-list navigation shared by the start menu, loadout picker, and settings.
+[<RequireQualifiedAccess>]
+module MenuNav =
+    /// Hover sets the cursor; Up/Down still step from wherever it landed, so a
+    /// pointer parked over the list never eats dpad/arrow presses. `indexes`
+    /// is the selectable row set — all rows for plain lists, non-headers for
+    /// the settings screen.
+    let stepSelection (indexes: int array) (input: MenuInput) (hovered: int option) (selected: int) =
+        let start = defaultArg hovered selected
+        let position = indexes |> Array.tryFindIndex ((=) start) |> Option.defaultValue 0
+        let delta = (if input.Up then -1 else 0) + (if input.Down then 1 else 0)
+        indexes[(position + delta + indexes.Length) % indexes.Length]
+
+    /// First visible row of a scroll window that always contains `selected`.
+    let scrollWindow total maxVisible selected firstVisible =
+        if total <= maxVisible then 0
+        else Math.Clamp(Math.Clamp(firstVisible, selected - maxVisible + 1, selected), 0, total - maxVisible)
+
 type StartMenuAction =
     | StartOffline of map: string
     | StartOnline of weaponName: string * mode: GameMode * server: Uri
@@ -81,15 +113,13 @@ module LoadoutMenu =
         let hovered =
             input.Pointer
             |> Option.bind (fun pointer -> Rect.slotAt RowHeight count pointer (rowsRect (panelRect width height)))
-        let next =
-            match hovered with
-            | Some index -> index
-            | None when input.Up -> (selected + count - 1) % count
-            | None when input.Down -> (selected + 1) % count
-            | None -> selected
+        let next = MenuNav.stepSelection [| 0 .. count - 1 |] input hovered selected
+        // A click lands on the row under the cursor even if a dpad step
+        // arrived in the same frame.
+        let activateIndex = if input.Clicked && hovered.IsSome then hovered.Value else next
         let activate = input.Activate || (input.Clicked && hovered.IsSome)
         if input.Back then struct (next, Closed)
-        elif activate then struct (next, Chosen Tuning.onlineWeapons[next].Name)
+        elif activate then struct (next, Chosen Tuning.onlineWeapons[activateIndex].Name)
         else struct (next, Browsing)
 
 [<RequireQualifiedAccess>]
@@ -106,17 +136,36 @@ module StartMenu =
 
     let initial = create "Soldier"
 
+    /// Main-page rows: one array drives both the label and the activate
+    /// behavior in update, so they cannot drift apart.
+    type private MainRow = Callsign | QuickPlay | MapSelect | JoinOnline | SettingsRow | QuitRow
+    let private mainRows = [| Callsign; QuickPlay; MapSelect; JoinOnline; SettingsRow; QuitRow |]
+
+    let private mainLabel state = function
+        | Callsign -> $"CALLSIGN  {state.PlayerName}"
+        | QuickPlay -> "QUICK PLAY"
+        | MapSelect -> "OFFLINE PLAY / MAP SELECT"
+        | JoinOnline -> "JOIN ONLINE"
+        | SettingsRow -> "SETTINGS"
+        | QuitRow -> "QUIT"
+
+    /// Offline map rows straight from the level registry: (alias, label).
+    let private offlineMaps =
+        Ironsight.ProcGen.Levels.offlineAliases
+        |> Array.map (fun alias ->
+            alias, (Ironsight.ProcGen.Levels.specByAlias alias).Value.Name.ToUpperInvariant())
+
     let items state =
         match state.Page with
-        | Main -> [| $"CALLSIGN  {state.PlayerName}"; "QUICK PLAY"; "OFFLINE PLAY / MAP SELECT"; "JOIN ONLINE"; "SETTINGS"; "QUIT" |]
+        | Main -> mainRows |> Array.map (mainLabel state)
         | NameEntry -> [| $"> {state.PlayerName}_" |]
-        | OfflineMaps -> [| "PAINTBALL KILLHOUSE"; "SCRAP DEPOT"; "CANAL YARD"; "OMAHA DRAW"; "BACK" |]
+        | OfflineMaps -> Array.append (offlineMaps |> Array.map snd) [| "BACK" |]
         | ServerList ->
             // Half-Life-style table: one row per room. The labels here only
             // drive selection count and keyboard flow; the HUD draws server
             // rows from serverCells below.
             match state.ServerRows with
-            | Some rows -> Array.append (rows |> Array.map (fun row -> row.Server.Url.Host.ToUpperInvariant())) [| "BACK" |]
+            | Some rows -> Array.append (rows |> Array.map (fun row -> row.Server.Name.ToUpperInvariant())) [| "BACK" |]
             | None -> [| "CONTACTING SERVERS..."; "BACK" |]
         | OnlineLoadout ->
             Array.append (Tuning.onlineWeapons |> Array.map (fun weapon -> weapon.Name.ToUpperInvariant())) [| "BACK" |]
@@ -135,7 +184,7 @@ module StartMenu =
             rows
             |> Array.map (fun row ->
                 let host =
-                    let value = row.Server.Url.Host
+                    let value = row.Server.Name
                     if value.Length > 26 then value.Substring(0, 26) else value
                 if row.Online then
                     [| columnX 0, host
@@ -161,12 +210,11 @@ module StartMenu =
         | OnlineLoadout -> "SELECT ONLINE LOADOUT"
 
     /// Rows that fit before the panel scrolls; a settings-style window keeps
-    /// the selected row in view (SettingsUi.scroll is the same shape).
+    /// the selected row in view.
     let MaxVisibleRows = 10
 
     let private scrollOffset total selected firstVisible =
-        if total <= MaxVisibleRows then 0
-        else Math.Clamp(Math.Clamp(firstVisible, selected - MaxVisibleRows + 1, selected), 0, total - MaxVisibleRows)
+        MenuNav.scrollWindow total MaxVisibleRows selected firstVisible
 
     /// First visible row index and visible row count for the current page,
     /// clamped on the fly so the HUD can never draw a stale window.
@@ -197,12 +245,12 @@ module StartMenu =
             |> Option.bind (hoveredIndex width height visibleCount)
             |> Option.map (fun slot -> min (firstVisible + slot) (options.Length - 1))
         let selected =
-            match fromPointer with
-            | Some index -> index
-            | None when input.Up -> (state.Selected + options.Length - 1) % options.Length
-            | None when input.Down -> (state.Selected + 1) % options.Length
-            | None -> min state.Selected (options.Length - 1)
+            MenuNav.stepSelection [| 0 .. options.Length - 1 |] input fromPointer
+                (min state.Selected (options.Length - 1))
         let next = { state with Selected = selected; FirstVisible = scrollOffset options.Length selected firstVisible }
+        // A click lands on the row under the cursor even if a dpad step
+        // arrived in the same frame.
+        let activateIndex = if input.Clicked && fromPointer.IsSome then fromPointer.Value else selected
         let activate = input.Activate || (input.Clicked && fromPointer.IsSome)
         if input.Back then
             match state.Page with
@@ -214,21 +262,21 @@ module StartMenu =
             | _ -> struct({ next with Page = Main; Selected = 0 }, None)
         elif not activate then struct(next, None)
         else
-            match state.Page, selected with
-            | Main, 0 -> struct({ next with Page = NameEntry; Selected = 0 }, None)
-            | Main, 1 -> struct(next, Some(StartOffline "paintball"))
-            | Main, 2 -> struct({ next with Page = OfflineMaps; Selected = 0 }, None)
-            | Main, 3 -> struct({ next with Page = ServerList; Selected = 0 }, None)
-            | Main, 4 -> struct(next, Some OpenSettings)
-            | Main, _ -> struct(next, Some ExitGame)
+            match state.Page, activateIndex with
+            | Main, index ->
+                match mainRows[index] with
+                | Callsign -> struct({ next with Page = NameEntry; Selected = 0 }, None)
+                | QuickPlay -> struct(next, Some(StartOffline "paintball"))
+                | MapSelect -> struct({ next with Page = OfflineMaps; Selected = 0 }, None)
+                | JoinOnline -> struct({ next with Page = ServerList; Selected = 0 }, None)
+                | SettingsRow -> struct(next, Some OpenSettings)
+                | QuitRow -> struct(next, Some ExitGame)
             | NameEntry, _ ->
                 let sanitized = Multiplayer.sanitizeName next.PlayerName
                 let playerName = if System.String.IsNullOrWhiteSpace sanitized then "Soldier" else sanitized
                 struct({ next with Page = Main; Selected = 0; PlayerName = playerName }, None)
-            | OfflineMaps, 0 -> struct(next, Some(StartOffline "paintball"))
-            | OfflineMaps, 1 -> struct(next, Some(StartOffline "depot"))
-            | OfflineMaps, 2 -> struct(next, Some(StartOffline "canal"))
-            | OfflineMaps, 3 -> struct(next, Some(StartOffline "omaha"))
+            | OfflineMaps, index when index < offlineMaps.Length ->
+                struct(next, Some(StartOffline(fst offlineMaps[index])))
             | OfflineMaps, _ -> struct({ next with Page = Main; Selected = 0 }, None)
             | ServerList, index ->
                 let rows = state.ServerRows |> Option.defaultValue [||]

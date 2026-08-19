@@ -60,58 +60,14 @@ type OnlineSnapshot =
       Grenades: OnlineGrenade array
       Events: OnlineEvent array }
 
-type OnlineClient(serverUri: Uri, playerName: string, requestedMode: GameMode, weaponName: string, ?resumeToken: string) =
-    let socket = new ClientWebSocket()
-    let cancellation = new CancellationTokenSource()
-    let inputChannel = Channel.CreateBounded<InputFrame>(BoundedChannelOptions(4, FullMode = BoundedChannelFullMode.DropOldest, SingleReader = true, SingleWriter = true))
-    let snapshots = Queue<OnlineSnapshot>()
-    let snapshotGate = obj ()
-    let mutable playerId = 0
-    let requestedSessionToken = defaultArg resumeToken ""
-    let mutable sessionToken = requestedSessionToken
-    let mutable levelName = ""
-    let mutable mapHash = ""
-    // Estimated offset between the server tick counter and the local monotonic
-    // clock, in ticks. Smoothing it (instead of re-anchoring on every snapshot
-    // arrival) keeps the interpolation target advancing steadily through
-    // network jitter rather than jumping each time a snapshot lands.
-    let mutable clockOffsetTicks = nan
-    let mutable latestServerTick = 0L
-
-    let localTicks () =
-        float (System.Diagnostics.Stopwatch.GetTimestamp()) / float System.Diagnostics.Stopwatch.Frequency * float Tuning.TickRate
-    let mutable receiveTask: Task = Task.CompletedTask
-    let mutable sendTask: Task = Task.CompletedTask
-    let mutable closing = 0
-    let mutable disposed = 0
-    let receiveBuffer = Array.zeroCreate<byte> (256 * 1024)
-
-    let jsonOptions = JsonSerializerOptions(JsonSerializerDefaults.Web)
-
+/// Pure JSON -> snapshot decoding, lifted out of OnlineClient so the wire
+/// format can be round-trip tested against Protocol.snapshot without a socket.
+[<RequireQualifiedAccess>]
+module SnapshotWire =
     let parseTeam = function "Allies" -> Allies | _ -> Axis
     let parseStance = function "Crouched" -> Crouched | "Prone" -> Prone | _ -> Standing
     let parsePhase = function "Warmup" -> Warmup | "Playing" -> Playing | "Results" -> Results | _ -> Waiting
     let parseMode = function "FreeForAll" -> FreeForAll | _ -> TeamDeathmatch
-
-    let sendJson value = task {
-        let bytes = JsonSerializer.SerializeToUtf8Bytes(value, jsonOptions)
-        do! socket.SendAsync(ReadOnlyMemory bytes, WebSocketMessageType.Text, true, cancellation.Token)
-    }
-
-    let receiveDocument () = task {
-        let mutable total = 0
-        let mutable finished = false
-        let mutable closed = false
-        while not finished && not closed do
-            let! result = socket.ReceiveAsync(Memory(receiveBuffer, total, receiveBuffer.Length - total), cancellation.Token)
-            if result.MessageType = WebSocketMessageType.Close then closed <- true
-            else
-                total <- total + result.Count
-                finished <- result.EndOfMessage
-                if total = receiveBuffer.Length && not finished then invalidOp "Server message exceeds 256 KiB."
-        if closed then return None
-        else return Some(JsonDocument.Parse(ReadOnlyMemory(receiveBuffer, 0, total)))
-    }
 
     let getString (name: string) (element: JsonElement) =
         match element.TryGetProperty name with
@@ -200,6 +156,54 @@ type OnlineClient(serverUri: Uri, playerName: string, requestedMode: GameMode, w
           Grenades = grenades
           Events = events }
 
+type OnlineClient(serverUri: Uri, playerName: string, requestedMode: GameMode, weaponName: string, ?resumeToken: string) =
+    let socket = new ClientWebSocket()
+    let cancellation = new CancellationTokenSource()
+    let inputChannel = Channel.CreateBounded<InputFrame>(BoundedChannelOptions(4, FullMode = BoundedChannelFullMode.DropOldest, SingleReader = true, SingleWriter = true))
+    let snapshots = Queue<OnlineSnapshot>()
+    let snapshotGate = obj ()
+    let mutable playerId = 0
+    let requestedSessionToken = defaultArg resumeToken ""
+    let mutable sessionToken = requestedSessionToken
+    let mutable levelName = ""
+    let mutable mapHash = ""
+    // Estimated offset between the server tick counter and the local monotonic
+    // clock, in ticks. Smoothing it (instead of re-anchoring on every snapshot
+    // arrival) keeps the interpolation target advancing steadily through
+    // network jitter rather than jumping each time a snapshot lands.
+    let mutable clockOffsetTicks = nan
+    let mutable latestServerTick = 0L
+
+    let localTicks () =
+        float (System.Diagnostics.Stopwatch.GetTimestamp()) / float System.Diagnostics.Stopwatch.Frequency * float Tuning.TickRate
+    let mutable receiveTask: Task = Task.CompletedTask
+    let mutable sendTask: Task = Task.CompletedTask
+    let mutable closing = 0
+    let mutable disposed = 0
+    let receiveBuffer = Array.zeroCreate<byte> (256 * 1024)
+
+    let jsonOptions = JsonSerializerOptions(JsonSerializerDefaults.Web)
+
+    let sendJson value = task {
+        let bytes = JsonSerializer.SerializeToUtf8Bytes(value, jsonOptions)
+        do! socket.SendAsync(ReadOnlyMemory bytes, WebSocketMessageType.Text, true, cancellation.Token)
+    }
+
+    let receiveDocument () = task {
+        let mutable total = 0
+        let mutable finished = false
+        let mutable closed = false
+        while not finished && not closed do
+            let! result = socket.ReceiveAsync(Memory(receiveBuffer, total, receiveBuffer.Length - total), cancellation.Token)
+            if result.MessageType = WebSocketMessageType.Close then closed <- true
+            else
+                total <- total + result.Count
+                finished <- result.EndOfMessage
+                if total = receiveBuffer.Length && not finished then invalidOp "Server message exceeds 256 KiB."
+        if closed then return None
+        else return Some(JsonDocument.Parse(ReadOnlyMemory(receiveBuffer, 0, total)))
+    }
+
     let addSnapshot snapshot =
         lock snapshotGate (fun () ->
             if snapshots.Count = 0 || snapshot.Tick > (snapshots |> Seq.last).Tick then
@@ -220,7 +224,7 @@ type OnlineClient(serverUri: Uri, playerName: string, requestedMode: GameMode, w
                 | Some document ->
                     use document = document
                     let root = document.RootElement
-                    if getString "type" root = "snapshot" then parseSnapshot root |> addSnapshot
+                    if SnapshotWire.getString "type" root = "snapshot" then SnapshotWire.parseSnapshot root |> addSnapshot
         with
         | :? OperationCanceledException -> ()
         | :? WebSocketException -> cancellation.Cancel()
@@ -293,11 +297,11 @@ type OnlineClient(serverUri: Uri, playerName: string, requestedMode: GameMode, w
         | Some document ->
             use document = document
             let root = document.RootElement
-            if getString "type" root <> "welcome" || getInt "version" root <> 1 then invalidOp "Incompatible server welcome."
-            playerId <- getInt "playerId" root
-            sessionToken <- getString "sessionToken" root
-            levelName <- getString "level" root
-            mapHash <- getString "mapHash" root
+            if SnapshotWire.getString "type" root <> "welcome" || SnapshotWire.getInt "version" root <> 1 then invalidOp "Incompatible server welcome."
+            playerId <- SnapshotWire.getInt "playerId" root
+            sessionToken <- SnapshotWire.getString "sessionToken" root
+            levelName <- SnapshotWire.getString "level" root
+            mapHash <- SnapshotWire.getString "mapHash" root
         do! sendJson {| ``type`` = "ready"; version = 1 |}
         receiveTask <- receiveLoop () :> Task
         sendTask <- senderLoop () :> Task
