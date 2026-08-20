@@ -389,7 +389,11 @@ type Renderer(gl: GL) =
                 let position =
                     Vector3(
                         0.34f * (1.0f - ads) + MathF.Sin(phase) * 0.012f * bob - viewSway.X + sprintBlend * 0.10f,
-                        -0.31f + ads * 0.10f + MathF.Abs(MathF.Cos phase) * 0.012f * bob + viewSway.Y
+                        // Aiming lifts the gun until its own sight line reaches
+                        // eye level, rather than by a fixed amount that only
+                        // ever suited the Kar98k.
+                        -0.31f + ads * (0.31f - Guns.sightHeight activeSlot.Class.Name)
+                        + MathF.Abs(MathF.Cos phase) * 0.012f * bob + viewSway.Y
                         - reloadPose * 0.20f - switchPose * 0.25f - boltPose * 0.045f - sprintBlend * 0.14f,
                         -0.68f - ads * 0.05f + recoil * 0.55f + boltPose * 0.07f)
                 let model =

@@ -85,33 +85,46 @@ module Guns =
                MeshGen.box (Vector3(0.045f, 0.12f, 0.04f)) Metal |> placed (Vector3(0.0f, 0.125f, -0.62f))
                MeshGen.box (Vector3(0.045f, 0.12f, 0.04f)) Metal |> placed (Vector3(0.0f, 0.125f, -0.30f)) |]
 
+    /// M1A1: the issued wartime Thompson, not the gangster M1928. Plain barrel,
+    /// horizontal handguard, charging handle on the right flank — and a sight
+    /// line low enough that aiming down it does not wall off the screen.
     let private thompson =
+        // Barrel axis, and the height the sights are zeroed to. Both sights are
+        // built off this so the blade and the notch cannot drift apart.
+        let axis = 0.06f
+        let sightLine = 0.165f
         MeshGen.union
-            [| // Receiver with the raised bolt housing on top.
+            [| // Receiver with the flat bolt housing on top.
                MeshGen.box (Vector3(0.17f, 0.18f, 0.42f)) Metal |> placed (Vector3(0.0f, 0.03f, -0.32f))
                MeshGen.box (Vector3(0.12f, 0.05f, 0.32f)) Metal |> placed (Vector3(0.0f, 0.14f, -0.30f))
-               // Charging knob riding on the bolt housing.
-               MeshGen.cylinder 8 0.020f 0.05f Metal |> placed (Vector3(0.0f, 0.185f, -0.22f))
-               // Barrel with cooling fins near the chamber.
-               MeshGen.cylinder 10 0.045f 0.58f Metal |> placed (Vector3(0.0f, 0.06f, -0.82f))
-               yield!
-                   [| for index in 0..4 ->
-                        MeshGen.cylinder 10 0.058f 0.016f Metal
-                        |> placed (Vector3(0.0f, 0.06f, -0.585f - float32 index * 0.034f)) |]
-               // Cutts compensator flaring at the muzzle.
-               MeshGen.lathe 10
-                   [| Vector2(0.046f, -0.055f); Vector2(0.056f, -0.02f); Vector2(0.056f, 0.035f); Vector2(0.038f, 0.055f) |]
-                   Metal
-               |> placed (Vector3(0.0f, 0.06f, -1.13f))
-               // Wooden foregrip and box magazine.
-               MeshGen.box (Vector3(0.16f, 0.26f, 0.18f)) Wood |> MeshGen.rotateX -0.35f |> placed (Vector3(0.0f, -0.15f, -0.42f))
+               // M1A1 charging handle: on the right flank, not on top, so it is
+               // out of the sight picture.
+               MeshGen.cylinder 8 0.018f 0.06f Metal |> MeshGen.rotateY (MathF.PI * 0.5f)
+               |> placed (Vector3(0.105f, 0.075f, -0.24f))
+               // Plain barrel, no cooling fins and no Cutts compensator.
+               MeshGen.cylinder 10 0.042f 0.66f Metal |> placed (Vector3(0.0f, axis, -0.84f))
+               MeshGen.cylinder 10 0.048f 0.04f Metal |> placed (Vector3(0.0f, axis, -1.15f))
+               // Horizontal wooden handguard clamped under the barrel.
+               MeshGen.box (Vector3(0.11f, 0.10f, 0.40f)) Wood |> placed (Vector3(0.0f, axis - 0.015f, -0.84f))
+               // Sling swivel hanging under the handguard.
+               MeshGen.box (Vector3(0.04f, 0.04f, 0.03f)) Metal |> placed (Vector3(0.0f, axis - 0.075f, -0.98f))
+               // Front blade, topping out exactly on the sight line, with two
+               // short wings either side of it.
+               MeshGen.box (Vector3(0.016f, sightLine - axis - 0.02f, 0.018f)) Metal
+               |> placed (Vector3(0.0f, (axis + 0.02f + sightLine) * 0.5f, -1.09f))
+               MeshGen.box (Vector3(0.012f, 0.05f, 0.016f)) Metal |> placed (Vector3(0.032f, axis + 0.055f, -1.09f))
+               MeshGen.box (Vector3(0.012f, 0.05f, 0.016f)) Metal |> placed (Vector3(-0.032f, axis + 0.055f, -1.09f))
+               // Rear aperture: a low base with an ear either side, so the notch
+               // between them sits on the sight line rather than above it.
+               MeshGen.box (Vector3(0.07f, 0.02f, 0.04f)) Metal |> placed (Vector3(0.0f, sightLine - 0.01f, -0.14f))
+               MeshGen.box (Vector3(0.014f, 0.04f, 0.03f)) Metal |> placed (Vector3(0.026f, sightLine + 0.02f, -0.14f))
+               MeshGen.box (Vector3(0.014f, 0.04f, 0.03f)) Metal |> placed (Vector3(-0.026f, sightLine + 0.02f, -0.14f))
+               // Box magazine, pistol grip behind the trigger, and the stock.
                MeshGen.box (Vector3(0.13f, 0.46f, 0.12f)) Metal |> placed (Vector3(0.0f, -0.19f, -0.31f))
-               // Distinct pistol grip behind the trigger, ahead of the stock.
                MeshGen.box (Vector3(0.11f, 0.24f, 0.13f)) Wood |> MeshGen.rotateX -0.42f |> placed (Vector3(0.0f, -0.155f, -0.055f))
                // Long enough to bite into the receiver; at 0.55 the rotated
                // box only just touched its rear face.
-               MeshGen.box (Vector3(0.20f, 0.25f, 0.62f)) Wood |> MeshGen.rotateX 0.15f |> placed (Vector3(0.0f, -0.06f, 0.15f))
-               MeshGen.box (Vector3(0.055f, 0.10f, 0.035f)) Metal |> placed (Vector3(0.0f, 0.18f, -0.54f)) |]
+               MeshGen.box (Vector3(0.20f, 0.25f, 0.62f)) Wood |> MeshGen.rotateX 0.15f |> placed (Vector3(0.0f, -0.06f, 0.15f)) |]
 
     let private m1911 =
         MeshGen.union
@@ -338,6 +351,34 @@ module Guns =
         | "BAR" -> bar
         | "M134 Minigun" -> minigun
         | _ -> kar98k
+
+    /// How far above the model origin a weapon's sight line sits. Aiming lifts
+    /// the viewmodel by exactly this, so the sight picture lands on the
+    /// crosshair whatever is in hand — a gun with low sights is not left aiming
+    /// under the shot, and one with tall sights does not wall off the screen.
+    ///
+    /// Measured off the model rather than tabulated: on every one of these guns
+    /// the topmost part is the rear sight, so a new weapon aims correctly the
+    /// day it is added. Only the two exceptions are named.
+    let private sightHeights =
+        names
+        |> Array.map (fun name ->
+            let measured = (meshFor name).Vertices |> Array.map (fun vertex -> vertex.Position.Y) |> Array.max
+            let height =
+                match name with
+                // The topmost part is the elevation turret; the eye looks down
+                // the tube below it. (The scope overlay hides this anyway.)
+                | "Kar98k Sniper" -> 0.20f
+                // The protective ears stand proud of the notch you actually
+                // aim through.
+                | "Thompson" -> 0.165f
+                | _ -> measured
+            name, height)
+        |> Map.ofArray
+
+    let sightHeight name =
+        // Unknown names fall back to the Kar98k, and so does its sight.
+        sightHeights |> Map.tryFind name |> Option.defaultValue 0.205f
 
     let forWeapon name =
         let arms = if name = "M1911" || name = "Luger P08" then pistolArms else rifleArms

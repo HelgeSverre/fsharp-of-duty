@@ -97,6 +97,17 @@ module ClientTests =
             Assert.True(Set.contains name selectable, $"Guns.names lists {name}, which is not a weapon any more")
 
     [<Fact>]
+    let ``every weapon aims along a sight line that exists on the model`` () =
+        // The aim pose lifts the viewmodel by exactly this height, so a value
+        // that is not on the gun aims through the receiver or above the sights.
+        for name in Guns.names do
+            let ys = (Guns.meshFor name).Vertices |> Array.map (fun vertex -> vertex.Position.Y)
+            let sight = Guns.sightHeight name
+            Assert.InRange(sight, Array.min ys, Array.max ys)
+            // And above the bore, never under it: sights sit on top of a gun.
+            Assert.True(sight > 0.0f, $"{name} aims from below its own origin")
+
+    [<Fact>]
     let ``every weapon mesh is one connected lump`` () =
         // Voxelise each triangle's bounding box and flood fill. A part that
         // floats clear of the gun body shows up as a second component — the
