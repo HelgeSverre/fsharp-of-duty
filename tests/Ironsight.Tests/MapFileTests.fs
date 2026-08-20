@@ -16,7 +16,10 @@ module MapFileTests =
     // it must produce the same geometry.
     [<Fact>]
     let ``every built-in map survives an encode decode roundtrip`` () =
-        for spec in Levels.specs do
+        // A prop-bearing map has no on-disk form by design; it ships as code
+        // and is resolved by name. Everything else must round-trip exactly.
+        Assert.NotEmpty(Levels.specs |> Array.filter (MapFile.encodable >> not))
+        for spec in Levels.specs |> Array.filter MapFile.encodable do
             let bytes = MapFile.encode spec
             match MapFile.decode bytes with
             | Error message -> Assert.Fail $"{spec.Name}: {message}"
@@ -33,7 +36,7 @@ module MapFileTests =
 
     [<Fact>]
     let ``map hashes are stable and unique per map`` () =
-        let hashes = Levels.specs |> Array.map (MapFile.encode >> MapFile.hash)
+        let hashes = Levels.specs |> Array.filter MapFile.encodable |> Array.map (MapFile.encode >> MapFile.hash)
         Assert.Equal(hashes.Length, (Array.distinct hashes).Length)
 
     [<Fact>]

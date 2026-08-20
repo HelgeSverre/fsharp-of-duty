@@ -34,6 +34,9 @@ module MapStore =
     let private builtins =
         lazy
             (Levels.specs
+             // A prop-bearing builtin has no encoding, so it can never be
+             // hash-addressed; it is found by name instead.
+             |> Array.filter MapFile.encodable
              |> Array.map (fun spec ->
                  let bytes = MapFile.encode spec
                  MapFile.hash bytes, LevelCompile.compile spec)

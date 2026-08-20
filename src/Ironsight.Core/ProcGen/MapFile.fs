@@ -287,6 +287,12 @@ module MapFile =
         | 13uy -> WaterPlane(reader.ReadSingle())
         | tag -> failwith $"unknown map item tag {tag} (map made by a newer game version?)"
 
+    /// Whether a spec can be written to the on-disk format at all. A map with
+    /// props carries generated geometry that has no serialised form, so it is
+    /// a builtin: distributed as code and resolved by name, never by hash.
+    let encodable (spec: LevelSpec) =
+        spec.Items |> List.forall (function Prop _ -> false | _ -> true)
+
     let encode (spec: LevelSpec) =
         use stream = new MemoryStream()
         use writer = new BinaryWriter(stream, Encoding.UTF8)

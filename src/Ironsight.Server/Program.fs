@@ -38,7 +38,7 @@ module Program =
         member _.Identity = identity
         member _.LevelName = level.Name
         member _.MapBytes = mapBytes
-        member val MapHash = Ironsight.ProcGen.MapFile.hash mapBytes
+        member val MapHash = if Array.isEmpty mapBytes then "" else Ironsight.ProcGen.MapFile.hash mapBytes
 
         member _.TryFind(id: string) =
             rooms |> Array.tryFind (fun room -> String.Equals(room.Id, id, StringComparison.OrdinalIgnoreCase))
@@ -238,7 +238,12 @@ module Program =
                 | Ok spec -> spec
                 | Error message -> failwith $"IRONSIGHT_LEVEL '{value}' is not a valid map file: {message}"
             | None -> Ironsight.ProcGen.PaintballMap.spec
-        let mapBytes = Ironsight.ProcGen.MapFile.encode matchSpec
+        // A map built from props cannot be encoded, so it is not offered for
+        // download and announces no hash; the client resolves it by name like
+        // any other builtin.
+        let mapBytes =
+            if Ironsight.ProcGen.MapFile.encodable matchSpec then Ironsight.ProcGen.MapFile.encode matchSpec
+            else [||]
         let matchLevel = Ironsight.ProcGen.LevelCompile.compile matchSpec
         // server.json when present, otherwise the two rooms this server has
         // always hosted on the IRONSIGHT_LEVEL map. A bad config throws here,

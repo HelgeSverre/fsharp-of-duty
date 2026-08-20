@@ -52,6 +52,30 @@ module CombatTests =
         Assert.All(bankSpawns, fun struct (_, position) -> Assert.True(position.Y > 1.0f))
 
     [<Fact>]
+    let ``rust compiles with a standing derrick and reachable high ground`` () =
+        let level = Levels.rust
+        Assert.NotEmpty level.Nav
+        Assert.NotEmpty level.Cover
+        for team in [ Allies; Axis ] do
+            let spawns = level.Spawns |> Array.filter (fun struct (owner, _) -> owner = Some team)
+            Assert.True(spawns.Length >= 8, $"{team}: too few spawns ({spawns.Length})")
+            // No spawn may be inside the compound's cover.
+            for struct (_, position) in spawns do
+                let obstructed =
+                    LevelCompile.brushesNear position (Tuning.PlayerRadius + 0.1f) level
+                    |> Array.filter (fun brush -> brush.Bounds.Max.Y > position.Y + 0.1f)
+                    |> Array.exists (fun brush ->
+                        MathEx.capsuleIntersectsAabb Tuning.PlayerRadius Tuning.StandingHeight position brush.Bounds)
+                Assert.False(obstructed, $"{team} spawn buried at {position}")
+        // The derrick is the silhouette: it has to actually reach into the sky.
+        Assert.True(level.Bounds.Max.Y > 24.0f, $"derrick too short, world tops out at {level.Bounds.Max.Y}")
+        // And the vertical play has to be navigable, not just standable: the
+        // catwalks and the derrick pad only matter if bots can get up there.
+        let high = level.Nav |> Array.filter (fun node -> node.Position.Y > 3.0f)
+        Assert.True(high.Length >= 4, $"only {high.Length} nav nodes above the yard floor")
+        Assert.True(high |> Array.exists (fun node -> node.Neighbours.Length > 0), "high ground is not linked to anything")
+
+    [<Fact>]
     let ``head capsule applies lethal multiplier`` () =
         let targets = [| soldier Vector3.Zero |]
         let updated, events =

@@ -57,6 +57,7 @@ let materialName material =
     | Brick -> "brick" | Plaster -> "plaster" | Wood -> "wood" | Mud -> "mud"
     | Snow -> "snow" | Sandbag -> "sandbag" | Metal -> "metal"
     | UniformOlive -> "olive" | UniformFeldgrau -> "feldgrau" | Skin -> "skin" | Water -> "water"
+    | Sand -> "sand" | RustedMetal -> "rusted" | Concrete -> "concrete"
 
 /// Height drives the fill so elevation reads at a glance; material only tints
 /// it, because "how high is this" is the question a plan view has to answer.
