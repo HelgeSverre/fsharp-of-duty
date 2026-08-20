@@ -145,6 +145,7 @@ module Grenades =
             | Some damage when current.IsAlive ->
                 let torso = current.Position + Vector3(0.0f, 1.0f, 0.0f)
                 let health = max (Units.health 0.0f) (current.Health - damage)
-                let direction = MathEx.normalizedOrZero (torso - position)
-                { current with Health = health; RegenIn = Tuning.RegenDelay }, PlayerHurt(direction, health) :: events
+                // Toward the blast, not away from it: this is where to look.
+                let towardBlast = MathEx.normalizedOrZero (position - torso)
+                { current with Health = health; RegenIn = Tuning.RegenDelay }, PlayerHurt(towardBlast, health) :: events
             | _ -> current, events) (player, ([]: GameEvent list))

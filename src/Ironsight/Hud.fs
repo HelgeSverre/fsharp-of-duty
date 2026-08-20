@@ -421,9 +421,24 @@ type Hud(gl: GL) =
             let forward = MathEx.yawForward world.Player.Yaw
             let right = MathEx.yawRight world.Player.Yaw
             let horizontal = MathEx.horizontal direction |> MathEx.normalizedOrZero
-            let x = centerX + Vector3.Dot(horizontal, right) * 125.0f
-            let y = centerY - Vector3.Dot(horizontal, forward) * 82.0f
-            solid (x - 18.0f) (y - 3.0f) 36.0f 6.0f (Vector4(0.85f, 0.03f, 0.02f, 0.88f))
+            // An arc struck along the bearing, rather than one horizontal dash
+            // parked at a point on the ellipse. A dash reads the same whether it
+            // sits at nine o'clock or at ten, which is what made the indicator
+            // feel like it only knew four directions.
+            let bearing = MathF.Atan2(Vector3.Dot(horizontal, right), Vector3.Dot(horizontal, forward))
+            let segments = 9
+            let span = 0.40f
+            for index in 0 .. segments - 1 do
+                let t = float32 index / float32 (segments - 1)
+                let angle = bearing + (t - 0.5f) * span
+                // Thickest and brightest at the bearing itself, tapering off
+                // along the arc, so the centre of the mark IS the direction.
+                let weight = 1.0f - MathF.Abs(t - 0.5f) * 2.0f
+                let size = 3.0f + weight * 5.0f
+                let x = centerX + MathF.Sin angle * 125.0f
+                let y = centerY - MathF.Cos angle * 82.0f
+                solid (x - size * 0.5f) (y - size * 0.5f) size size
+                    (Vector4(0.88f, 0.06f, 0.03f, 0.35f + weight * 0.55f))
         let drawDeathOverlay () =
             solid (centerX - 250.0f) (centerY - 45.0f) 500.0f 90.0f (Vector4(0.0f, 0.0f, 0.0f, 0.72f))
             addText (centerX - 92.0f) (centerY - 24.0f) 1.6f white "YOU WERE KILLED"

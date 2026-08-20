@@ -1004,6 +1004,30 @@ module ServerTests =
         Assert.Equal(served.Heat, wire.Slots[wire.Active].Heat)
 
     [<Fact>]
+    let ``the damage indicator points back at whoever shot you`` () =
+        // The server sent the shot's travel direction, which points AWAY from
+        // the shooter, so the online indicator marked every hit as coming from
+        // behind you. Offline rifle fire already sent the opposite.
+        let host = MatchHost(TeamDeathmatch, TestKit.streetArenaWithSpawns "Bearing range")
+        let allyId, _ = host.TryAddPlayer("Ally").Value
+        let axisId, _ = host.TryAddPlayer("Axis").Value
+        TestKit.readyUp host [ allyId; axisId ]
+        let before = host.Snapshot()
+        let shooter = before.Players[axisId].Position
+        let victim = before.Players[allyId].Position
+        TestKit.rifleShot host 1L axisId allyId |> ignore
+        let hurt =
+            host.Snapshot().Events
+            |> Seq.map (fun replicated -> replicated.Event)
+            |> Seq.tryPick (function PlayerHurt(towardAttacker, _) -> Some towardAttacker | _ -> None)
+        match hurt with
+        | None -> failwith "no PlayerHurt event reached the victim"
+        | Some towardAttacker ->
+            let expected = MathEx.normalizedOrZero (MathEx.horizontal (shooter - victim))
+            let agreement = Vector3.Dot(MathEx.normalizedOrZero (MathEx.horizontal towardAttacker), expected)
+            Assert.True(agreement > 0.9f, $"indicator points {agreement} of the way toward the shooter")
+
+    [<Fact>]
     let ``a kill streak reaches the wire and is cleared at round end`` () =
         let host = MatchHost(TeamDeathmatch, TestKit.streetArenaWithSpawns "Streak range")
         let allyId, _ = host.TryAddPlayer("Ally").Value

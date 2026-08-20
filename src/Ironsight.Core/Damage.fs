@@ -2,9 +2,9 @@ namespace Ironsight
 
 [<RequireQualifiedAccess>]
 module Damage =
-    let hurtPlayer damage fromDirection (player: Player) =
+    let hurtPlayer damage towardAttacker (player: Player) =
         let health = max (Units.health 0.0f) (player.Health - damage)
-        { player with Health = health; RegenIn = Tuning.RegenDelay }, PlayerHurt(fromDirection, health)
+        { player with Health = health; RegenIn = Tuning.RegenDelay }, PlayerHurt(towardAttacker, health)
 
     let stepRegen (dt: float32<s>) (player: Player) =
         if player.IsDead then player

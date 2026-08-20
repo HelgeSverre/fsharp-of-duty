@@ -233,7 +233,11 @@ type GameEvent =
     | HitConfirmed of victim: EntityId * lethal: bool
     | BloodImpact of position: Vector3 * direction: Vector3 * headshot: bool
     | HeadGib of position: Vector3 * direction: Vector3
-    | PlayerHurt of fromDirection: Vector3 * newHealth: float32<hp>
+    /// `towardAttacker` points from the victim to whatever hurt them — the way
+    /// the HUD arrow has to face. Three of the four places that raise this used
+    /// to pass the opposite (a bullet's travel, a blast's push), which drew the
+    /// indicator behind you for every online hit.
+    | PlayerHurt of towardAttacker: Vector3 * newHealth: float32<hp>
     | Explosion of position: Vector3 * radius: float32
     | FootStep of position: Vector3 * surface: Material
     | Subtitle of speaker: string * line: string
