@@ -155,6 +155,41 @@ module GeometryTests =
         player.Position
 
     [<Fact>]
+    let ``a roofed interior is navigable, and low cover is not stood inside`` () =
+        // The navmesh took only the highest surface in a column, so putting a
+        // roof on a room moved every node onto the roof and left the room —
+        // the entire playable space — with no navmesh at all.
+        let hall roofed =
+            LevelDsl.level "Hall"
+                [ yield LevelDsl.street 20.0f 10.0f Concrete
+                  yield LevelDsl.block (Vector3(0.0f, 1.0f, 0.0f)) (Vector3(0.3f, 2.0f, 8.0f)) Wood
+                  if roofed then
+                      yield LevelDsl.block (Vector3(0.0f, 7.1f, 0.0f)) (Vector3(20.0f, 0.3f, 20.0f)) Concrete ]
+            |> LevelCompile.compile
+        let onFloor (level: Level) = level.Nav |> Array.filter (fun node -> node.Position.Y < 1.0f)
+        let indoors = hall true
+        let floorNodes = onFloor indoors
+        // Roofing the room must not cost it a single node of floor.
+        Assert.NotEmpty floorNodes
+        Assert.Equal((onFloor (hall false)).Length, floorNodes.Length)
+        Assert.All(floorNodes, fun node -> Assert.NotEmpty node.Neighbours)
+        // The roof is a surface too, so it gets its own layer of nodes.
+        Assert.NotEmpty(indoors.Nav |> Array.filter (fun node -> node.Position.Y > 6.0f))
+
+        // But a layer with no headroom is not a place to stand: the ground
+        // under a sandbag line must not become a node inside the sandbags.
+        let barricade =
+            LevelDsl.level "Cover"
+                [ LevelDsl.street 20.0f 8.0f Mud
+                  LevelDsl.sandbags (Vector3(-4.0f, 0.0f, 0.0f)) (Vector3(4.0f, 0.0f, 0.0f)) (Some Axis) ]
+            |> LevelCompile.compile
+        let buried =
+            barricade.Nav
+            |> Array.filter (fun node ->
+                node.Position.Y < 0.2f && abs node.Position.Z < 0.6f && abs node.Position.X < 4.0f)
+        Assert.Empty buried
+
+    [<Fact>]
     let ``a prop is solid: you stand on it and cannot walk through it`` () =
         // Props are how the level gets round and angled geometry out of a brush
         // set that is otherwise axis-aligned boxes. They are only worth having

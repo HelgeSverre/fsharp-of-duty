@@ -297,6 +297,41 @@ module LevelCompile =
     /// The walkable ground probe, used by nav.
     let surfaceColumn mesh x z = surfaceColumnWhere true mesh x z
 
+    /// Every walkable surface in an XZ column, lowest first.
+    ///
+    /// A roofed building has at least two — its floor and its roof — and the
+    /// single-surface probe above keeps only the highest. That is why an
+    /// interior used to have no navmesh at all: every node climbed onto the
+    /// roof and the room underneath, which is the entire playable space, was
+    /// invisible to the bots.
+    let surfaceLayers (mesh: CollisionMesh) (x: float32) (z: float32) =
+        let cell value = int (MathF.Floor(value / mesh.CellSize))
+        let indices =
+            match Map.tryFind (struct (cell x, cell z)) mesh.Cells with
+            | Some found -> found
+            | None -> [||]
+        let origin = Vector3(x, 100000.0f, z)
+        let hits = ResizeArray<struct (float32 * Vector3)>()
+        for index in indices do
+            let triangle = mesh.Triangles[index]
+            if triangle.Normal.Y >= Tuning.MaxSlopeCosine then
+                match MathEx.rayTriangle origin -Vector3.UnitY triangle.A triangle.B triangle.C with
+                | ValueSome distance -> hits.Add(struct (origin.Y - distance, triangle.Normal))
+                | ValueNone -> ()
+        // One slab is many triangles at the same height, and a floor is not two
+        // storeys because its planks differ by a centimetre: anything within a
+        // step of the layer below is that same layer.
+        hits
+        |> Seq.sortBy (fun (struct (height, _)) -> height)
+        |> Seq.fold
+            (fun acc (struct (height, normal)) ->
+                match acc with
+                | (struct (previous, _)) :: _ when height - previous < 0.45f -> acc
+                | _ -> struct (height, normal) :: acc)
+            []
+        |> List.rev
+        |> List.toArray
+
     /// Any ground at all, used to settle spawns and cover onto the map.
     let surfaceUnderneath mesh x z = surfaceColumnWhere false mesh x z
 
@@ -410,7 +445,9 @@ module LevelCompile =
         let minX, maxX = int (MathF.Ceiling(bounds.Min.X / spacing)), int (MathF.Floor(bounds.Max.X / spacing))
         let minZ, maxZ = int (MathF.Ceiling(bounds.Min.Z / spacing)), int (MathF.Floor(bounds.Max.Z / spacing))
         let positions = ResizeArray<Vector3>()
-        let lookup = Dictionary<struct (int * int), int>()
+        // One column can hold several nodes now — a warehouse floor and the
+        // roof over it — so a key maps to every layer standing at that spot.
+        let lookup = Dictionary<struct (int * int), ResizeArray<int>>()
         for z in minZ..maxZ do
             for x in minX..maxX do
                 let flatPosition = Vector3(float32 x * spacing, 0.0f, float32 z * spacing)
@@ -427,41 +464,65 @@ module LevelCompile =
                 // sits at. The old rule only accepted brushes resting on y = 0
                 // and under 3.1 m, so anything stacked was invisible as ground
                 // and the navmesh grew a hole across it.
-                let groundY =
-                    match surfaceColumn collision flatPosition.X flatPosition.Z with
-                    | ValueSome(struct (height, _)) -> height
-                    | ValueNone -> 0.0f
-                let position = Vector3(flatPosition.X, groundY, flatPosition.Z)
-                let blocked =
-                    nearby
-                    |> Array.exists (fun index ->
-                        brushes[index].Bounds.Max.Y > groundY + 0.05f
-                        && MathEx.capsuleIntersectsAabb Tuning.PlayerRadius Tuning.StandingHeight position brushes[index].Bounds)
-                if not blocked then
-                    lookup[struct (x, z)] <- positions.Count
-                    positions.Add position
+                let layers =
+                    match surfaceLayers collision flatPosition.X flatPosition.Z with
+                    | [||] -> [| struct (0.0f, Vector3.UnitY) |]
+                    | found ->
+                        // A layer is only somewhere to stand if there is room to
+                        // stand in. Without this the ground *under* a sandbag
+                        // line or a crate becomes a node — the old
+                        // highest-surface-only rule hid those by accident, and
+                        // sloped and prop geometry is not a brush, so the
+                        // capsule test below never sees it.
+                        found
+                        |> Array.mapi (fun index layer -> index, layer)
+                        |> Array.filter (fun (index, struct (height, _)) ->
+                            index = found.Length - 1
+                            || (let struct (above, _) = found[index + 1] in above - height >= Units.raw Tuning.StandingHeight))
+                        |> Array.map snd
+                for struct (groundY, _) in layers do
+                    let position = Vector3(flatPosition.X, groundY, flatPosition.Z)
+                    // The same capsule test doubles as the headroom check: a
+                    // layer with a ceiling too low to stand under is blocked by
+                    // that ceiling and never becomes a node.
+                    let blocked =
+                        nearby
+                        |> Array.exists (fun index ->
+                            brushes[index].Bounds.Max.Y > groundY + 0.05f
+                            && MathEx.capsuleIntersectsAabb Tuning.PlayerRadius Tuning.StandingHeight position brushes[index].Bounds)
+                    if not blocked then
+                        let column =
+                            match lookup.TryGetValue(struct (x, z)) with
+                            | true, existing -> existing
+                            | _ ->
+                                let fresh = ResizeArray<int>()
+                                lookup[struct (x, z)] <- fresh
+                                fresh
+                        column.Add positions.Count
+                        positions.Add position
         positions
         |> Seq.mapi (fun index position ->
             let x, z = int (MathF.Round(position.X / spacing)), int (MathF.Round(position.Z / spacing))
             let neighbours =
                 [| struct (x - 1, z); struct (x + 1, z); struct (x, z - 1); struct (x, z + 1) |]
-                |> Array.choose (fun key ->
+                |> Array.collect (fun key ->
                     match lookup.TryGetValue key with
-                    | true, value ->
+                    | true, column -> column.ToArray()
+                    | _ -> [||])
+                |> Array.filter (fun value ->
                         let other = positions[value]
                         let rise = abs (other.Y - position.Y)
                         // A step is climbable outright. Anything taller is only
                         // linked when the ground between the two nodes actually
                         // ramps: a 2 m rise over 2 m is a 45 degree slope if the
                         // midpoint is halfway up, and a wall if it is not.
-                        let climbable =
-                            rise <= 0.45f
-                            || (rise <= spacing * MathF.Tan(Tuning.MaxSlopeAngle * MathF.PI / 180.0f)
-                                && (match surfaceColumn collision ((position.X + other.X) * 0.5f) ((position.Z + other.Z) * 0.5f) with
-                                    | ValueSome(struct (midHeight, _)) -> abs (midHeight - (position.Y + other.Y) * 0.5f) <= 0.35f
-                                    | ValueNone -> false))
-                        if climbable then Some value else None
-                    | _ -> None)
+                        // Layered, like the nodes themselves: indoors the
+                        // highest surface between two floor nodes is the roof.
+                        rise <= 0.45f
+                        || (rise <= spacing * MathF.Tan(Tuning.MaxSlopeAngle * MathF.PI / 180.0f)
+                            && surfaceLayers collision ((position.X + other.X) * 0.5f) ((position.Z + other.Z) * 0.5f)
+                               |> Array.exists (fun (struct (midHeight, _)) ->
+                                   abs (midHeight - (position.Y + other.Y) * 0.5f) <= 0.35f)))
             { Position = positions[index]; Neighbours = neighbours })
         |> Seq.toArray
 
