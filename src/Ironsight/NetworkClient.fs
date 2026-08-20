@@ -10,6 +10,14 @@ open System.Threading.Channels
 open System.Threading.Tasks
 open Ironsight
 
+/// One carried weapon as the server reports it.
+[<Struct>]
+type OnlineWeapon =
+    { WeaponName: string
+      Ammo: int
+      Reserve: int
+      ReloadRemaining: float32 }
+
 [<Struct>]
 type OnlinePlayer =
     { Id: int
@@ -24,6 +32,13 @@ type OnlinePlayer =
       Alive: bool
       Ready: bool
       Ads: float32
+      /// The carried kit. Empty against a server built before kits, in which
+      /// case the flat Ammo/Reserve/WeaponName below still describe the one gun.
+      Slots: OnlineWeapon array
+      Active: int
+      /// Switch in flight; SwitchTo = -1 when idle.
+      SwitchTo: int
+      SwitchRemaining: float32
       Ammo: int
       Reserve: int
       WeaponName: string
@@ -115,6 +130,23 @@ module SnapshotWire =
                   Alive = getBool "alive" value
                   Ready = getBool "ready" value
                   Ads = getFloat "ads" value
+                  Slots =
+                    (match value.TryGetProperty "slots" with
+                     | true, slots when slots.ValueKind = JsonValueKind.Array ->
+                         slots.EnumerateArray()
+                         |> Seq.map (fun slot ->
+                             { WeaponName = getString "weapon" slot
+                               Ammo = getInt "ammo" slot
+                               Reserve = getInt "reserve" slot
+                               ReloadRemaining = getFloat "reloadRemaining" slot })
+                         |> Seq.toArray
+                     | _ -> [||])
+                  Active = getInt "active" value
+                  SwitchTo =
+                    (match value.TryGetProperty "switchTo" with
+                     | true, field when field.ValueKind = JsonValueKind.Number -> field.GetInt32()
+                     | _ -> -1)
+                  SwitchRemaining = getFloat "switchRemaining" value
                   Ammo = getInt "ammo" value
                   Reserve = getInt "reserve" value
                   WeaponName = getString "weapon" value

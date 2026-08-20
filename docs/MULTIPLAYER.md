@@ -118,8 +118,36 @@ The server answers with `welcome`, containing `playerId`, `sessionToken`,
 
 Implemented client message types are `hello`, `ready`, `input`, `loadout`,
 `chat`, and `leave`. A `loadout` message (`{"type":"loadout","weapon":"STG-44"}`)
-changes the player's weapon with no restrictions: instantly outside live play,
-otherwise on the next spawn.
+changes the player's **primary** with no restrictions: instantly outside live
+play, otherwise on the next spawn.
+
+## Loadout
+
+An online player carries a primary and a sidearm. The primary is the weapon
+picked in the menu, from any of the twelve; the sidearm is issued by team —
+M1911 for the Allies, Luger P08 for the Axis — and is not a choice, the way
+Counter-Strike and Battlefield hand out a pistol.
+
+The number keys select by category, the same keys and the same grouping the
+offline sandbox uses, so a gun sits under the same key in both:
+
+| Key | Category |
+| --- | --- |
+| 1 | Bolt and semi-auto rifles |
+| 2 | Automatics (SMGs and the STG-44) |
+| 3 | Pistols |
+| 4 | Scoped |
+| 5 | Heavy (shotgun, BAR) |
+
+The category comes from the weapon's own kind and fire mode rather than a table
+of inventory positions, so it describes a two-weapon kit and the twelve-weapon
+offline loadout alike. A key holding nothing is a no-op. Switching takes 0.35 s,
+during which the weapon clock is frozen — no firing, no reloading — and the
+switch is replicated, so other players see the raise rather than a gun that
+teleports into your hands.
+
+Each slot keeps its own ammunition: rounds spent on the rifle are still spent
+when you switch back to it.
 
 ## Chat and op commands
 

@@ -19,6 +19,18 @@ type WelcomeMessage =
       /// rather than by id would otherwise have no way to know.
       room: string }
 
+/// One carried weapon. The array replaced four scalar fields once an online
+/// player carried more than one gun.
+[<CLIMutable>]
+type WeaponSlotSnapshot =
+    { weapon: string
+      ammo: int
+      reserve: int
+      // Seconds left on the reload, 0 when not reloading. Without it the client
+      // rebuilds every online weapon slot as Ready and the reload bar, the
+      // viewmodel and the reload SFX all go missing.
+      reloadRemaining: float32 }
+
 [<CLIMutable>]
 type PlayerSnapshot =
     { id: int
@@ -37,12 +49,19 @@ type PlayerSnapshot =
       alive: bool
       ready: bool
       ads: float32
+      slots: WeaponSlotSnapshot array
+      /// Index into `slots` of the gun in hand.
+      active: int
+      // A switch in flight, replicated so the viewmodel plays the raise rather
+      // than popping straight to the new gun. Player-level because only the
+      // active slot can ever be Switching. switchTo = -1 when idle.
+      switchTo: int
+      switchRemaining: float32
+      // The active slot, duplicated flat. Costs four fields and keeps a client
+      // built before kits showing the right gun instead of a team default.
       ammo: int
       reserve: int
       weapon: string
-      // Seconds left on the reload, 0 when not reloading. Without it the client
-      // rebuilds every online weapon slot as Ready and the reload bar, the
-      // viewmodel and the reload SFX all go missing.
       reloadRemaining: float32
       kills: int
       deaths: int
@@ -223,10 +242,20 @@ module Protocol =
                   alive = player.Alive
                   ready = player.Ready
                   ads = player.Ads
-                  ammo = player.Weapon.InMag
-                  reserve = player.Weapon.Reserve
-                  weapon = player.Weapon.Class.Name
-                  reloadRemaining = (match player.Weapon.State with Reloading remaining -> Units.raw remaining | _ -> 0.0f)
+                  slots =
+                    player.Slots
+                    |> Array.map (fun slot ->
+                        { weapon = slot.Class.Name
+                          ammo = slot.InMag
+                          reserve = slot.Reserve
+                          reloadRemaining = (match slot.State with Reloading remaining -> Units.raw remaining | _ -> 0.0f) })
+                  active = player.Active
+                  switchTo = (match player.Slots[player.Active].State with Switching(incoming, _) -> incoming | _ -> -1)
+                  switchRemaining = (match player.Slots[player.Active].State with Switching(_, remaining) -> Units.raw remaining | _ -> 0.0f)
+                  ammo = player.Slots[player.Active].InMag
+                  reserve = player.Slots[player.Active].Reserve
+                  weapon = player.Slots[player.Active].Class.Name
+                  reloadRemaining = (match player.Slots[player.Active].State with Reloading remaining -> Units.raw remaining | _ -> 0.0f)
                   kills = player.Kills
                   deaths = player.Deaths
                   bestStreak = player.BestStreak
@@ -310,7 +339,7 @@ module Protocol =
                           kills = player.Kills
                           deaths = player.Deaths
                           alive = player.Alive
-                          weapon = player.Weapon.Class.Name })
+                          weapon = player.Slots[player.Active].Class.Name })
                 { id = roomId
                   name = roomName
                   capacity = capacity

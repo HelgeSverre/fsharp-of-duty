@@ -506,6 +506,44 @@ module ClientTests =
         Assert.Equal(Ready, reconciled.Soldiers[0].Weapon.State)
 
     [<Fact>]
+    let ``the wire kit is rebuilt with the sidearm and the gun in hand`` () =
+        // The client used to overwrite Slots with a single weapon every
+        // snapshot, so no multi-slot state could survive reconciliation.
+        let world = Sim.createTrainingWorld 901UL
+        let kit =
+            [| { WeaponName = "Kar98k"; Ammo = 3; Reserve = 15; ReloadRemaining = 0.0f }
+               { WeaponName = "M1911"; Ammo = 7; Reserve = 14; ReloadRemaining = 0.0f } |]
+        let withKit active switchTo switchRemaining =
+            { TestKit.onlinePlayer 1 "Local" Allies world.Player.Position with
+                Slots = kit
+                Active = active
+                SwitchTo = switchTo
+                SwitchRemaining = switchRemaining }
+        let snapshotOf player =
+            { Tick = 100L; Mode = TeamDeathmatch; LevelName = world.Level.Name; Phase = Playing
+              AlliesScore = 0; AxisScore = 0; Players = [| player |]; Grenades = [||]; Events = [||] }
+        // Pistol in hand, rifle still remembering its three rounds.
+        let reconciled, _ = OnlineWorld.reconcile world.Level [] 1 world (snapshotOf (withKit 1 -1 0.0f))
+        Assert.Equal(2, reconciled.Player.Slots.Length)
+        Assert.Equal(1, reconciled.Player.Active)
+        Assert.Equal("M1911", reconciled.Player.Slots[1].Class.Name)
+        Assert.Equal(3, reconciled.Player.Slots[0].InMag)
+        Assert.Equal(15, reconciled.Player.Slots[0].Reserve)
+        // A switch in flight arrives as Switching on the outgoing slot, so the
+        // viewmodel plays the raise instead of popping to the new gun.
+        let switching, _ = OnlineWorld.reconcile world.Level [] 1 world (snapshotOf (withKit 0 1 0.2f))
+        Assert.Equal(Switching(1, Units.seconds 0.2f), switching.Player.Slots[0].State)
+        // A server built before kits sends no slots at all; the flat fields it
+        // does send must still produce the one-weapon inventory of that era.
+        let legacy =
+            { TestKit.onlinePlayer 1 "Local" Allies world.Player.Position with
+                Slots = [||]; WeaponName = "BAR"; Ammo = 12; Reserve = 40 }
+        let old, _ = OnlineWorld.reconcile world.Level [] 1 world (snapshotOf legacy)
+        Assert.Equal(1, old.Player.Slots.Length)
+        Assert.Equal(0, old.Player.Active)
+        Assert.Equal("BAR", old.Player.Slots[0].Class.Name)
+
+    [<Fact>]
     let ``reconciliation from full movement state reproduces local prediction exactly`` () =
         // The QuakeWorld property: rebasing on the snapshot (position AND
         // velocity AND stance) and replaying the unacknowledged inputs must land

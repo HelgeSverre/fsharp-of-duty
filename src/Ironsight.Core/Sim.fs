@@ -20,15 +20,6 @@ module Sim =
            Tuning.weaponSlot Tuning.bar 5
            Tuning.weaponSlot Tuning.luger 5 |]
 
-    /// CS-style category slots: each weapon key owns a category and pressing
-    /// the same key again cycles within it. Indices refer to playerSlots order.
-    let weaponCategories =
-        [| [| 0; 1; 2 |]     // 1: bolt/semi rifles — Kar98k, Garand, Lee-Enfield
-           [| 3; 4; 5 |]     // 2: automatics — Thompson, STG-44, MP40
-           [| 6; 11 |]       // 3: pistols — M1911, Luger P08
-           [| 7; 8 |]        // 4: scoped — Kar98k Sniper, FG42
-           [| 9; 10 |] |]    // 5: heavy — Trench Gun, BAR
-
     /// The paintball round loadout opens on the Thompson.
     let private thompsonSlot = 3
 
@@ -189,8 +180,15 @@ module Sim =
         slots[player.Active] <- { slots[player.Active] with State = state }
         { player with Slots = slots; Ads = 0.0f }
 
-    let step (input: InputFrame) (world: World) =
-        let regenerated = Damage.stepRegen Tuning.TickDuration world.Player
+    /// One tick of weapon selection: starts a switch the keys asked for, or
+    /// advances one already in flight. Returns the player and whether the
+    /// weapon clock is frozen this tick (a switch in progress locks firing,
+    /// reloading and bloom alike).
+    ///
+    /// Shared by the campaign and the server so online play switches by the
+    /// same rules — it reads nothing but the player, which is what lets the
+    /// server call it without a World.
+    let stepWeaponSwitch (input: InputFrame) (player: Player) =
         let requestedCategory =
             [| InputButtons.Weapon1; InputButtons.Weapon2; InputButtons.Weapon3; InputButtons.Weapon4; InputButtons.Weapon5 |]
             |> Array.tryFindIndex (fun button -> Input.hasButton button input.Buttons)
@@ -199,22 +197,27 @@ module Sim =
         // Switching state, which ignores requests while in flight.
         let requestedWeapon =
             requestedCategory
-            |> Option.map (fun category ->
-                let members = weaponCategories[category]
-                match Array.tryFindIndex ((=) regenerated.Active) members with
-                | Some position -> members[(position + 1) % members.Length]
-                | None -> members[0])
-        let prepared, weaponLocked =
-            match regenerated.Slots[regenerated.Active].State with
-            | Switching(incoming, remaining) when remaining <= Tuning.TickDuration ->
-                { withActiveState Ready regenerated with Active = incoming }, false
-            | Switching(incoming, remaining) ->
-                withActiveState (Switching(incoming, remaining - Tuning.TickDuration)) regenerated, true
-            | _ ->
-                match requestedWeapon with
-                | Some incoming when incoming >= 0 && incoming < regenerated.Slots.Length && incoming <> regenerated.Active ->
-                    withActiveState (Switching(incoming, Units.seconds 0.35f)) regenerated, true
-                | _ -> regenerated, false
+            |> Option.bind (fun category ->
+                match Tuning.categorySlots player.Slots category with
+                | [||] -> None
+                | members ->
+                    match Array.tryFindIndex ((=) player.Active) members with
+                    | Some position -> Some members[(position + 1) % members.Length]
+                    | None -> Some members[0])
+        match player.Slots[player.Active].State with
+        | Switching(incoming, remaining) when remaining <= Tuning.TickDuration ->
+            { withActiveState Ready player with Active = incoming }, false
+        | Switching(incoming, remaining) ->
+            withActiveState (Switching(incoming, remaining - Tuning.TickDuration)) player, true
+        | _ ->
+            match requestedWeapon with
+            | Some incoming when incoming >= 0 && incoming < player.Slots.Length && incoming <> player.Active ->
+                withActiveState (Switching(incoming, Units.seconds 0.35f)) player, true
+            | _ -> player, false
+
+    let step (input: InputFrame) (world: World) =
+        let regenerated = Damage.stepRegen Tuning.TickDuration world.Player
+        let prepared, weaponLocked = stepWeaponSwitch input regenerated
         let mutable rng = world.Rng
         let canFire = prepared.IsAlive
         let result = stepLocomotion Tuning.TickDuration world.Level world.Tick input (not weaponLocked) canFire true prepared &rng

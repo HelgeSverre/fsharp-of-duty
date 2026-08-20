@@ -66,6 +66,39 @@ module IntegrationTests =
 
     [<Fact>]
     [<Trait("Category", Integration)>]
+    let ``a player switches to the issued sidearm over a real socket`` () =
+        // Three things had to agree for this to work and none of them could be
+        // checked in isolation: the server's button mask has to let Weapon1-5
+        // through, the sim has to actually move Active, and the kit has to
+        // cross the wire. The bot presses a key and the snapshot changes gun.
+        let app, uri = startServer ()
+        try
+            MatchScript.run uri TeamDeathmatch [
+                JoinAs("Gunner", "Kar98k")
+                Join "Sparring"
+                WaitUntil("the match reaches Playing", 30.0, fun snapshot -> snapshot.Phase = Playing)
+                Expect("the kit is a primary plus a sidearm", fun snapshot ->
+                    match MatchScript.selfOf "Gunner" snapshot with
+                    | Some self -> self.Slots.Length = 2 && self.WeaponName = "Kar98k"
+                    | None -> false)
+                // Key 3 is the pistol category; the raise takes 0.35s.
+                Press("Gunner", InputButtons.Weapon3)
+                WaitUntil("the sidearm reaches the snapshot", 10.0, fun snapshot ->
+                    match MatchScript.selfOf "Gunner" snapshot with
+                    | Some self -> self.Active = 1 && self.WeaponName <> "Kar98k"
+                    | None -> false)
+                Release("Gunner", InputButtons.Weapon3)
+                Press("Gunner", InputButtons.Weapon1)
+                WaitUntil("and back to the primary", 10.0, fun snapshot ->
+                    match MatchScript.selfOf "Gunner" snapshot with
+                    | Some self -> self.Active = 0 && self.WeaponName = "Kar98k"
+                    | None -> false)
+            ]
+        finally
+            app.StopAsync().GetAwaiter().GetResult()
+
+    [<Fact>]
+    [<Trait("Category", Integration)>]
     let ``a lone player sees their own chat line come back`` () =
         // The solo case on purpose: one player never reaches Warmup, so this
         // also pins that chat does not depend on the match having started.

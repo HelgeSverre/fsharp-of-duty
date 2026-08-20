@@ -339,10 +339,64 @@ module CoreTests =
             Assert.True(current.Soldiers |> Array.exists (fun soldier -> soldier.Id = victim && soldier.IsDead))
         | None -> failwith $"no kill credited to the player; got {kills}"
 
+    [<Fact>]
+    let ``every weapon keeps the number key its category table gave it`` () =
+        // The old table listed slot indices into the offline twelve-weapon
+        // array, which cannot describe a two-weapon online kit. Deriving the
+        // category from the weapon instead has to land every gun on the same
+        // key it always had, or muscle memory breaks.
+        let expected =
+            [ Tuning.kar98k, 0; Tuning.m1Garand, 0; Tuning.leeEnfield, 0
+              Tuning.thompson, 1; Tuning.mp40, 1
+              // A rifle that fires like an SMG, and sits with them.
+              Tuning.stg44, 1
+              Tuning.m1911, 2; Tuning.luger, 2
+              Tuning.kar98kSniper, 3
+              // Scoped beats full-auto: the FG42 is both.
+              Tuning.fg42, 3
+              Tuning.m1897, 4
+              // Heavy beats full-auto too.
+              Tuning.bar, 4 ]
+        for weapon, category in expected do
+            Assert.Equal(category, Tuning.categoryOf weapon)
+        // Every online weapon lands on a real key.
+        for weapon in Tuning.onlineWeapons do
+            Assert.InRange(Tuning.categoryOf weapon, 0, 4)
+
+    [<Fact>]
+    let ``a two-weapon kit switches between primary and sidearm`` () =
+        // The offline sandbox carries twelve; an online kit carries two. The
+        // same selection code has to serve both.
+        let world = Sim.createTrainingWorld 3UL
+        let kit =
+            { world.Player with
+                Slots = [| Tuning.weaponSlot Tuning.kar98k 4; Tuning.weaponSlot Tuning.m1911 3 |]
+                Active = 0 }
+        Assert.Equal<int array>([| 0 |], Tuning.categorySlots kit.Slots 0)
+        Assert.Equal<int array>([| 1 |], Tuning.categorySlots kit.Slots 2)
+        // Key 3 is the pistol: the switch starts, locks the weapon clock, and
+        // only lands when the 0.35 s raise finishes.
+        let pressing = input 1L InputButtons.Weapon3 Vector2.Zero
+        let switching, locked = Sim.stepWeaponSwitch pressing kit
+        Assert.True locked
+        Assert.Equal(0, switching.Active)
+        Assert.Equal(0.0f, switching.Ads)
+        let mutable current = switching
+        for _ in 1 .. int (0.35f * float32 Tuning.TickRate) + 1 do
+            let stepped, _ = Sim.stepWeaponSwitch (input 2L InputButtons.None Vector2.Zero) current
+            current <- stepped
+        Assert.Equal(1, current.Active)
+        Assert.Equal("M1911", current.Slots[current.Active].Class.Name)
+        // A key holding nothing is a no-op rather than an index crash.
+        let untouched, lockedByEmpty = Sim.stepWeaponSwitch (input 3L InputButtons.Weapon5 Vector2.Zero) current
+        Assert.False lockedByEmpty
+        Assert.Equal(1, untouched.Active)
+
     let private makePlayer id team : NetworkPlayer =
         { Id = EntityId id; Name = string id; Team = team; Position = Vector3.Zero; Velocity = Vector3.Zero
           Yaw = 0.0f; Pitch = 0.0f; Stance = Standing; Sprinting = false; Ads = 0.0f
-          Health = Units.health 100.0f; RegenIn = Units.seconds 0.0f; Weapon = Tuning.weaponSlot Tuning.kar98k 2; RequestedWeapon = None
+          Health = Units.health 100.0f; RegenIn = Units.seconds 0.0f
+          Slots = [| Tuning.weaponSlot Tuning.kar98k 2; Tuning.weaponSlot (Tuning.sidearm team) 2 |]; Active = 0; RequestedWeapon = None
           Grenade = GrenadeIdle 3; Connected = true; Ready = true; Alive = true; RespawnIn = Units.seconds 0.0f; SpawnProtection = Units.seconds 0.0f
           Kills = 0; Deaths = 0; Streak = 0; BestStreak = 0; LastInputSequence = 0L }
 
@@ -395,9 +449,12 @@ module CoreTests =
     let ``dying cancels an interrupted reload`` () =
         // Nothing steps a dead player's weapon, so a live Reloading timer would
         // freeze the replicated HUD's reload bar for the whole respawn wait.
-        let reloading = { makePlayer 1 Allies with Weapon = { Tuning.weaponSlot Tuning.kar98k 2 with State = Reloading(Units.seconds 1.4f) } }
+        let carried = makePlayer 1 Allies
+        let reloading =
+            { carried with Slots = [| { carried.Slots[0] with State = Reloading(Units.seconds 1.4f) }; carried.Slots[1] |] }
         let state = { Multiplayer.create TeamDeathmatch with Players = Map.ofList [ EntityId 1, reloading ] }
-        Assert.Equal(Ready, (Multiplayer.markDead (EntityId 1) state).Players[EntityId 1].Weapon.State)
+        let dead = (Multiplayer.markDead (EntityId 1) state).Players[EntityId 1]
+        Assert.All(dead.Slots, fun slot -> Assert.Equal(Ready, slot.State))
 
     [<Fact>]
     let ``names are trimmed and limited to 24 unicode scalars`` () =

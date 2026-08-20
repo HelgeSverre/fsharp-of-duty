@@ -47,19 +47,44 @@ module OnlineWorld =
             if parts.Length = 2 then Some(Chat(sender, parts[0], parts[1])) else Some(Chat(sender, "", event.Text))
         | _ -> None
 
-    let private weaponFor (player: OnlinePlayer) =
-        let weapon =
-            Tuning.weaponByName player.WeaponName
-            |> Option.defaultValue (Tuning.defaultWeapon player.Team)
-        // The single place an online weapon slot is built (local player, HUD,
-        // viewmodel and remote soldiers all come through here), so the server's
-        // reload timer has to be reapplied here or it is lost.
+    /// The single place an online weapon slot is built (local player, HUD,
+    /// viewmodel and remote soldiers all come through here), so the server's
+    /// reload timer has to be reapplied here or it is lost.
+    let private slotFor (team: Team) (wire: OnlineWeapon) =
+        let weapon = Tuning.weaponByName wire.WeaponName |> Option.defaultValue (Tuning.defaultWeapon team)
         { Tuning.weaponSlot weapon 0 with
-            InMag = player.Ammo
-            Reserve = player.Reserve
-            State = if player.ReloadRemaining > 0.0f then Reloading(Units.seconds player.ReloadRemaining) else Ready }
+            InMag = wire.Ammo
+            Reserve = wire.Reserve
+            State = if wire.ReloadRemaining > 0.0f then Reloading(Units.seconds wire.ReloadRemaining) else Ready }
 
-    let private localPlayer previous (snapshot: OnlinePlayer) =
+    /// The carried kit, and which slot is in hand. A server built before kits
+    /// sends no `slots`, so fall back to the flat fields it does send — that is
+    /// a one-weapon inventory, exactly the old behaviour.
+    let private kitFor (player: OnlinePlayer) =
+        let slots =
+            if player.Slots.Length > 0 then player.Slots |> Array.map (slotFor player.Team)
+            else
+                [| slotFor
+                       player.Team
+                       { WeaponName = player.WeaponName
+                         Ammo = player.Ammo
+                         Reserve = player.Reserve
+                         ReloadRemaining = player.ReloadRemaining } |]
+        let active = if player.Active >= 0 && player.Active < slots.Length then player.Active else 0
+        // A switch in flight lives on the outgoing slot and carries its
+        // destination, so the viewmodel plays the raise instead of popping.
+        if player.SwitchRemaining > 0.0f && player.SwitchTo >= 0 && player.SwitchTo < slots.Length then
+            let switching = Array.copy slots
+            switching[active] <- { switching[active] with State = Switching(player.SwitchTo, Units.seconds player.SwitchRemaining) }
+            switching, active
+        else slots, active
+
+    let private weaponFor (player: OnlinePlayer) =
+        let slots, active = kitFor player
+        slots[active]
+
+    let private localPlayer (previous: Player) (snapshot: OnlinePlayer) =
+        let slots, active = kitFor snapshot
         { previous with
             Id = EntityId snapshot.Id
             Position = snapshot.Position
@@ -76,8 +101,8 @@ module OnlineWorld =
             Ads = snapshot.Ads
             Health = Units.health snapshot.Health
             RegenIn = Units.seconds 0.0f
-            Slots = [| weaponFor snapshot |]
-            Active = 0 }
+            Slots = slots
+            Active = active }
 
     let private remoteSoldier (snapshot: OnlinePlayer) =
         { Id = EntityId snapshot.Id

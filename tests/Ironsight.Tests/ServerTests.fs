@@ -138,7 +138,7 @@ module ServerTests =
         Assert.Equal(None, recipient)
         Assert.Equal(Some axisId, killer)
         Assert.Equal(allyId, victim)
-        Assert.Equal(result.Players[axisId].Weapon.Class.Name, weapon)
+        Assert.Equal(result.Players[axisId].Slots[result.Players[axisId].Active].Class.Name, weapon)
         Assert.True headshot
         Assert.NotEmpty((Protocol.snapshot result).events)
 
@@ -605,8 +605,9 @@ module ServerTests =
             sequence <- sequence + 1L
         let player = host.Snapshot().Players[playerId]
         Assert.Equal(Warmup, host.Snapshot().Phase)
-        Assert.Equal(WeaponState.Ready, player.Weapon.State)
-        Assert.Equal(player.Weapon.Class.MagSize, player.Weapon.InMag)
+        let held = player.Slots[player.Active]
+        Assert.Equal(WeaponState.Ready, held.State)
+        Assert.Equal(held.Class.MagSize, held.InMag)
 
     [<Fact>]
     let ``authoritative grenade is cooked thrown and included in snapshots`` () =
@@ -627,21 +628,87 @@ module ServerTests =
         Assert.Single wire.grenades |> ignore
 
     [<Fact>]
+    let ``an online player carries a primary and the team's sidearm`` () =
+        let host = MatchHost TeamDeathmatch
+        let playerId, _ = host.TryAddPlayer("Rifleman", weaponName = "Kar98k").Value
+        let player = host.Snapshot().Players[playerId]
+        Assert.Equal(2, player.Slots.Length)
+        Assert.Equal(0, player.Active)
+        Assert.Equal("Kar98k", player.Slots[0].Class.Name)
+        // Issued, not chosen — the picker only ever names a primary.
+        Assert.Equal(Tuning.sidearm(player.Team).Name, player.Slots[1].Class.Name)
+        Assert.Equal(Pistol, player.Slots[1].Class.Kind)
+
+    [<Fact>]
+    let ``the number keys switch weapons online`` () =
+        // Weapon1-5 were masked off server-side, so these presses used to reach
+        // the sim as nothing at all. This is the end-to-end proof they don't.
+        let host = MatchHost(TeamDeathmatch, TestKit.streetArena "Switch range")
+        let playerId, _ = host.TryAddPlayer("Switcher", weaponName = "Kar98k").Value
+        let otherId, _ = host.TryAddPlayer("Other").Value
+        TestKit.readyUp host [ playerId; otherId ]
+        let heldName () =
+            let player = host.Snapshot().Players[playerId]
+            player.Slots[player.Active].Class.Name
+        Assert.Equal("Kar98k", heldName ())
+        // Key 3 is the pistol category. The raise takes 0.35 s, so hold the
+        // press across enough ticks for it to land.
+        let mutable sequence = 1L
+        for _ in 1..40 do
+            applyCustom sequence 0.0f 0.0f (int InputButtons.Weapon3) host playerId
+            host.AdvanceTick()
+            sequence <- sequence + 1L
+        Assert.Equal(Tuning.sidearm(host.Snapshot().Players[playerId].Team).Name, heldName ())
+        // And back to the primary, which proves Active round-trips both ways.
+        for _ in 1..40 do
+            applyCustom sequence 0.0f 0.0f (int InputButtons.Weapon1) host playerId
+            host.AdvanceTick()
+            sequence <- sequence + 1L
+        Assert.Equal("Kar98k", heldName ())
+
+    [<Fact>]
+    let ``ammunition spent on one weapon survives a switch away and back`` () =
+        // Per-slot state is the point of carrying a kit: the sidearm must not
+        // share the rifle's magazine, and neither may be silently refilled.
+        let host = MatchHost(TeamDeathmatch, TestKit.streetArena "Ammo range")
+        let playerId, _ = host.TryAddPlayer("Gunner", weaponName = "Thompson").Value
+        let otherId, _ = host.TryAddPlayer("Other").Value
+        TestKit.readyUp host [ playerId; otherId ]
+        let slotsOf () = host.Snapshot().Players[playerId].Slots
+        let mutable sequence = 1L
+        for _ in 1..20 do
+            applyCustom sequence 0.0f 0.0f (int InputButtons.Fire) host playerId
+            host.AdvanceTick()
+            sequence <- sequence + 1L
+        let spent = slotsOf().[0].InMag
+        Assert.True(spent < Tuning.thompson.MagSize, "the primary should have fired rounds")
+        for _ in 1..40 do
+            applyCustom sequence 0.0f 0.0f (int InputButtons.Weapon3) host playerId
+            host.AdvanceTick()
+            sequence <- sequence + 1L
+        // The sidearm is untouched and the primary still remembers what it spent.
+        Assert.Equal(Tuning.sidearm(host.Snapshot().Players[playerId].Team).MagSize, slotsOf().[1].InMag)
+        Assert.Equal(spent, slotsOf().[0].InMag)
+
+    [<Fact>]
     let ``loadout change applies instantly outside live play and stages during it`` () =
         let host = MatchHost TeamDeathmatch
         let playerId, _ = host.TryAddPlayer("Switcher").Value
         // Waiting phase: swap on the spot, full ammunition.
         host.SetLoadout(playerId, "STG-44")
-        Assert.Equal("STG-44", host.Snapshot().Players[playerId].Weapon.Class.Name)
+        let primaryOf id = host.Snapshot().Players[id].Slots[0].Class.Name
+        Assert.Equal("STG-44", primaryOf playerId)
+        // The issued sidearm rides along and is not the player's to pick.
+        Assert.Equal(Tuning.sidearm(host.Snapshot().Players[playerId].Team).Name, host.Snapshot().Players[playerId].Slots[1].Class.Name)
         // Unknown weapon names are ignored.
         host.SetLoadout(playerId, "Raygun")
-        Assert.Equal("STG-44", host.Snapshot().Players[playerId].Weapon.Class.Name)
+        Assert.Equal("STG-44", primaryOf playerId)
         let otherId, _ = host.TryAddPlayer("Other").Value
         TestKit.readyUp host [ playerId; otherId ]
         Assert.Equal(Playing, host.Snapshot().Phase)
         // Live round: the request must not re-roll the weapon in hand.
         host.SetLoadout(playerId, "BAR")
-        Assert.Equal("STG-44", host.Snapshot().Players[playerId].Weapon.Class.Name)
+        Assert.Equal("STG-44", primaryOf playerId)
 
     [<Fact>]
     let ``mid-round loadout request arms on the next spawn`` () =
@@ -658,15 +725,15 @@ module ServerTests =
             host.AdvanceTick()
             sequence <- sequence + 1L
         Assert.False(host.Snapshot().Players[subject].Alive)
-        Assert.Equal("Thompson", host.Snapshot().Players[subject].Weapon.Class.Name)
+        Assert.Equal("Thompson", host.Snapshot().Players[subject].Slots[0].Class.Name)
         for _ in 1..320 do
             applyCustom sequence 0.0f 0.0f 0 host subject
             host.AdvanceTick()
             sequence <- sequence + 1L
         let respawned = host.Snapshot().Players[subject]
         Assert.True(respawned.Alive)
-        Assert.Equal("BAR", respawned.Weapon.Class.Name)
-        Assert.Equal(Tuning.bar.MagSize, respawned.Weapon.InMag)
+        Assert.Equal("BAR", respawned.Slots[0].Class.Name)
+        Assert.Equal(Tuning.bar.MagSize, respawned.Slots[0].InMag)
 
     [<Fact>]
     let ``session token reclaims reserved identity after disconnect`` () =
@@ -701,7 +768,7 @@ module ServerTests =
         let host = MatchHost TeamDeathmatch
         let playerId, _ = host.TryAddPlayer("Scout", weaponName = "Kar98k Sniper").Value
         let player = host.Snapshot().Players[playerId]
-        Assert.Equal("Kar98k Sniper", player.Weapon.Class.Name)
+        Assert.Equal("Kar98k Sniper", player.Slots[0].Class.Name)
         let wire = Protocol.snapshot (host.Snapshot())
         Assert.Equal("Kar98k Sniper", wire.players[0].weapon)
 
@@ -801,10 +868,18 @@ module ServerTests =
         Assert.Equal(server.Alive, wire.Alive)
         Assert.Equal(server.Ready, wire.Ready)
         Assert.Equal(server.Ads, wire.Ads)
-        Assert.Equal(server.Weapon.InMag, wire.Ammo)
-        Assert.Equal(server.Weapon.Reserve, wire.Reserve)
-        Assert.Equal(server.Weapon.Class.Name, wire.WeaponName)
-        Assert.Equal((match server.Weapon.State with Reloading remaining -> Units.raw remaining | _ -> 0.0f), wire.ReloadRemaining)
+        // The whole kit crosses, and the flat fields still mirror the slot in
+        // hand for clients that predate kits.
+        let held = server.Slots[server.Active]
+        Assert.Equal(server.Slots.Length, wire.Slots.Length)
+        Assert.Equal(server.Active, wire.Active)
+        Assert.Equal<string array>(
+            server.Slots |> Array.map (fun slot -> slot.Class.Name),
+            wire.Slots |> Array.map (fun slot -> slot.WeaponName))
+        Assert.Equal(held.InMag, wire.Ammo)
+        Assert.Equal(held.Reserve, wire.Reserve)
+        Assert.Equal(held.Class.Name, wire.WeaponName)
+        Assert.Equal((match held.State with Reloading remaining -> Units.raw remaining | _ -> 0.0f), wire.ReloadRemaining)
         Assert.Equal(server.Kills, wire.Kills)
         Assert.Equal(server.Deaths, wire.Deaths)
         Assert.Equal(server.BestStreak, wire.BestStreak)
@@ -833,7 +908,7 @@ module ServerTests =
         let parsed = Ironsight.Shell.SnapshotWire.parseSnapshot document.RootElement
         let wire = parsed.Players |> Array.find (fun player -> player.Name = "Axis")
         Assert.True(wire.ReloadRemaining > 0.0f, "reload timer must reach the client")
-        match state.Players[axisId].Weapon.State with
+        match state.Players[axisId].Slots[state.Players[axisId].Active].State with
         | Reloading remaining -> Assert.Equal(Units.raw remaining, wire.ReloadRemaining)
         | other -> failwith $"server weapon should be reloading, was {other}"
 

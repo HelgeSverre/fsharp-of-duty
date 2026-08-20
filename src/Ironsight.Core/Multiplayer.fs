@@ -18,7 +18,10 @@ type NetworkPlayer =
       Ads: float32
       Health: float32<hp>
       RegenIn: float32<s>
-      Weapon: WeaponSlot
+      /// Carried weapons and which one is in hand. Online that is a chosen
+      /// primary plus the team's issued sidearm; `Active` indexes it.
+      Slots: WeaponSlot array
+      Active: int
       /// Loadout change requested mid-life; equipped on the next fresh spawn.
       RequestedWeapon: WeaponClass option
       Grenade: GrenadeHand
@@ -117,7 +120,7 @@ module Multiplayer =
                     // does. Nothing steps a dead player's weapon, so a live
                     // Reloading timer would freeze on the replicated HUD for
                     // the whole respawn wait.
-                    Weapon = { victim.Weapon with State = Ready }
+                    Slots = victim.Slots |> Array.map (fun slot -> { slot with State = Ready })
                     RespawnIn = Units.seconds 5.0f
                     SpawnProtection = Units.seconds 0.0f
                     Velocity = Vector3.Zero }

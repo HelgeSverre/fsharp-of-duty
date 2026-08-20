@@ -94,6 +94,10 @@ just fly-validate                # validate fly.toml
 just fly-deploy                  # deploy the server
 ```
 
+Online you carry the weapon you pick plus your team's issued pistol — M1911 for
+the Allies, Luger for the Axis — and switch between them with the same `1`–`5`
+category keys the offline game uses (`3` is always the pistol).
+
 Direct online launch supports a callsign, mode, and weapon:
 
 ```sh

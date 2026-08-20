@@ -104,6 +104,19 @@ type MatchHost(mode: GameMode, ?matchLevel: Level, ?disconnectGrace: TimeSpan, ?
         |> Option.bind Tuning.weaponByName
         |> Option.defaultValue (Tuning.defaultWeapon team)
 
+    /// An online kit: the chosen primary in hand, the team's issued sidearm
+    /// behind it. The sidearm is granted rather than picked, the way CS and
+    /// Battlefield hand out a pistol. One place so the magazine counts and the
+    /// slot order cannot drift between spawn, join and loadout change.
+    let loadoutFor team (primary: WeaponClass) =
+        [| Tuning.weaponSlot primary 4; Tuning.weaponSlot (Tuning.sidearm team) 3 |]
+
+    /// The primary is whatever sits in the first slot.
+    let primaryOf (player: NetworkPlayer) =
+        match Array.tryHead player.Slots with
+        | Some slot -> slot.Class
+        | None -> Tuning.defaultWeapon player.Team
+
     let toPlayer (networkPlayer: NetworkPlayer) =
         { Id = networkPlayer.Id
           Position = networkPlayer.Position
@@ -115,8 +128,8 @@ type MatchHost(mode: GameMode, ?matchLevel: Level, ?disconnectGrace: TimeSpan, ?
           Ads = networkPlayer.Ads
           Health = networkPlayer.Health
           RegenIn = networkPlayer.RegenIn
-          Slots = [| networkPlayer.Weapon |]
-          Active = 0
+          Slots = networkPlayer.Slots
+          Active = networkPlayer.Active
           Grenade = networkPlayer.Grenade }
 
     let spawnFor team (EntityId id) tick =
@@ -147,7 +160,8 @@ type MatchHost(mode: GameMode, ?matchLevel: Level, ?disconnectGrace: TimeSpan, ?
             Velocity = Vector3.Zero
             Health = Units.health 100.0f
             RegenIn = Units.seconds 0.0f
-            Weapon = Tuning.weaponSlot (defaultArg player.RequestedWeapon player.Weapon.Class) 4
+            Slots = loadoutFor player.Team (defaultArg player.RequestedWeapon (primaryOf player))
+            Active = 0
             RequestedWeapon = None
             Grenade = GrenadeIdle 3
             Alive = true
@@ -180,7 +194,7 @@ type MatchHost(mode: GameMode, ?matchLevel: Level, ?disconnectGrace: TimeSpan, ?
           Stance = player.Stance
           Health = player.Health
           Behavior = if player.Alive then Idle else Dying(Units.seconds 0.0f)
-          Weapon = player.Weapon
+          Weapon = player.Slots[player.Active]
           Squad = 0
           Contacts = Map.empty
           Suppression = 0.0f
@@ -196,13 +210,14 @@ type MatchHost(mode: GameMode, ?matchLevel: Level, ?disconnectGrace: TimeSpan, ?
                     | Some since, Some player when DateTimeOffset.UtcNow - since <= disconnectGrace ->
                         let selected = selectedWeapon player.Team weaponName
                         let weapon =
-                            if player.Weapon.Class.Name = selected.Name then player.Weapon
-                            else Tuning.weaponSlot selected 4
+                            if (primaryOf player).Name = selected.Name then player.Slots
+                            else loadoutFor player.Team selected
                         let restored =
                             { player with
                                 Connected = true
                                 Name = Multiplayer.sanitizeName name
-                                Weapon = weapon }
+                                Slots = weapon
+                                Active = 0 }
                         setPlayer id restored
                         disconnectedSince <- Map.remove id disconnectedSince
                         announce id (PlayerJoined(id, restored.Name))
@@ -233,7 +248,8 @@ type MatchHost(mode: GameMode, ?matchLevel: Level, ?disconnectGrace: TimeSpan, ?
                       Ads = 0.0f
                       Health = Units.health 100.0f
                       RegenIn = Units.seconds 0.0f
-                      Weapon = Tuning.weaponSlot (selectedWeapon team weaponName) 4
+                      Slots = loadoutFor team (selectedWeapon team weaponName)
+                      Active = 0
                       RequestedWeapon = None
                       Grenade = GrenadeIdle 3
                       Connected = true
@@ -280,7 +296,7 @@ type MatchHost(mode: GameMode, ?matchLevel: Level, ?disconnectGrace: TimeSpan, ?
             | Some weaponClass, Some player ->
                 let updated =
                     if state.Phase <> Playing && player.Alive then
-                        { player with Weapon = Tuning.weaponSlot weaponClass 4; RequestedWeapon = None }
+                        { player with Slots = loadoutFor player.Team weaponClass; Active = 0; RequestedWeapon = None }
                     else { player with RequestedWeapon = Some weaponClass }
                 setPlayer id updated
             | _ -> ())
@@ -307,7 +323,14 @@ type MatchHost(mode: GameMode, ?matchLevel: Level, ?disconnectGrace: TimeSpan, ?
                     let lookX = Protocol.tryFloat32 "lookX" message |> Option.defaultValue 0.0f |> clamp -0.25f 0.25f
                     let lookY = Protocol.tryFloat32 "lookY" message |> Option.defaultValue 0.0f |> clamp -0.25f 0.25f
                     let rawButtons = Protocol.tryInt64 "buttons" message |> Option.defaultValue 0L
-                    let allowedButtons = int64 (InputButtons.Fire ||| InputButtons.Ads ||| InputButtons.Sprint ||| InputButtons.Reload ||| InputButtons.Crouch ||| InputButtons.Prone ||| InputButtons.Jump ||| InputButtons.Grenade)
+                    let allowedButtons =
+                        int64 (
+                            InputButtons.Fire ||| InputButtons.Ads ||| InputButtons.Sprint ||| InputButtons.Reload
+                            ||| InputButtons.Crouch ||| InputButtons.Prone ||| InputButtons.Jump ||| InputButtons.Grenade
+                            // Weapon keys were masked off while an online player
+                            // carried a single slot; with a kit they select it.
+                            ||| InputButtons.Weapon1 ||| InputButtons.Weapon2 ||| InputButtons.Weapon3
+                            ||| InputButtons.Weapon4 ||| InputButtons.Weapon5)
                     let buttons = enum<InputButtons> (int (rawButtons &&& allowedButtons))
                     let input = { Sequence = sequence; Move = Vector2(moveX, moveY); Look = Vector2(lookX, lookY); Buttons = buttons }
                     let requestedTick = Protocol.tryInt64 "estimatedServerTick" message |> Option.defaultValue state.Tick
@@ -393,9 +416,12 @@ type MatchHost(mode: GameMode, ?matchLevel: Level, ?disconnectGrace: TimeSpan, ?
                         else { player with RespawnIn = remaining })
             let stepFrame id (player: NetworkPlayer) (input: InputFrame) (estimatedTick: int64) acknowledge =
                 let canEngage = lifecycleState.Phase = Playing
+                // Same selection rules as the campaign: the number keys start a
+                // switch, and a switch in flight freezes the weapon clock.
+                let switched, weaponLocked = Sim.stepWeaponSwitch input (toPlayer player)
                 // Shared with Sim.step's campaign/round-bot tick: movement,
                 // weapon cycling, grenade hand, footstep material, shot rays.
-                let result = Sim.stepLocomotion Tuning.TickDuration level lifecycleState.Tick input true canEngage canEngage (toPlayer player) &rng
+                let result = Sim.stepLocomotion Tuning.TickDuration level lifecycleState.Tick input (not weaponLocked) canEngage canEngage switched &rng
                 result.Thrown |> Option.iter thrownGrenades.Add
                 result.FootStep |> Option.iter emit
                 if not result.Shots.IsEmpty then
@@ -407,6 +433,11 @@ type MatchHost(mode: GameMode, ?matchLevel: Level, ?disconnectGrace: TimeSpan, ?
                     for struct (origin, direction, request) in result.Shots do
                         shots.Add(id, origin, direction, request.Damage, request.Penetration, request.HeadshotMultiplier, request.Kind, estimatedTick)
                 let handPlayer = result.Player
+                // stepLocomotion returns only the active slot; writing back the
+                // whole array with Active is what lets a switch survive the
+                // tick at all.
+                let writtenSlots = Array.copy handPlayer.Slots
+                writtenSlots[handPlayer.Active] <- result.Weapon
                 { player with
                     Position = handPlayer.Position
                     Velocity = handPlayer.Velocity
@@ -415,7 +446,8 @@ type MatchHost(mode: GameMode, ?matchLevel: Level, ?disconnectGrace: TimeSpan, ?
                     Stance = handPlayer.Stance
                     Sprinting = handPlayer.Sprinting
                     Ads = handPlayer.Ads
-                    Weapon = result.Weapon
+                    Slots = writtenSlots
+                    Active = handPlayer.Active
                     Grenade = handPlayer.Grenade
                     SpawnProtection = if result.Shots.IsEmpty && result.Thrown.IsNone then player.SpawnProtection else Units.seconds 0.0f
                     LastInputSequence = if acknowledge then input.Sequence else player.LastInputSequence }
@@ -493,7 +525,7 @@ type MatchHost(mode: GameMode, ?matchLevel: Level, ?disconnectGrace: TimeSpan, ?
                                 combatState <- Multiplayer.recordKill shooterId targetId combatState
                                 // Ballistics already stamped the lethal region
                                 // on this victim, per target of a penetrating round.
-                                emit (Kill(Some shooterId, targetId, shooter.Weapon.Class.Name, (match after.Behavior with DyingHeadshot _ -> true | _ -> false)))
+                                emit (Kill(Some shooterId, targetId, shooter.Slots[shooter.Active].Class.Name, (match after.Behavior with DyingHeadshot _ -> true | _ -> false)))
                 | _ -> ()
             let grenadeSet = Array.append lifecycleState.Grenades (thrownGrenades.ToArray())
             let activeGrenades, explosions =

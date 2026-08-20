@@ -299,6 +299,34 @@ module Tuning =
 
     let defaultWeapon = function Allies -> thompson | Axis -> kar98k
 
+    /// The team's issued sidearm. Every player carries one online; it is not a
+    /// menu choice, the way Counter-Strike and Battlefield hand out a pistol.
+    let sidearm = function Allies -> m1911 | Axis -> luger
+
+    /// Which number key holds a weapon: 0 = key 1, 4 = key 5. Derived from the
+    /// weapon's own stats rather than a table of inventory indices, so it works
+    /// for any loadout — the twelve-slot offline sandbox and the two-slot
+    /// online kit alike.
+    ///
+    /// Arm order is load-bearing. The FG42 is a full-auto SniperRifle but
+    /// belongs with the scoped guns, and the BAR is a full-auto MachineGun but
+    /// belongs with the heavies, so Kind is matched before Mode.
+    let categoryOf (weapon: WeaponClass) =
+        match weapon.Kind with
+        | Pistol -> 2
+        | SniperRifle -> 3
+        | Shotgun | MachineGun -> 4
+        | Smg -> 1
+        // The STG-44 is a rifle that fires like an SMG, and sits with them.
+        | Rifle -> if weapon.Mode = FullAuto then 1 else 0
+
+    /// Slot indices in `slots` that key `category` selects, in carry order.
+    let categorySlots (slots: WeaponSlot array) category =
+        slots
+        |> Array.indexed
+        |> Array.filter (fun (_, slot) -> categoryOf slot.Class = category)
+        |> Array.map fst
+
     let weaponByName name =
         onlineWeapons
         |> Array.tryFind (fun weapon -> String.Equals(weapon.Name, name, StringComparison.OrdinalIgnoreCase))
