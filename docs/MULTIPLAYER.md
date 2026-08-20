@@ -31,6 +31,8 @@ both on the `IRONSIGHT_LEVEL` map — so an existing deployment needs no changes
 
 ```json
 {
+  "name": "Helge's Bunker",
+  "motd": "Welcome. No camping the spawn.",
   "rooms": [
     { "id": "tdm-canal", "name": "Canal Yard TDM", "mode": "TeamDeathmatch", "level": "canal" },
     { "id": "ffa-depot", "name": "Depot Deathmatch", "mode": "FreeForAll", "level": "depot",
@@ -38,6 +40,11 @@ both on the `IRONSIGHT_LEVEL` map — so an existing deployment needs no changes
   ]
 }
 ```
+
+`name` is what the server browser lists, overriding whatever a player called
+this server in their own bookmarks; `motd` is whispered to each joiner as a
+system chat line when they connect. Both are optional and both go through the
+same sanitizer as names and chat.
 
 `id` and `mode` are required; everything else falls back to the old hardcoded
 values — the `IRONSIGHT_LEVEL` map, 75 kills for TDM and 30 for FFA, ten

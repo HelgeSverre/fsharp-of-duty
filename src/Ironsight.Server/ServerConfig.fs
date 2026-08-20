@@ -20,7 +20,14 @@ type RoomConfigFile =
       maxPlayers: Nullable<int> }
 
 [<CLIMutable>]
-type ServerConfigFile = { rooms: RoomConfigFile array }
+type ServerConfigFile =
+    { name: string
+      motd: string
+      rooms: RoomConfigFile array }
+
+/// Server identity, alongside the rooms it hosts. The name is what the server
+/// browser lists; the MOTD is whispered to each joiner.
+type ServerIdentity = { Name: string; Motd: string }
 
 /// A validated room: every default already applied, so nothing downstream
 /// deals in options or has to know what the fallbacks were.
@@ -55,6 +62,10 @@ module ServerConfig =
         |> Option.defaultWith (fun () ->
             let known = String.concat ", " Levels.offlineAliases
             failwith $"server config: level '{alias}' is not a builtin ({known}).")
+
+    /// Blank name means the browser keeps showing whatever the player called
+    /// this server in their own bookmarks; blank MOTD means no greeting.
+    let defaultIdentity = { Name = ""; Motd = "" }
 
     /// The two rooms the server hosted before it read a config at all. Used
     /// verbatim when there is no config file, so an existing deployment keeps
@@ -93,25 +104,32 @@ module ServerConfig =
             try JsonSerializer.Deserialize<ServerConfigFile>(json, jsonOptions)
             with :? JsonException as ex -> failwith $"server config: not valid JSON — {ex.Message}"
         if isNull (box file.rooms) then failwith "server config: no 'rooms' array."
-        file.rooms
-        |> Array.mapi (fun index room ->
-            let id = if isNull room.id then "" else room.id.Trim()
-            if id = "" then failwith $"server config: room {index} has no id."
-            let mode = parseMode (if isNull room.mode then "" else room.mode)
-            { Id = id
-              Name = if String.IsNullOrWhiteSpace room.name then id else room.name.Trim()
-              Mode = mode
-              Level = if String.IsNullOrWhiteSpace room.level then fallbackLevel else parseLevel room.level
-              ScoreLimit =
-                if room.scoreLimit.HasValue && room.scoreLimit.Value > 0 then room.scoreLimit.Value
-                else Multiplayer.scoreLimit mode
-              TimeLimit =
-                if room.timeLimit.HasValue && room.timeLimit.Value > 0.0f then Units.seconds room.timeLimit.Value
-                else Multiplayer.defaultTimeLimit
-              MaxPlayers =
-                if room.maxPlayers.HasValue && room.maxPlayers.Value > 0 then room.maxPlayers.Value
-                else DefaultMaxPlayers })
-        |> validate
+        let identity =
+            { Name = Multiplayer.sanitizeText 32 file.name
+              // Same filter every other player-visible string goes through: the
+              // MOTD lands in a chat log, so it cannot carry control scalars.
+              Motd = Multiplayer.sanitizeText 120 file.motd }
+        let rooms =
+            file.rooms
+            |> Array.mapi (fun index room ->
+                let id = if isNull room.id then "" else room.id.Trim()
+                if id = "" then failwith $"server config: room {index} has no id."
+                let mode = parseMode (if isNull room.mode then "" else room.mode)
+                { Id = id
+                  Name = if String.IsNullOrWhiteSpace room.name then id else room.name.Trim()
+                  Mode = mode
+                  Level = if String.IsNullOrWhiteSpace room.level then fallbackLevel else parseLevel room.level
+                  ScoreLimit =
+                    if room.scoreLimit.HasValue && room.scoreLimit.Value > 0 then room.scoreLimit.Value
+                    else Multiplayer.scoreLimit mode
+                  TimeLimit =
+                    if room.timeLimit.HasValue && room.timeLimit.Value > 0.0f then Units.seconds room.timeLimit.Value
+                    else Multiplayer.defaultTimeLimit
+                  MaxPlayers =
+                    if room.maxPlayers.HasValue && room.maxPlayers.Value > 0 then room.maxPlayers.Value
+                    else DefaultMaxPlayers })
+            |> validate
+        identity, rooms
 
     /// IRONSIGHT_CONFIG, else ./server.json. A missing file is not an error —
     /// it is the single-map, two-room server everyone has today.
@@ -121,4 +139,4 @@ module ServerConfig =
             | value when not (String.IsNullOrWhiteSpace value) -> value
             | _ -> "server.json"
         if IO.File.Exists path then parse fallbackLevel (IO.File.ReadAllText path)
-        else defaultRooms fallbackLevel
+        else defaultIdentity, defaultRooms fallbackLevel

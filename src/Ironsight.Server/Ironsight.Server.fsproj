@@ -1,6 +1,10 @@
 <Project Sdk="Microsoft.NET.Sdk.Web">
   <PropertyGroup>
     <OutputType>Exe</OutputType>
+    <!-- A headless server with no localization: nothing here formats for a
+         user's culture. Without this a self-contained build hard-aborts at
+         startup on any distro lacking libicu, which is most minimal images. -->
+    <InvariantGlobalization>true</InvariantGlobalization>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="../Ironsight.Core/Ironsight.Core.fsproj" />

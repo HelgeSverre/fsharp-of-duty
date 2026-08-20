@@ -130,9 +130,17 @@ module ServerDirectory =
                             match room.TryGetProperty(key: string) with
                             | true, value when value.ValueKind = JsonValueKind.String -> value.GetString()
                             | _ -> ""
+                        // The server's own name wins over the bookmark label:
+                        // an operator renaming a server should not require every
+                        // player to edit their servers.json.
+                        let named =
+                            match root.TryGetProperty "name" with
+                            | true, value when value.ValueKind = JsonValueKind.String && not (String.IsNullOrWhiteSpace(value.GetString())) ->
+                                { server with Name = value.GetString() }
+                            | _ -> server
                         root.GetProperty("rooms").EnumerateArray()
                         |> Seq.map (fun room ->
-                            { Server = server
+                            { Server = named
                               RoomId = text room "id"
                               RoomName = text room "name"
                               Mode = (if room.GetProperty("mode").GetString() = "FreeForAll" then FreeForAll else TeamDeathmatch)

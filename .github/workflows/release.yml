@@ -62,6 +62,28 @@ jobs:
             ironsight-linux-x64.tar.gz
             ironsight-linux-x64.deb
 
+  # The dedicated server, for anyone standing one up on their own box.
+  # Self-contained so a VPS needs no .NET install — deploy.sh curls this.
+  server:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: 10.0.x
+      - name: Publish the server
+        run: |
+          set -euo pipefail
+          dotnet publish src/Ironsight.Server/Ironsight.Server.fsproj \
+            --configuration Release --runtime linux-x64 --self-contained \
+            --output publish/server-linux-x64
+          tar -czf ironsight-server-linux-x64.tar.gz -C publish/server-linux-x64 .
+      - uses: actions/upload-artifact@v7
+        with:
+          name: server
+          path: ironsight-server-linux-x64.tar.gz
+
   windows:
     runs-on: windows-latest
     timeout-minutes: 30
@@ -133,7 +155,7 @@ jobs:
             ironsight-osx-arm64.tar.gz
 
   release:
-    needs: [linux, windows, macos]
+    needs: [linux, server, windows, macos]
     if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -152,5 +174,7 @@ jobs:
             - **macOS**: `ironsight-macos-universal.pkg` — one installer for Apple Silicon and Intel, installs `Ironsight.app` to /Applications
             - **Debian/Ubuntu**: `sudo apt install ./ironsight-linux-x64.deb`
             - **Other Linux**: `ironsight-linux-x64.tar.gz`, unpack and run `./Ironsight`
+            - **Dedicated server**: `ironsight-server-linux-x64.tar.gz`, or one command on a fresh VPS:
+              `curl -fsSL https://raw.githubusercontent.com/HelgeSverre/fsharp-of-duty/main/deploy.sh | sudo bash`
 
             Builds are not code-signed or notarized: Windows SmartScreen and macOS Gatekeeper will warn on first launch (More info → Run anyway / System Settings → Privacy & Security → Open Anyway).

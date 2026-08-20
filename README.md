@@ -218,6 +218,28 @@ weapon state, hits, damage, and scores itself, so gameplay tuning in
 
 ## Server deployment
 
+### On your own VPS
+
+One command on a fresh box — it pulls the self-contained server from the latest
+release, runs it as a systemd service, and prints the URL to publish:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/HelgeSverre/fsharp-of-duty/main/deploy.sh | sudo bash
+```
+
+No .NET, no Docker, no cloned repo. Pass `--domain play.example.com` (with an A
+record already pointing at the box) to also set up Caddy for automatic HTTPS —
+the in-game browser only lists `wss://` servers, so a plain-http deploy cannot
+be published. `--port` and `--version` are also accepted; re-running the script
+upgrades in place.
+
+Configure the server by editing `/opt/ironsight-server/server.json` (name, MOTD,
+rooms, per-room maps and rules — see
+[docs/MULTIPLAYER.md](docs/MULTIPLAYER.md#rooms)) and
+`systemctl restart ironsight-server`.
+
+### On Fly.io
+
 The checked-in `Dockerfile` publishes only the headless server. `fly.toml` runs
 one 256 MB shared-cpu Machine in Stockholm and checks `/health/ready`. Match and
 session state are in memory, so the current deployment intentionally keeps one

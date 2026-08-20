@@ -136,7 +136,10 @@ type LeaderboardRoom =
 
 [<CLIMutable>]
 type LeaderboardResponse =
-    { generatedAt: DateTimeOffset
+    { /// Operator-chosen server name. Blank leaves the browser showing whatever
+      /// the player called this server in their own bookmarks.
+      name: string
+      generatedAt: DateTimeOffset
       persistence: string
       capacityPerRoom: int
       rooms: LeaderboardRoom array }
@@ -321,7 +324,7 @@ module Protocol =
 
     /// Rooms arrive as (id, name, capacity, state) so the response can name
     /// them; the server browser lists one row per entry.
-    let leaderboard (rooms: (string * string * int * MatchState) array) =
+    let leaderboard (serverName: string) (rooms: (string * string * int * MatchState) array) =
         let rooms =
             rooms
             |> Array.map (fun (roomId, roomName, capacity, state) ->
@@ -349,7 +352,8 @@ module Protocol =
                   axisScore = state.AxisScore
                   connectedPlayers = players.Length
                   players = players })
-        { generatedAt = DateTimeOffset.UtcNow
+        { name = serverName
+          generatedAt = DateTimeOffset.UtcNow
           persistence = "Stats are in-memory and reset on redeploy."
           // Legacy single number for clients that predate per-room capacity;
           // the largest room is the least wrong answer for a mixed server.

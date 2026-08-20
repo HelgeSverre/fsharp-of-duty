@@ -255,7 +255,7 @@ module ServerTests =
 
     [<Fact>]
     let ``a room config fills in every omitted rule`` () =
-        let rooms =
+        let _, rooms =
             ServerConfig.parse Levels.paintballArena """
             { "rooms": [ { "id": "sniper", "name": "Sniper Alley", "mode": "FreeForAll", "level": "omaha",
                            "scoreLimit": 20, "timeLimit": 300, "maxPlayers": 8 },
@@ -274,6 +274,30 @@ module ServerTests =
         Assert.Equal(Multiplayer.scoreLimit TeamDeathmatch, rooms[1].ScoreLimit)
         Assert.Equal(Multiplayer.defaultTimeLimit, rooms[1].TimeLimit)
         Assert.Equal(ServerConfig.DefaultMaxPlayers, rooms[1].MaxPlayers)
+
+    [<Fact>]
+    let ``the server names itself and greets joiners`` () =
+        let identity, _ =
+            ServerConfig.parse Levels.paintballArena """
+            { "name": "Helge's Bunker", "motd": "No camping the spawn.",
+              "rooms": [ { "id": "tdm", "mode": "TeamDeathmatch" } ] }"""
+        Assert.Equal("Helge's Bunker", identity.Name)
+        Assert.Equal("No camping the spawn.", identity.Motd)
+        // Player-visible text, so it goes through the same filter as names and
+        // chat: a tab would otherwise forge a sender in the chat encoding.
+        let dirty, _ =
+            ServerConfig.parse Levels.paintballArena """
+            { "name": "  Bunker\u0001  ", "motd": "line\tbreak",
+              "rooms": [ { "id": "tdm", "mode": "TeamDeathmatch" } ] }"""
+        Assert.Equal("Bunker", dirty.Name)
+        Assert.Equal("linebreak", dirty.Motd)
+        // Omitted identity leaves the browser showing the player's own bookmark
+        // label and sends no greeting.
+        let bare, _ =
+            ServerConfig.parse Levels.paintballArena """{ "rooms": [ { "id": "tdm", "mode": "TeamDeathmatch" } ] }"""
+        Assert.Equal("", bare.Name)
+        Assert.Equal("", bare.Motd)
+        Assert.Equal(ServerConfig.defaultIdentity, bare)
 
     [<Fact>]
     let ``a broken room config fails loudly rather than being ignored`` () =
@@ -778,7 +802,8 @@ module ServerTests =
         let onlineId, _ = tdm.TryAddPlayer("Public Hero", weaponName = "M1897 Trench Gun").Value
         let offlineId, _ = tdm.TryAddPlayer("Gone Already").Value
         tdm.RemovePlayer offlineId
-        let board = Protocol.leaderboard [| "tdm", "Team Deathmatch", 16, tdm.Snapshot(); "ffa", "Free For All", 8, (MatchHost FreeForAll).Snapshot() |]
+        let board = Protocol.leaderboard "Test Server" [| "tdm", "Team Deathmatch", 16, tdm.Snapshot(); "ffa", "Free For All", 8, (MatchHost FreeForAll).Snapshot() |]
+        Assert.Equal("Test Server", board.name)
         // Legacy field: the largest room, for clients predating per-room capacity.
         Assert.Equal(16, board.capacityPerRoom)
         Assert.Equal(2, board.rooms.Length)

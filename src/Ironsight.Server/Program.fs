@@ -20,7 +20,7 @@ module Program =
     /// defaults when there is no config). `level`/`mapBytes` stay the *boot*
     /// map: /maps/{hash} serves only those bytes, and a room on any other
     /// builtin is resolved by the client by name instead.
-    type private MatchDirectory(rooms: RoomConfig array, level: Level, mapBytes: byte array) =
+    type private MatchDirectory(identity: ServerIdentity, rooms: RoomConfig array, level: Level, mapBytes: byte array) =
         let rooms =
             rooms
             |> Array.map (fun room ->
@@ -35,6 +35,7 @@ module Program =
                         maxPlayers = room.MaxPlayers) })
 
         member _.Rooms = rooms
+        member _.Identity = identity
         member _.LevelName = level.Name
         member _.MapBytes = mapBytes
         member val MapHash = Ironsight.ProcGen.MapFile.hash mapBytes
@@ -54,7 +55,7 @@ module Program =
         member _.Leaderboard() =
             rooms
             |> Array.map (fun room -> room.Id, room.Name, room.Host.Capacity, room.Host.Snapshot())
-            |> Protocol.leaderboard
+            |> Protocol.leaderboard identity.Name
 
     let private receiveMessage (socket: WebSocket) (cancellationToken: CancellationToken) = task {
         let buffer = Array.zeroCreate<byte> Protocol.MaxMessageBytes
@@ -167,6 +168,11 @@ module Program =
                     try
                         try
                             do! send (Protocol.welcomeFor playerId token matches.LevelName matches.MapHash room.Id (host.Snapshot())) socket cancellationToken
+                            // Greeting rides the chat channel rather than a new
+                            // message type: it is already a whispered, throttled,
+                            // sanitized line that the client logs and renders.
+                            if matches.Identity.Motd <> "" then
+                                host.Enqueue(Chat(None, "", matches.Identity.Motd), recipient = playerId)
                             let mutable connected = true
                             let mutable pendingReceive = receiveMessage socket cancellationToken
                             // The snapshot timer must keep its own cadence. Starting a
@@ -237,8 +243,8 @@ module Program =
         // server.json when present, otherwise the two rooms this server has
         // always hosted on the IRONSIGHT_LEVEL map. A bad config throws here,
         // at boot, rather than leaving an operator wondering why it was ignored.
-        let rooms = ServerConfig.load matchLevel
-        let matches = MatchDirectory(rooms, matchLevel, mapBytes)
+        let identity, rooms = ServerConfig.load matchLevel
+        let matches = MatchDirectory(identity, rooms, matchLevel, mapBytes)
         builder.Services.AddSingleton matches |> ignore
         builder.Services.AddHostedService(fun _ ->
             { new BackgroundService() with
