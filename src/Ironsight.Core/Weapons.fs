@@ -8,6 +8,7 @@ module Weapons =
     let private advanceState dt slot =
         match slot.State with
         | Ready -> slot
+        | Drawing _ -> slot
         | Cooling remaining when remaining <= dt -> { slot with State = Ready }
         | Cooling remaining -> { slot with State = Cooling(remaining - dt) }
         | Reloading remaining when remaining <= dt ->
@@ -34,6 +35,20 @@ module Weapons =
             let bite = MathF.Pow(MathEx.clamp01 heat, Tuning.HeatBiteExponent)
             float32 (int (bite * Tuning.MaxHeatExtraTicks + 0.5f)) * Units.raw Tuning.TickDuration
 
+    let private requests damage spread melee (current: WeaponSlot) (rng: byref<Rng.State>) =
+        let shots = ResizeArray<ShotRequest>()
+        for _ in 1..max 1 current.Class.Pellets do
+            let angle = Rng.nextFloat32 &rng * MathF.Tau
+            let radius = MathF.Sqrt(Rng.nextFloat32 &rng) * spread
+            shots.Add
+                { DirectionOffset = Vector2(MathF.Cos angle * radius, MathF.Sin angle * radius)
+                  Damage = damage
+                  Penetration = current.Class.Penetration
+                  HeadshotMultiplier = current.Class.HeadshotMultiplier
+                  Kind = current.Class.Kind
+                  Melee = melee }
+        List.ofSeq shots
+
     let step (dt: float32<s>) moveSpeed stance trigger reload ads (rng: byref<Rng.State>) slot =
         let current = advanceState dt slot
         let movementFactor = 1.0f + MathEx.clamp01 (moveSpeed / Tuning.WalkSpeed) * Tuning.MovementSpreadMultiplier
@@ -47,28 +62,14 @@ module Weapons =
         // mid-reload and while the trigger is held on an empty gun.
         let cooled = max 0.0f (current.Heat - Tuning.HeatCoolPerSecond * Units.raw dt)
 
-        if reload && current.State = Ready && current.InMag < current.Class.MagSize && current.Reserve > 0 then
-            struct ({ current with State = Reloading current.Class.ReloadTime; BurstIx = 0; Bloom = 0.0f; Heat = cooled }, [])
-        elif trigger && current.State = Ready && current.InMag > 0
-             && (current.Class.Mode = FullAuto || current.BurstIx = 0) then
-            // Accuracy arrives by the time the scope/iron sight becomes visually
-            // usable. This keeps fast ADS meaningful instead of punishing a shot
-            // that was taken on the final few frames of the transition.
+        let spread factor =
             let sightedAccuracy = MathEx.clamp01 (ads / 0.72f)
-            let spread =
-                (current.Class.HipSpread + (current.Class.AdsSpread - current.Class.HipSpread) * sightedAccuracy + bloom)
-                * movementFactor
-                * stanceFactor
-            let shots = ResizeArray<ShotRequest>()
-            for _ in 1..max 1 current.Class.Pellets do
-                let angle = Rng.nextFloat32 &rng * MathF.Tau
-                let radius = MathF.Sqrt(Rng.nextFloat32 &rng) * spread
-                shots.Add
-                    { DirectionOffset = Vector2(MathF.Cos angle * radius, MathF.Sin angle * radius)
-                      Damage = current.Class.Damage
-                      Penetration = current.Class.Penetration
-                      HeadshotMultiplier = current.Class.HeadshotMultiplier
-                      Kind = current.Class.Kind }
+            (current.Class.HipSpread + (current.Class.AdsSpread - current.Class.HipSpread) * sightedAccuracy + bloom)
+            * movementFactor
+            * stanceFactor
+            * factor
+
+        let firedSlot melee =
             let recoil = current.Class.Recoil
             let kick = if recoil.Length = 0 then 0.0f else MathF.Abs recoil[min current.BurstIx (recoil.Length - 1)].Y
             let nextBloom = min Tuning.BloomMax (bloom + kick * Tuning.BloomPerShot)
@@ -79,13 +80,53 @@ module Weapons =
                 if overheats current.Class then min 1.0f (current.Heat + 1.0f / Tuning.OverheatShots)
                 else 0.0f
             let cooldown = Units.seconds (60.0f / current.Class.RoundsPerMin + heatDwell current.Class heat)
-            struct ({ current with
-                        State = Cooling cooldown
-                        InMag = current.InMag - 1
-                        BurstIx = current.BurstIx + 1
-                        Bloom = nextBloom
-                        Heat = heat },
-                    List.ofSeq shots)
+            let ammo =
+                match melee with
+                | Some KatanaSweep | Some KatanaOverhead -> current.InMag
+                | _ -> current.InMag - 1
+            { current with
+                State = Cooling cooldown
+                InMag = ammo
+                BurstIx = current.BurstIx + 1
+                Bloom = nextBloom
+                LastMelee = melee
+                Heat = heat }
+
+        if reload
+           && (match current.State with Ready | Drawing _ -> true | _ -> false)
+           && current.InMag < current.Class.MagSize
+           && current.Reserve > 0 then
+            struct ({ current with State = Reloading current.Class.ReloadTime; BurstIx = 0; Bloom = 0.0f; Heat = cooled }, [])
+        elif current.Class.Mechanism = Bow then
+            match current.State, trigger with
+            | Drawing charge, true ->
+                struct ({ current with State = Drawing(charge + dt); Bloom = bloom }, [])
+            | Drawing charge, false when current.InMag > 0 ->
+                let power = Tuning.drawPower charge
+                let damage = Units.health (Units.raw current.Class.Damage * power)
+                // A snap-shot is deliberately less accurate as well as weaker.
+                let shots = requests damage (spread (1.45f - power * 0.45f)) None current &rng
+                struct (firedSlot None, shots)
+            | Ready, true when current.InMag > 0 ->
+                struct ({ current with State = Drawing dt; BurstIx = 0; Bloom = bloom }, [])
+            | _ ->
+                let state =
+                    match current.State with
+                    | Drawing _ -> Ready
+                    | value -> value
+                struct ({ current with State = state; BurstIx = 0; Bloom = bloom }, [])
+        elif trigger && current.State = Ready && current.InMag > 0
+             && (current.Class.Mode = FullAuto || current.BurstIx = 0) then
+            // Accuracy arrives by the time the scope/iron sight becomes visually
+            // usable. This keeps fast ADS meaningful instead of punishing a shot
+            // that was taken on the final few frames of the transition.
+            let melee =
+                match current.Class.Mechanism with
+                | Katana when ads >= 0.5f -> Some KatanaOverhead
+                | Katana -> Some KatanaSweep
+                | _ -> None
+            let shots = requests current.Class.Damage (spread 1.0f) melee current &rng
+            struct (firedSlot melee, shots)
         else
             let burstIx = if trigger then current.BurstIx else 0
             struct ({ current with Bloom = bloom; BurstIx = burstIx; Heat = cooled }, [])

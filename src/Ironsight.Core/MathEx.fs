@@ -28,6 +28,21 @@ module MathEx =
             let axis = Vector3.Cross(Vector3.UnitZ, target)
             Quaternion.Normalize(Quaternion(axis.X, axis.Y, axis.Z, 1.0f + dot))
 
+    /// Shortest-arc rotation between arbitrary directions. Used to carry a cut
+    /// plane from the death pose onto the same bone after ragdoll rotation.
+    let rotationBetween (fromDirection: Vector3) (toDirection: Vector3) =
+        let fromNormal = normalizedOrZero fromDirection
+        let toNormal = normalizedOrZero toDirection
+        if fromNormal = Vector3.Zero || toNormal = Vector3.Zero then Quaternion.Identity
+        else
+            let dot = Math.Clamp(Vector3.Dot(fromNormal, toNormal), -1.0f, 1.0f)
+            if dot < -0.9999f then
+                let helper = if MathF.Abs fromNormal.Y < 0.9f then Vector3.UnitY else Vector3.UnitX
+                Quaternion.CreateFromAxisAngle(Vector3.Cross(fromNormal, helper) |> normalizedOrZero, MathF.PI)
+            else
+                let axis = Vector3.Cross(fromNormal, toNormal)
+                Quaternion.Normalize(Quaternion(axis.X, axis.Y, axis.Z, 1.0f + dot))
+
     let yawForward yaw = Vector3(MathF.Sin yaw, 0.0f, -MathF.Cos yaw)
 
     let yawRight yaw = Vector3(MathF.Cos yaw, 0.0f, MathF.Sin yaw)

@@ -33,7 +33,10 @@ type WeaponSlotSnapshot =
       // Barrel heat, 0-1. Belt-fed guns fire slower the hotter they are, and
       // the server is the authority on that — without it the client predicts a
       // cold gun's rate against a hot one's and every burst mispredicts.
-      heat: float32 }
+      heat: float32
+      /// Which melee swing is in flight, "" when none. The victim's client
+      /// needs it to play the right animation on someone else's katana.
+      meleeAttack: string }
 
 [<CLIMutable>]
 type PlayerSnapshot =
@@ -49,6 +52,7 @@ type PlayerSnapshot =
       yaw: float32
       pitch: float32
       stance: string
+      animPhase: float32
       health: float32
       alive: bool
       ready: bool
@@ -61,6 +65,27 @@ type PlayerSnapshot =
       // active slot can ever be Switching. switchTo = -1 when idle.
       switchTo: int
       switchRemaining: float32
+      /// Seconds the active bow has been held. Zero for every other state.
+      drawCharge: float32
+      deathRevision: int64
+      cutSite: string
+      cutFraction: float32
+      cutX: float32
+      cutY: float32
+      cutZ: float32
+      cutNx: float32
+      cutNy: float32
+      cutNz: float32
+      cutBx: float32
+      cutBy: float32
+      cutBz: float32
+      cutSx: float32
+      cutSy: float32
+      cutSz: float32
+      cutImpulseX: float32
+      cutImpulseY: float32
+      cutImpulseZ: float32
+      cutSeed: int
       // The active slot, duplicated flat. Costs four fields and keeps a client
       // built before kits showing the right gun instead of a team default.
       ammo: int
@@ -245,6 +270,7 @@ module Protocol =
                   yaw = player.Yaw
                   pitch = player.Pitch
                   stance = string player.Stance
+                  animPhase = player.AnimPhase
                   health = Units.raw player.Health
                   alive = player.Alive
                   ready = player.Ready
@@ -256,10 +282,31 @@ module Protocol =
                           ammo = slot.InMag
                           reserve = slot.Reserve
                           reloadRemaining = (match slot.State with Reloading remaining -> Units.raw remaining | _ -> 0.0f)
-                          heat = slot.Heat })
+                          heat = slot.Heat
+                          meleeAttack = slot.LastMelee |> Option.map string |> Option.defaultValue "" })
                   active = player.Active
                   switchTo = (match player.Slots[player.Active].State with Switching(incoming, _) -> incoming | _ -> -1)
                   switchRemaining = (match player.Slots[player.Active].State with Switching(_, remaining) -> Units.raw remaining | _ -> 0.0f)
+                  drawCharge = (match player.Slots[player.Active].State with Drawing charge -> Units.raw charge | _ -> 0.0f)
+                  deathRevision = player.Cut |> Option.map _.DeathRevision |> Option.defaultValue player.LifeRevision
+                  cutSite = player.Cut |> Option.map (fun cut -> string cut.Site) |> Option.defaultValue ""
+                  cutFraction = player.Cut |> Option.map _.Fraction |> Option.defaultValue 0.0f
+                  cutX = player.Cut |> Option.map (fun cut -> cut.LocalPoint.X) |> Option.defaultValue 0.0f
+                  cutY = player.Cut |> Option.map (fun cut -> cut.LocalPoint.Y) |> Option.defaultValue 0.0f
+                  cutZ = player.Cut |> Option.map (fun cut -> cut.LocalPoint.Z) |> Option.defaultValue 0.0f
+                  cutNx = player.Cut |> Option.map (fun cut -> cut.LocalPlaneNormal.X) |> Option.defaultValue 0.0f
+                  cutNy = player.Cut |> Option.map (fun cut -> cut.LocalPlaneNormal.Y) |> Option.defaultValue 0.0f
+                  cutNz = player.Cut |> Option.map (fun cut -> cut.LocalPlaneNormal.Z) |> Option.defaultValue 0.0f
+                  cutBx = player.Cut |> Option.map (fun cut -> cut.LocalBladeTangent.X) |> Option.defaultValue 0.0f
+                  cutBy = player.Cut |> Option.map (fun cut -> cut.LocalBladeTangent.Y) |> Option.defaultValue 0.0f
+                  cutBz = player.Cut |> Option.map (fun cut -> cut.LocalBladeTangent.Z) |> Option.defaultValue 0.0f
+                  cutSx = player.Cut |> Option.map (fun cut -> cut.LocalSweepDirection.X) |> Option.defaultValue 0.0f
+                  cutSy = player.Cut |> Option.map (fun cut -> cut.LocalSweepDirection.Y) |> Option.defaultValue 0.0f
+                  cutSz = player.Cut |> Option.map (fun cut -> cut.LocalSweepDirection.Z) |> Option.defaultValue 0.0f
+                  cutImpulseX = player.Cut |> Option.map (fun cut -> cut.Impulse.X) |> Option.defaultValue 0.0f
+                  cutImpulseY = player.Cut |> Option.map (fun cut -> cut.Impulse.Y) |> Option.defaultValue 0.0f
+                  cutImpulseZ = player.Cut |> Option.map (fun cut -> cut.Impulse.Z) |> Option.defaultValue 0.0f
+                  cutSeed = player.Cut |> Option.map _.CosmeticSeed |> Option.defaultValue 0
                   ammo = player.Slots[player.Active].InMag
                   reserve = player.Slots[player.Active].Reserve
                   weapon = player.Slots[player.Active].Class.Name
@@ -292,6 +339,34 @@ module Protocol =
             | HeadGib(position, direction) -> make "head-gib" (EntityId 0) position direction 0.0f ""
             | PlayerHurt(direction, health) -> make "hurt" (EntityId 0) Vector3.Zero direction (Units.raw health) ""
             | Explosion(position, radius) -> make "explosion" (EntityId 0) position Vector3.Zero radius ""
+            // Physical projectile specials are not selectable online. These
+            // cases keep the shared event serializer total for local/dev hosts
+            // without adding projectile replication. Bow and melee use their
+            // own authoritative online paths below.
+            | PaintImpact(position, normal, color) -> make "paint" (EntityId 0) position normal 0.0f (string color)
+            | DartImpact(position, normal, stuck) -> make "dart" (EntityId 0) position normal (if stuck then 1.0f else 0.0f) ""
+            | RocketDud(position, normal) -> make "rocket-dud" (EntityId 0) position normal 0.0f ""
+            | Backblast(position, direction) -> make "backblast" (EntityId 0) position direction 0.0f ""
+            | FlameStream(origin, endpoint) ->
+                let delta = endpoint - origin
+                make "flame-stream" (EntityId 0) origin (MathEx.normalizedOrZero delta) (delta.Length()) ""
+            | LaserBeam(origin, endpoint) ->
+                let delta = endpoint - origin
+                make "laser-beam" (EntityId 0) origin (MathEx.normalizedOrZero delta) (delta.Length()) ""
+            | MeleeTrace(attacker, origin, endpoint, attack) ->
+                let delta = endpoint - origin
+                make "melee-trace" attacker origin (MathEx.normalizedOrZero delta) (delta.Length()) (string attack)
+            | Dismembered(victim, position, cut) ->
+                make "dismember" victim position cut.Impulse cut.Fraction (string cut.Site)
+            | FlameImpact(position, normal) -> make "flame-impact" (EntityId 0) position normal 0.0f ""
+            | WaterImpact(position, normal) -> make "water-impact" (EntityId 0) position normal 0.0f ""
+            | NailImpact(position, normal, stuck) -> make "nail-impact" (EntityId 0) position normal (if stuck then 1.0f else 0.0f) ""
+            | HarpoonSkewer(position, direction, victim) -> make "harpoon-skewer" victim position direction 0.0f ""
+            | HarpoonEmbedded(position, normal) -> make "harpoon-embedded" (EntityId 0) position normal 0.0f ""
+            | ArrowImpact(position, normal, stuck) -> make "arrow-impact" (EntityId 0) position normal (if stuck then 1.0f else 0.0f) ""
+            | Ignited(victim, position) -> make "ignited" victim position Vector3.Zero 0.0f ""
+            | Extinguished(victim, position) -> make "extinguished" victim position Vector3.Zero 0.0f ""
+            | Burning(victim, position) -> make "burning" victim position Vector3.Zero 0.0f ""
             | FootStep(position, surface) -> make "footstep" (EntityId 0) position Vector3.Zero 0.0f (string surface)
             | Subtitle(speaker, line) -> make "subtitle" (EntityId 0) Vector3.Zero Vector3.Zero 0.0f $"{speaker}: {line}"
             | ObjectiveUpdated index -> make "objective" (EntityId index) Vector3.Zero Vector3.Zero 0.0f ""

@@ -9,6 +9,25 @@ open Xunit
 
 module ClientTests =
     [<Fact>]
+    let ``gamepad look sensitivity eases to half speed during ADS`` () =
+        Assert.Equal(1.0f, InputTuning.gamepadAdsScale 0.0f)
+        Assert.Equal(0.75f, InputTuning.gamepadAdsScale 0.5f)
+        Assert.Equal(0.5f, InputTuning.gamepadAdsScale 1.0f)
+        Assert.Equal(1.0f, InputTuning.gamepadAdsScale -1.0f)
+        Assert.Equal(0.5f, InputTuning.gamepadAdsScale 2.0f)
+
+    [<Fact>]
+    let ``katana viewmodel travels left to right and up to down`` () =
+        let tip = -Vector3.UnitZ
+        let primaryStart = Vector3.Transform(tip, Matrix4x4.CreateRotationY(ViewmodelAnimation.katanaYaw true (Some 0.0f) (Some KatanaSweep)))
+        let primaryEnd = Vector3.Transform(tip, Matrix4x4.CreateRotationY(ViewmodelAnimation.katanaYaw true (Some 0.71f) (Some KatanaSweep)))
+        Assert.True(primaryStart.X < primaryEnd.X, $"primary moved {primaryStart.X} -> {primaryEnd.X}, expected left -> right")
+
+        let overheadStart = Vector3.Transform(tip, Matrix4x4.CreateRotationX(ViewmodelAnimation.katanaPitch (Some 0.0f) (Some KatanaOverhead)))
+        let overheadEnd = Vector3.Transform(tip, Matrix4x4.CreateRotationX(ViewmodelAnimation.katanaPitch (Some 0.71f) (Some KatanaOverhead)))
+        Assert.True(overheadStart.Y > overheadEnd.Y, $"alternate moved {overheadStart.Y} -> {overheadEnd.Y}, expected up -> down")
+
+    [<Fact>]
     let ``hud ui scale maps framebuffer pixels to logical window units`` () =
         Assert.Equal(1.0f, HudLayout.uiScale 1280 1280)
         Assert.Equal(2.0f, HudLayout.uiScale 2560 1280)
@@ -62,6 +81,7 @@ module ClientTests =
         let sniper = Guns.forWeapon "Kar98k Sniper"
         let shotgun = Guns.forWeapon "M1897 Trench Gun"
         let shot = AudioSynth.gunshot true
+        let katanaSwing = AudioSynth.katanaSwing ()
         Assert.True(rifle.Vertices.Length > 100)
         Assert.True(rifle.Indices.Length > 100)
         Assert.True(sniper.Vertices.Length > rifle.Vertices.Length)
@@ -79,6 +99,8 @@ module ClientTests =
         Assert.Equal(AudioSynth.SampleRate, shot.SampleRate)
         Assert.True(shot.Samples.Length > 10000)
         Assert.Contains(shot.Samples, fun sample -> abs (int sample) > 1000)
+        Assert.InRange(katanaSwing.Samples.Length, 7900, 8000)
+        Assert.Contains(katanaSwing.Samples, fun sample -> abs (int sample) > 1000)
 
     [<Fact>]
     let ``the gun registry covers the arsenal without being hand-checked`` () =
@@ -92,7 +114,11 @@ module ClientTests =
                 Set.contains weapon.Name registered,
                 $"{weapon.Name} is selectable but has no entry in Guns.names")
         // And nothing lingers in the registry that no longer exists.
-        let selectable = Tuning.onlineWeapons |> Array.map _.Name |> Set.ofArray |> Set.add Tuning.mg42.Name
+        let selectable =
+            Array.concat [ Tuning.onlineWeapons; Tuning.specialWeapons ]
+            |> Array.map _.Name
+            |> Set.ofArray
+            |> Set.add Tuning.mg42.Name
         for name in Guns.names do
             Assert.True(Set.contains name selectable, $"Guns.names lists {name}, which is not a weapon any more")
 
@@ -685,13 +711,47 @@ module ClientTests =
         Assert.Equal(Ready, reconciled.Soldiers[0].Weapon.State)
 
     [<Fact>]
+    let ``bow charge snapshots rebuild Drawing for local and remote players`` () =
+        let world = Sim.createTrainingWorld 904UL
+        let bowKit =
+            [| { WeaponName = "Bow"; Ammo = 11; Reserve = 24; ReloadRemaining = 0.0f; Heat = 0.0f; LastMelee = None }
+               { WeaponName = "M1911"; Ammo = 7; Reserve = 21; ReloadRemaining = 0.0f; Heat = 0.0f; LastMelee = None } |]
+        let drawing id name team position charge =
+            { TestKit.onlinePlayer id name team position with
+                Slots = bowKit
+                DrawCharge = charge }
+        let snapshot =
+            { Tick = 100L; Mode = TeamDeathmatch; LevelName = world.Level.Name; Phase = Playing
+              AlliesScore = 0; AxisScore = 0
+              Players =
+                [| drawing 1 "Local" Allies world.Player.Position 0.8f
+                   drawing 2 "Remote" Axis (world.Player.Position - Vector3.UnitZ * 4.0f) 1.2f |]
+              Grenades = [||]; Events = [||] }
+        let reconciled, _ = OnlineWorld.reconcile world.Level [] 1 world snapshot
+        Assert.Equal(Drawing(Units.seconds 0.8f), reconciled.Player.Slots[0].State)
+        Assert.Equal(Drawing(Units.seconds 1.2f), reconciled.Soldiers[0].Weapon.State)
+
+    [<Fact>]
+    let ``render interpolation smooths bow charge between simulation ticks`` () =
+        let world = Sim.createTrainingWorld 905UL
+        let withCharge charge =
+            let bow = TestKit.slotOf world.Player "Bow"
+            let slots = Array.copy world.Player.Slots
+            slots[bow] <- { slots[bow] with State = Drawing(Units.seconds charge) }
+            { world with Player = { world.Player with Active = bow; Slots = slots } }
+        let blended = RenderInterpolation.world 0.25f (withCharge 0.2f) (withCharge 0.6f)
+        match blended.Player.Slots[TestKit.slotOf world.Player "Bow"].State with
+        | Drawing charge -> Assert.InRange(Units.raw charge, 0.2999f, 0.3001f)
+        | other -> failwith $"interpolated bow state was {other}"
+
+    [<Fact>]
     let ``the wire kit is rebuilt with the sidearm and the gun in hand`` () =
         // The client used to overwrite Slots with a single weapon every
         // snapshot, so no multi-slot state could survive reconciliation.
         let world = Sim.createTrainingWorld 901UL
         let kit =
-            [| { WeaponName = "Kar98k"; Ammo = 3; Reserve = 15; ReloadRemaining = 0.0f; Heat = 0.0f }
-               { WeaponName = "M1911"; Ammo = 7; Reserve = 14; ReloadRemaining = 0.0f; Heat = 0.0f } |]
+            [| { WeaponName = "Kar98k"; Ammo = 3; Reserve = 15; ReloadRemaining = 0.0f; Heat = 0.0f; LastMelee = None }
+               { WeaponName = "M1911"; Ammo = 7; Reserve = 14; ReloadRemaining = 0.0f; Heat = 0.0f; LastMelee = None } |]
         let withKit active switchTo switchRemaining =
             { TestKit.onlinePlayer 1 "Local" Allies world.Player.Position with
                 Slots = kit
@@ -826,3 +886,97 @@ module ClientTests =
         // A respawned (alive-again) soldier takes its corpse with it.
         ragdolls.Prune [| { soldier with Behavior = Idle } |]
         Assert.True((ragdolls.TryGet soldier.Id).IsNone)
+
+    [<Fact>]
+    let ``harpoon constraint pins a ragdoll chest while its limbs remain simulated`` () =
+        let world = Sim.createPaintballWorld 90UL
+        let soldier = { world.Soldiers[0] with Behavior = Dying(Units.seconds 0.0f) }
+        let ragdolls = Ragdoll.System()
+        let anchor = soldier.Position + Vector3(0.0f, 2.8f, -1.0f)
+        ragdolls.Spawn(soldier.Id, Humanoid.worldSkeleton soldier, Vector3(0.0f, 0.0f, -8.0f))
+        for _ in 1..60 do
+            ragdolls.Step(1.0f / 60.0f, world.Level, Map.ofList [ soldier.Id, anchor ])
+        let pinned = (ragdolls.TryGet soldier.Id).Value
+        Assert.Equal(anchor, pinned.Chest)
+        Assert.True(Vector3.Distance(pinned.Pelvis, pinned.Chest) > 0.3f)
+
+        for _ in 1..60 do
+            ragdolls.Step(1.0f / 60.0f, world.Level)
+        let released = (ragdolls.TryGet soldier.Id).Value
+        Assert.True(released.Chest.Y < anchor.Y - 0.5f)
+
+    [<Fact>]
+    let ``dismembered ragdoll creates two independently simulated cut anchors`` () =
+        let world = Sim.createPaintballWorld 191UL
+        let soldier = { world.Soldiers[0] with Behavior = Dying(Units.seconds 0.0f) }
+        let localPose = Anatomy.localSkeleton soldier.Stance soldier.AnimPhase
+        let localArmAxis =
+            Anatomy.point JointId.LeftElbow localPose - Anatomy.point JointId.LeftShoulder localPose
+            |> MathEx.normalizedOrZero
+        let localPlane = MathEx.normalizedOrZero (localArmAxis + Vector3.UnitY * 0.38f)
+        let cut =
+            { DeathRevision = 4L
+              Site = CutLeftUpperArm
+              Fraction = 0.47f
+              LocalPoint = Vector3.Zero
+              LocalPlaneNormal = localPlane
+              LocalBladeTangent = Vector3.UnitZ
+              LocalSweepDirection = Vector3.UnitX
+              Impulse = Vector3(-7.0f, 2.0f, 0.0f)
+              CosmeticSeed = 44 }
+        let ragdolls = Ragdoll.System()
+        ragdolls.Spawn(soldier.Id, Humanoid.worldSkeleton soldier, Vector3.Zero, cut = cut)
+        let initialDescriptor, initialProximal, initialDistal = (ragdolls.TryGetCut soldier.Id).Value
+        Assert.Equal(initialProximal, initialDistal)
+        let initialSkeleton = (ragdolls.TryGet soldier.Id).Value
+        let cutMesh = Humanoid.poseFromSkeletonCut soldier initialSkeleton initialDescriptor initialProximal initialDistal
+        let gore = cutMesh.Vertices |> Array.filter (fun vertex -> vertex.MaterialId = Materials.id PaintRed)
+        Assert.NotEmpty gore
+        let worldPlane =
+            Vector3.TransformNormal(localPlane, Matrix4x4.CreateRotationY(-soldier.Facing))
+            |> MathEx.normalizedOrZero
+        Assert.All(gore, fun vertex ->
+            Assert.InRange(MathF.Abs(Vector3.Dot(vertex.Position - initialProximal, worldPlane)), 0.0f, 0.0001f))
+        for _ in 1..45 do ragdolls.Step(1.0f / 60.0f, world.Level)
+        let descriptor, proximal, distal = (ragdolls.TryGetCut soldier.Id).Value
+        Assert.Equal(cut, descriptor)
+        Assert.True(Vector3.Distance(proximal, distal) > 0.12f)
+        let skeleton = (ragdolls.TryGet soldier.Id).Value
+        let mesh = Humanoid.poseFromSkeletonCut soldier skeleton descriptor proximal distal
+        Assert.NotEmpty mesh.Vertices
+        Assert.NotEmpty mesh.Indices
+
+    [<Fact>]
+    let ``every authored sever site generates finite capped corpse geometry`` () =
+        let world = Sim.createPaintballWorld 192UL
+        let baseline = { world.Soldiers[0] with Behavior = Dying(Units.seconds 0.0f) }
+        let sites =
+            [ CutNeck; CutWaist
+              CutLeftUpperArm; CutLeftLowerArm; CutRightUpperArm; CutRightLowerArm
+              CutLeftUpperLeg; CutLeftLowerLeg; CutRightUpperLeg; CutRightLowerLeg ]
+        for index, site in sites |> List.indexed do
+            let soldier = { baseline with Id = EntityId(900 + index) }
+            let localPose = Anatomy.localSkeleton soldier.Stance soldier.AnimPhase
+            let first, second = Anatomy.cutRelation site
+            let axis = Anatomy.point second localPose - Anatomy.point first localPose |> MathEx.normalizedOrZero
+            let plane = MathEx.normalizedOrZero (axis + Vector3(0.25f, 0.18f, -0.12f))
+            let descriptor =
+                { DeathRevision = int64 index
+                  Site = site
+                  Fraction = 0.43f
+                  LocalPoint = Vector3.Lerp(Anatomy.point first localPose, Anatomy.point second localPose, 0.43f)
+                  LocalPlaneNormal = plane
+                  LocalBladeTangent = Vector3.UnitZ
+                  LocalSweepDirection = Vector3.UnitX
+                  Impulse = Vector3.UnitX
+                  CosmeticSeed = index }
+            let ragdolls = Ragdoll.System()
+            ragdolls.Spawn(soldier.Id, Humanoid.worldSkeleton soldier, Vector3.Zero, cut = descriptor)
+            let _, proximal, distal = (ragdolls.TryGetCut soldier.Id).Value
+            let skeleton = (ragdolls.TryGet soldier.Id).Value
+            let mesh = Humanoid.poseFromSkeletonCut soldier skeleton descriptor proximal distal
+            let finite (value: Vector3) = Single.IsFinite value.X && Single.IsFinite value.Y && Single.IsFinite value.Z
+            Assert.NotEmpty(mesh.Vertices)
+            Assert.NotEmpty(mesh.Indices)
+            Assert.All(mesh.Vertices, fun vertex -> Assert.True(finite vertex.Position && finite vertex.Normal, $"{site} generated a non-finite vertex"))
+            Assert.Contains(mesh.Vertices, fun vertex -> vertex.MaterialId = Materials.id PaintRed)

@@ -30,6 +30,15 @@ module TestKit =
     /// Standard Axis soldier used as a baseline across combat/AI/client
     /// tests. Call sites that need different fields should use record-update
     /// syntax against this, e.g. `{ TestKit.soldier 9 pos with Facing = MathF.PI }`.
+    /// Which slot of the offline sandbox holds a weapon. The sandbox is derived
+    /// from the arsenal, so its indices move whenever a gun is added — a test
+    /// that writes `Active = 19` breaks on the next weapon rather than on a
+    /// real defect.
+    let slotOf (player: Player) (name: string) =
+        player.Slots
+        |> Array.tryFindIndex (fun slot -> slot.Class.Name = name)
+        |> Option.defaultWith (fun () -> failwith $"no slot carries a {name}")
+
     let soldier (id: int) (position: Vector3) : Soldier =
         { Id = EntityId id
           Team = Axis
@@ -98,6 +107,7 @@ module TestKit =
           Yaw = 0.0f
           Pitch = 0.0f
           Stance = Standing
+          AnimPhase = 0.0f
           Health = 100.0f
           Alive = true
           Ready = true
@@ -106,6 +116,8 @@ module TestKit =
           Active = 0
           SwitchTo = -1
           SwitchRemaining = 0.0f
+          DrawCharge = 0.0f
+          Cut = None
           Ammo = 30
           Reserve = 60
           WeaponName = "Thompson"

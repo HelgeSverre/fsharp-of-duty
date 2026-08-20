@@ -9,8 +9,7 @@ dotnet := "PATH=\"$PWD/.dotnet:$PATH\" dotnet"
 default:
     @just --list
 
-# Ensure an SDK accepted by global.json is available. As in fedit, an existing
-# compatible system SDK wins; otherwise the SDK is installed locally in .dotnet/.
+# Ensure a compatible SDK is available (install into .dotnet/ if needed).
 [private]
 [unix]
 _sdk:
@@ -27,69 +26,69 @@ _sdk:
 _sdk:
     @dotnet --version >nul 2>&1 || echo "No SDK satisfying global.json. Install it with dotnet-install.ps1."
 
-# Run the default player-vs-four Paintball Killhouse.
+# Run default Killhouse (Pv4).
 [group('run')]
 run: _sdk
     {{ dotnet }} run --project {{ client }}
 
-# Watch source files and restart the default client.
+# Run client with hot reload.
 [group('run')]
 dev: _sdk
     {{ dotnet }} watch --project {{ client }} run
 
-# Run the training yard.
+# Run training yard.
 [group('run')]
 training: _sdk
     {{ dotnet }} run --project {{ client }} -- --training
 
-# Connect TDM to the configured server (the official server by default).
+# Connect to TDM (default server).
 [group('run')]
 online name="Player" weapon="Thompson": _sdk
     {{ dotnet }} run --project {{ client }} -- --online --name "{{ name }}" --weapon "{{ weapon }}"
 
-# Connect FFA to the configured server (the official server by default).
+# Connect to FFA (default server).
 [group('run')]
 ffa name="Player" weapon="Thompson": _sdk
     {{ dotnet }} run --project {{ client }} -- --online --ffa --name "{{ name }}" --weapon "{{ weapon }}"
 
-# Connect TDM to a local server on port 8080.
+# Connect to TDM (local server).
 [group('run')]
 [unix]
 online-local name="Player" weapon="Thompson": _sdk
     IRONSIGHT_SERVER="ws://127.0.0.1:8080/play" {{ dotnet }} run --project {{ client }} -- --online --name "{{ name }}" --weapon "{{ weapon }}"
 
-# Run the authoritative server with the default Paintball Killhouse.
+# Run authoritative server.
 [group('run')]
 server: _sdk
     {{ dotnet }} run --project {{ server_project }}
 
-# Run the authoritative server with a selected generated map.
+# Run server with a map.
 [group('run')]
 [unix]
 server-map level="paintball": _sdk
     IRONSIGHT_LEVEL="{{ level }}" {{ dotnet }} run --project {{ server_project }}
 
-# Restore all dependencies.
+# Restore dependencies.
 [group('build')]
 restore: _sdk
     {{ dotnet }} restore {{ solution }}
 
-# Build the solution.
+# Build solution.
 [group('build')]
 build: _sdk
     {{ dotnet }} build {{ solution }}
 
-# Build the release configuration.
+# Build solution (Release).
 [group('build')]
 release-build: _sdk
     {{ dotnet }} build {{ solution }} -c Release
 
-# Remove MSBuild output.
+# Clean build output.
 [group('build')]
 clean: _sdk
     {{ dotnet }} clean {{ solution }}
 
-# Build a release .app for this Mac and install it to /Applications (dev only).
+# Build+install .app (macOS, dev).
 [group('build')]
 [macos]
 install: _sdk
@@ -111,87 +110,87 @@ install: _sdk
     codesign --force --deep -s - "$app"
     echo "Installed $app ($rid)"
 
-# Remove the locally installed .app.
+# Remove installed .app.
 [group('build')]
 [macos]
 uninstall:
     rm -rf /Applications/Ironsight.app
     @echo "Removed /Applications/Ironsight.app"
 
-# Format F# and project files.
+# Format code.
 [group('format')]
 format: _sdk
     {{ dotnet }} format {{ solution }} --no-restore
 
-# Check formatting without changing files.
+# Check formatting.
 [group('format')]
 lint: _sdk
     {{ dotnet }} format {{ solution }} --verify-no-changes --no-restore
 
-# Run the fast headless test suite (excludes the socket integration tests).
+# Run fast tests (no sockets).
 [group('test')]
 test: _sdk
     {{ dotnet }} test {{ tests }} --nologo --filter "Category!=Integration"
 
-# Drive scripted matches over real WebSockets against an in-process server.
+# Run WebSocket smoke tests.
 [group('test')]
 smoke: _sdk
     {{ dotnet }} test {{ tests }} --nologo --filter "Category=Integration"
 
-# Smoke test a deployed server. Connects a live bot, so it joins the public room.
+# Smoke test a remote server.
 [group('test')]
 [unix]
 smoke-remote server="wss://fsharp-of-duty.fly.dev/play": _sdk
     IRONSIGHT_SMOKE_SERVER="{{ server }}" {{ dotnet }} test {{ tests }} --nologo --filter "FullyQualifiedName~advancing simulation"
 
-# Run tests in release mode without restoring.
+# Run tests (Release, no restore).
 [group('test')]
 test-release: _sdk
     {{ dotnet }} test {{ tests }} -c Release --no-restore --nologo
 
-# Local pre-commit gate.
+# Pre-commit gate.
 [group('test')]
 check: lint build test smoke
 
-# Draw a level's plan and elevation to debug/map-preview/<level>.svg.
+# Render a map SVG preview.
 [group('tools')]
 map-preview level="paintball": _sdk
     {{ dotnet }} build src/Ironsight.Core/Ironsight.Core.fsproj --nologo -v quiet
     {{ dotnet }} fsi tools/MapPreview.fsx "{{ level }}"
 
-# Write every built-in map out as a .ironmap to debug/maps/ (or a given dir).
+# Export built-in maps to .ironmap.
 [group('tools')]
 map-export dir="": _sdk
     {{ dotnet }} build src/Ironsight.Core/Ironsight.Core.fsproj --nologo -v quiet
     {{ dotnet }} fsi tools/MapExport.fsx {{ dir }}
 
-# Draw a weapon's side/top/front views to debug/gun-preview/ ("all" for every gun).
+# Render weapon view previews.
 [group('tools')]
 gun-preview weapon="all": _sdk
     {{ dotnet }} build src/Ironsight.Core/Ironsight.Core.fsproj --nologo -v quiet
     {{ dotnet }} fsi tools/GunPreview.fsx "{{ weapon }}"
 
-# Regenerate the bundled arsenal JSON in website/arsenal.html from Tuning.
+# Regenerate arsenal JSON.
 [group('tools')]
 arsenal-sync: _sdk
     {{ dotnet }} run --project {{ server_project }} -- --sync-arsenal
 
-# Build the Fly-compatible dedicated-server image.
+# Build server image.
 [group('container')]
 docker-build:
     docker build -t {{ image }} .
 
-# Run the dedicated-server image locally.
+# Run server image locally.
 [group('container')]
 docker-run port="8080":
     docker run --rm -p "{{ port }}:8080" {{ image }}
 
-# Validate fly.toml without deploying.
+# Validate fly.toml.
 [group('deploy')]
 fly-validate:
     flyctl config validate
 
-# Deploy the authoritative server to Fly.io.
+# Deploy server to Fly.io.
 [group('deploy')]
 fly-deploy:
     flyctl deploy

@@ -14,6 +14,7 @@ type AudioSystem() =
     let al = AL.GetApi()
     let sources = Array.init 24 (fun _ -> al.GenSource())
     let mutable sourceIndex = 1
+    let mutable lastLaserPulse = 0L
 
     let upload sound =
         let buffer = al.GenBuffer()
@@ -23,6 +24,19 @@ type AudioSystem() =
     let rifle = upload (AudioSynth.gunshot true)
     let smg = upload (AudioSynth.gunshot false)
     let minigun = upload (AudioSynth.minigunShot ())
+    let marker = upload (AudioSynth.paintballPop ())
+    let foam = upload (AudioSynth.foamThump ())
+    let rocket = upload (AudioSynth.rocketLaunch ())
+    let flame = upload (AudioSynth.flameWhoosh ())
+    let flameHit = upload (AudioSynth.flameImpact ())
+    let water = upload (AudioSynth.waterSquirt ())
+    let nail = upload (AudioSynth.nailSnap ())
+    let harpoon = upload (AudioSynth.harpoonLaunch ())
+    let harpoonHit = upload (AudioSynth.harpoonImpact ())
+    let bow = upload (AudioSynth.bowRelease ())
+    let laser = upload (AudioSynth.laserClick ())
+    let katana = upload (AudioSynth.katanaSwing ())
+    let arrowHit = upload (AudioSynth.arrowImpact ())
     let blast = upload (AudioSynth.explosion ())
     let step = upload (AudioSynth.footstep ())
     let reload = upload (AudioSynth.reloadClick ())
@@ -30,23 +44,45 @@ type AudioSystem() =
     let heartbeat = upload (AudioSynth.heartbeat ())
     let radio = upload (AudioSynth.radio ())
     let wind = upload (AudioSynth.wind ())
-    let buffers = [| rifle; smg; minigun; blast; step; reload; ping; heartbeat; radio; wind |]
+    let buffers =
+        [| rifle; smg; minigun; marker; foam; rocket; flame; flameHit; water; nail; harpoon; harpoonHit
+           bow; laser; katana; arrowHit; blast; step; reload; ping; heartbeat; radio; wind |]
 
     // Sixty rounds a second is above the rate an ear resolves as separate
     // events, so playing every one of them is both a hum and a source hog.
     // Every third round is percussive and still tracks the gun bogging down.
     let mutable minigunRound = 0
 
-    // Two synthesized shot samples cover the arsenal; per-weapon pitch keeps
-    // the guns within each bucket from sounding identical.
+    // Conventional guns share two synthesized samples; the special weapons
+    // use bespoke pneumatic, spring and rocket-launch transients.
     let shotSample weapon =
         match weapon with
         | "M134 Minigun" -> minigun
+        | "Paintball Marker" -> marker
+        | "Nerf Blaster" -> foam
+        | "Bazooka" -> rocket
+        | "Flamethrower" -> flame
+        | "Super Soaker" -> water
+        | "Nailgun" -> nail
+        | "Harpoon Gun" -> harpoon
+        | "Bow" -> bow
+        | "Laser Pointer" -> laser
+        | "Katana" -> katana
         | "Thompson" | "MG42" | "MP40" | "STG-44" | "FG42" | "BAR" -> smg
         | _ -> rifle
 
     let shotPitch weapon =
         match weapon with
+        | "Paintball Marker" -> 1.0f
+        | "Nerf Blaster" -> 1.0f
+        | "Bazooka" -> 0.86f
+        | "Flamethrower" -> 0.92f
+        | "Super Soaker" -> 1.08f
+        | "Nailgun" -> 1.0f
+        | "Harpoon Gun" -> 0.88f
+        | "Bow" -> 1.0f
+        | "Laser Pointer" -> 1.0f
+        | "Katana" -> 1.04f
         | "M1911" -> 1.18f
         | "Luger P08" -> 1.26f
         | "MP40" -> 1.10f
@@ -97,6 +133,15 @@ type AudioSystem() =
                 minigunRound <- minigunRound + 1
                 if minigunRound % 3 = 0 then
                     play minigun position 0.95f (shotPitch weapon * (0.97f + float32 sourceIndex * 0.004f))
+            | ShotFired(_, position, _, "Laser Pointer") ->
+                // Damage pulses repeat while the button is held, but the real
+                // keychain switch clicks only once per press. A pulse gap marks
+                // the next press without needing input state in the audio layer.
+                let now = Diagnostics.Stopwatch.GetTimestamp()
+                let gap = float32 (now - lastLaserPulse) / float32 Diagnostics.Stopwatch.Frequency
+                if lastLaserPulse = 0L || gap > 0.32f then
+                    play laser position 0.64f 1.0f
+                lastLaserPulse <- now
             | ShotFired(_, position, _, weapon) ->
                 play (shotSample weapon) position 0.88f (shotPitch weapon * (0.97f + float32 sourceIndex * 0.004f))
             | Explosion(position, _) ->
@@ -104,6 +149,10 @@ type AudioSystem() =
                 // A second, lower and quieter copy reads as the blast rolling off
                 // the surroundings rather than one flat pop.
                 play blast position 0.55f 0.62f
+            | FlameImpact(position, _) -> play flameHit position 0.32f (0.92f + float32 sourceIndex * 0.006f)
+            | HarpoonSkewer(position, _, _) -> play harpoonHit position 0.72f 0.82f
+            | HarpoonEmbedded(position, _) -> play harpoonHit position 0.86f 1.08f
+            | ArrowImpact(position, _, stuck) -> play arrowHit position (if stuck then 0.66f else 0.46f) (if stuck then 0.92f else 1.25f)
             | FootStep(position, _) -> play step position 0.38f 1.0f
             | Subtitle _ -> play radio Vector3.Zero 0.28f 1.0f
             | _ -> ()

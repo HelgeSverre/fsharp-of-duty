@@ -15,6 +15,14 @@ module GeometryTests =
     let private c = Vector3(0.0f, 0.0f, 4.0f)
 
     [<Fact>]
+    let ``shortest arc rotation handles aligned opposite and zero directions`` () =
+        let rotate fromDirection toDirection =
+            Vector3.Transform(fromDirection, MathEx.rotationBetween fromDirection toDirection)
+        Assert.True(Vector3.Distance(Vector3.UnitX, rotate Vector3.UnitX Vector3.UnitX) < 0.0001f)
+        Assert.True(Vector3.Distance(-Vector3.UnitY, rotate Vector3.UnitY -Vector3.UnitY) < 0.0001f)
+        Assert.Equal(Vector3.UnitZ, Vector3.Transform(Vector3.UnitZ, MathEx.rotationBetween Vector3.Zero Vector3.UnitX))
+
+    [<Fact>]
     let ``a ray straight down through a triangle hits at the drop height`` () =
         match MathEx.rayTriangle (Vector3(1.0f, 5.0f, 1.0f)) -Vector3.UnitY a b c with
         | ValueSome distance -> Assert.Equal(5.0f, distance, 4)

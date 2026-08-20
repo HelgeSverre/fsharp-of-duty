@@ -13,10 +13,76 @@ type FireMode = SemiAuto | FullAuto | BoltAction
 
 type WeaponKind = Rifle | SniperRifle | Smg | Pistol | Shotgun | MachineGun
 
+/// How weapon input is resolved. Most physical projectile cases are an
+/// offline toybox. Bow and melee have authoritative online resolvers so their
+/// charge, held-contact and sweep state can be shared by both modes.
+type WeaponMechanism =
+    | Hitscan
+    | Paintball
+    | FoamDart
+    | Rocket
+    | FlameJet
+    | WaterJet
+    | Nail
+    | Harpoon
+    | Bow
+    | Laser
+    | Katana
+
+/// Melee is resolved as a swept volume, never as a zero-range bullet. The
+/// attack variant is carried with the server request so secondary fire can
+/// select the katana's top-down cut without trusting a client-reported hit.
+type MeleeAttack =
+    | KatanaSweep
+    | KatanaOverhead
+
+/// Anatomical regions are deliberately finer than the old head/torso/legs
+/// ballistics capsules. They are stable network identifiers as well as the
+/// authored boundaries used to split a ragdoll.
+type BodyPart =
+    | BodyHead
+    | BodyTorso
+    | BodyLeftUpperArm
+    | BodyLeftLowerArm
+    | BodyRightUpperArm
+    | BodyRightLowerArm
+    | BodyLeftUpperLeg
+    | BodyLeftLowerLeg
+    | BodyRightUpperLeg
+    | BodyRightLowerLeg
+
+type CutSite =
+    | CutNeck
+    | CutWaist
+    | CutLeftUpperArm
+    | CutLeftLowerArm
+    | CutRightUpperArm
+    | CutRightLowerArm
+    | CutLeftUpperLeg
+    | CutLeftLowerLeg
+    | CutRightUpperLeg
+    | CutRightLowerLeg
+
+/// Immutable server/offline result of a lethal melee contact. Geometry is
+/// victim-local so snapshots can recreate the same sever after the corpse has
+/// entered a client-local ragdoll. Fraction selects the point along the named
+/// anatomical segment; the three directions retain the real blade plane.
+type CutDescriptor =
+    { DeathRevision: int64
+      Site: CutSite
+      Fraction: float32
+      LocalPoint: Vector3
+      LocalPlaneNormal: Vector3
+      LocalBladeTangent: Vector3
+      LocalSweepDirection: Vector3
+      Impulse: Vector3
+      CosmeticSeed: int }
+
 type WeaponClass =
     { Name: string
       Mode: FireMode
       Kind: WeaponKind
+      Mechanism: WeaponMechanism
       Damage: float32<hp>
       RoundsPerMin: float32
       MagSize: int
@@ -32,6 +98,7 @@ type WeaponClass =
 
 type WeaponState =
     | Ready
+    | Drawing of charge: float32<s>
     | Cooling of remaining: float32<s>
     | Reloading of remaining: float32<s>
     | Switching of incoming: int * remaining: float32<s>
@@ -47,7 +114,8 @@ type WeaponSlot =
       /// the gap between rounds, so sustained fire bogs the gun down instead of
       /// running forever. Replicated, because the server is the authority on
       /// how fast a gun is currently firing.
-      Heat: float32 }
+      Heat: float32
+      LastMelee: MeleeAttack option }
 
 type Stance = Standing | Crouched | Prone
 
@@ -106,10 +174,15 @@ type Soldier =
     member this.IsDead = not this.IsAlive
 
 type Material =
-    | Brick | Plaster | Wood | Mud | Snow | Sandbag | Metal | UniformOlive | UniformFeldgrau | Skin | Water
+    | Brick | Plaster | Wood | Mud | Snow | Sandbag | Metal
+    | UniformOlive | UniformFeldgrau | Skin | Water
     // Appended after Water so every existing on-disk material tag keeps its
-    // index (see Materials.all).
+    // index (see Materials.all). Surfaces first, then the render-only palette
+    // entries, which collision geometry never uses.
     | Sand | RustedMetal | Concrete
+    | PaintRed | PaintBlue | PaintGreen | PaintYellow | PaintPurple | PaintOrange
+    | FoamBlue | FoamOrange
+    | ToolBlack | WaterBlue | WetDark
 
 type Brush =
     { Bounds: Aabb
@@ -200,6 +273,42 @@ type Grenade =
       Velocity: Vector3
       Fuse: float32<s> }
 
+type HarpoonAttachment =
+    { Victim: EntityId
+      DistanceBehindTip: float32 }
+
+type SpecialProjectileKind =
+    | PaintBall of color: Material
+    | NerfDart
+    | BazookaRocket
+    | WaterDroplet
+    | NailRound
+    | HarpoonRound of skewered: HarpoonAttachment list
+    | ArrowRound of damage: float32<hp>
+
+type SpecialProjectile =
+    { Owner: EntityId
+      Kind: SpecialProjectileKind
+      Position: Vector3
+      Velocity: Vector3
+      DistanceTravelled: float32
+      Bounces: int
+      Remaining: float32<s> }
+
+type PersistentMark =
+    | PaintSplat of position: Vector3 * normal: Vector3 * color: Material * target: EntityId option * localOffset: Vector3
+    | StuckDart of position: Vector3 * normal: Vector3 * target: EntityId option * localOffset: Vector3
+    | WetPatch of position: Vector3 * normal: Vector3 * target: EntityId option * localOffset: Vector3 * remaining: float32<s> * saturation: float32
+    | StuckNail of position: Vector3 * normal: Vector3 * target: EntityId option * localOffset: Vector3
+    | EmbeddedHarpoon of tip: Vector3 * direction: Vector3 * skewered: HarpoonAttachment list
+    | StuckArrow of position: Vector3 * direction: Vector3 * target: EntityId option * localOffset: Vector3
+
+type ElementalStatus =
+    { WetFor: float32<s>
+      BurningFor: float32<s>
+      Heat: float32<s>
+      BurnOwner: EntityId option }
+
 type Objective = { Text: string; Done: bool }
 
 type ScriptState =
@@ -225,6 +334,13 @@ type World =
       Player: Player
       Soldiers: Soldier array
       Grenades: Grenade array
+      SpecialProjectiles: SpecialProjectile array
+      PersistentMarks: PersistentMark array
+      ElementalStatus: Map<EntityId, ElementalStatus>
+      /// Persistent while a corpse exists. Events are transient, so this map
+      /// is also what makes an online late join reconstruct the same cut.
+      Dismemberments: Map<EntityId, CutDescriptor>
+      PaintColor: Material
       Level: Level
       Squads: Map<int, SquadBlackboard>
       Script: ScriptState
@@ -243,6 +359,23 @@ type GameEvent =
     /// indicator behind you for every online hit.
     | PlayerHurt of towardAttacker: Vector3 * newHealth: float32<hp>
     | Explosion of position: Vector3 * radius: float32
+    | PaintImpact of position: Vector3 * normal: Vector3 * color: Material
+    | DartImpact of position: Vector3 * normal: Vector3 * stuck: bool
+    | RocketDud of position: Vector3 * normal: Vector3
+    | Backblast of position: Vector3 * direction: Vector3
+    | FlameStream of origin: Vector3 * endpoint: Vector3
+    | LaserBeam of origin: Vector3 * endpoint: Vector3
+    | MeleeTrace of attacker: EntityId * origin: Vector3 * endpoint: Vector3 * attack: MeleeAttack
+    | Dismembered of victim: EntityId * position: Vector3 * cut: CutDescriptor
+    | FlameImpact of position: Vector3 * normal: Vector3
+    | WaterImpact of position: Vector3 * normal: Vector3
+    | NailImpact of position: Vector3 * normal: Vector3 * stuck: bool
+    | HarpoonSkewer of position: Vector3 * direction: Vector3 * victim: EntityId
+    | HarpoonEmbedded of position: Vector3 * normal: Vector3
+    | ArrowImpact of position: Vector3 * normal: Vector3 * stuck: bool
+    | Ignited of victim: EntityId * position: Vector3
+    | Extinguished of victim: EntityId * position: Vector3
+    | Burning of victim: EntityId * position: Vector3
     | FootStep of position: Vector3 * surface: Material
     | Subtitle of speaker: string * line: string
     | ObjectiveUpdated of index: int
@@ -291,4 +424,5 @@ type ShotRequest =
       Damage: float32<hp>
       Penetration: float32
       HeadshotMultiplier: float32
-      Kind: WeaponKind }
+      Kind: WeaponKind
+      Melee: MeleeAttack option }

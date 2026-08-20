@@ -99,7 +99,10 @@ module CoreTests =
 
     [<Fact>]
     let ``kar98k hip fire is the tightest among player weapons`` () =
-        let tightest = Tuning.onlineWeapons |> Array.minBy (fun weapon -> weapon.HipSpread)
+        let tightest =
+            Tuning.onlineWeapons
+            |> Array.filter (fun weapon -> weapon.Mechanism <> Katana)
+            |> Array.minBy (fun weapon -> weapon.HipSpread)
         Assert.Equal("Kar98k", tightest.Name)
         Assert.True(Tuning.kar98k.HipSpread < Tuning.thompson.HipSpread)
         Assert.True(Tuning.kar98kSniper.HipSpread < Tuning.thompson.HipSpread)
@@ -467,11 +470,11 @@ module CoreTests =
 
     let private makePlayer id team : NetworkPlayer =
         { Id = EntityId id; Name = string id; Team = team; Position = Vector3.Zero; Velocity = Vector3.Zero
-          Yaw = 0.0f; Pitch = 0.0f; Stance = Standing; Sprinting = false; Ads = 0.0f
+          Yaw = 0.0f; Pitch = 0.0f; Stance = Standing; AnimPhase = 0.0f; Sprinting = false; Ads = 0.0f
           Health = Units.health 100.0f; RegenIn = Units.seconds 0.0f
           Slots = [| Tuning.weaponSlot Tuning.kar98k 2; Tuning.weaponSlot (Tuning.sidearm team) 2 |]; Active = 0; RequestedWeapon = None
           Grenade = GrenadeIdle 3; Connected = true; Ready = true; Alive = true; RespawnIn = Units.seconds 0.0f; SpawnProtection = Units.seconds 0.0f
-          Kills = 0; Deaths = 0; Streak = 0; BestStreak = 0; LastInputSequence = 0L }
+          Kills = 0; Deaths = 0; Streak = 0; BestStreak = 0; LifeRevision = 1L; Cut = None; LastInputSequence = 0L }
 
     [<Fact>]
     let ``friendly kill does not score in team deathmatch`` () =

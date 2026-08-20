@@ -7,6 +7,7 @@
     <Compile Include="Noise.fs" />
     <Compile Include="MathEx.fs" />
     <Compile Include="Domain.fs" />
+    <Compile Include="Anatomy.fs" />
     <Compile Include="Tuning.fs" />
     <Compile Include="ProcGen/Materials.fs" />
     <Compile Include="ProcGen/MeshGen.fs" />
@@ -28,6 +29,8 @@
     <Compile Include="Movement.fs" />
     <Compile Include="Weapons.fs" />
     <Compile Include="Ballistics.fs" />
+    <Compile Include="Melee.fs" />
+    <Compile Include="SpecialProjectiles.fs" />
     <Compile Include="Grenades.fs" />
     <Compile Include="Damage.fs" />
     <Compile Include="Perception.fs" />

@@ -17,7 +17,8 @@ type OnlineWeapon =
       Ammo: int
       Reserve: int
       ReloadRemaining: float32
-      Heat: float32 }
+      Heat: float32
+      LastMelee: MeleeAttack option }
 
 [<Struct>]
 type OnlinePlayer =
@@ -29,6 +30,7 @@ type OnlinePlayer =
       Yaw: float32
       Pitch: float32
       Stance: Stance
+      AnimPhase: float32
       Health: float32
       Alive: bool
       Ready: bool
@@ -40,6 +42,8 @@ type OnlinePlayer =
       /// Switch in flight; SwitchTo = -1 when idle.
       SwitchTo: int
       SwitchRemaining: float32
+      DrawCharge: float32
+      Cut: CutDescriptor option
       Ammo: int
       Reserve: int
       WeaponName: string
@@ -86,6 +90,18 @@ module SnapshotWire =
     let parseStance = function "Crouched" -> Crouched | "Prone" -> Prone | _ -> Standing
     let parsePhase = function "Warmup" -> Warmup | "Playing" -> Playing | "Results" -> Results | _ -> Waiting
     let parseMode = function "FreeForAll" -> FreeForAll | _ -> TeamDeathmatch
+    let parseCutSite = function
+        | "CutNeck" -> Some CutNeck
+        | "CutWaist" -> Some CutWaist
+        | "CutLeftUpperArm" -> Some CutLeftUpperArm
+        | "CutLeftLowerArm" -> Some CutLeftLowerArm
+        | "CutRightUpperArm" -> Some CutRightUpperArm
+        | "CutRightLowerArm" -> Some CutRightLowerArm
+        | "CutLeftUpperLeg" -> Some CutLeftUpperLeg
+        | "CutLeftLowerLeg" -> Some CutLeftLowerLeg
+        | "CutRightUpperLeg" -> Some CutRightUpperLeg
+        | "CutRightLowerLeg" -> Some CutRightLowerLeg
+        | _ -> None
 
     let getString (name: string) (element: JsonElement) =
         match element.TryGetProperty name with
@@ -119,6 +135,19 @@ module SnapshotWire =
         let players =
             root.GetProperty("players").EnumerateArray()
             |> Seq.map (fun value ->
+                let cut =
+                    getString "cutSite" value
+                    |> parseCutSite
+                    |> Option.map (fun site ->
+                        { DeathRevision = getInt64 "deathRevision" value
+                          Site = site
+                          Fraction = getFloat "cutFraction" value
+                          LocalPoint = Vector3(getFloat "cutX" value, getFloat "cutY" value, getFloat "cutZ" value)
+                          LocalPlaneNormal = Vector3(getFloat "cutNx" value, getFloat "cutNy" value, getFloat "cutNz" value)
+                          LocalBladeTangent = Vector3(getFloat "cutBx" value, getFloat "cutBy" value, getFloat "cutBz" value)
+                          LocalSweepDirection = Vector3(getFloat "cutSx" value, getFloat "cutSy" value, getFloat "cutSz" value)
+                          Impulse = Vector3(getFloat "cutImpulseX" value, getFloat "cutImpulseY" value, getFloat "cutImpulseZ" value)
+                          CosmeticSeed = getInt "cutSeed" value })
                 { Id = getInt "id" value
                   Name = getString "name" value
                   Team = getString "team" value |> parseTeam
@@ -127,6 +156,7 @@ module SnapshotWire =
                   Yaw = getFloat "yaw" value
                   Pitch = getFloat "pitch" value
                   Stance = getString "stance" value |> parseStance
+                  AnimPhase = getFloat "animPhase" value
                   Health = getFloat "health" value
                   Alive = getBool "alive" value
                   Ready = getBool "ready" value
@@ -140,7 +170,12 @@ module SnapshotWire =
                                Ammo = getInt "ammo" slot
                                Reserve = getInt "reserve" slot
                                ReloadRemaining = getFloat "reloadRemaining" slot
-                               Heat = getFloat "heat" slot })
+                               Heat = getFloat "heat" slot
+                               LastMelee =
+                                   match getString "meleeAttack" slot with
+                                   | "KatanaSweep" -> Some KatanaSweep
+                                   | "KatanaOverhead" -> Some KatanaOverhead
+                                   | _ -> None })
                          |> Seq.toArray
                      | _ -> [||])
                   Active = getInt "active" value
@@ -149,6 +184,9 @@ module SnapshotWire =
                      | true, field when field.ValueKind = JsonValueKind.Number -> field.GetInt32()
                      | _ -> -1)
                   SwitchRemaining = getFloat "switchRemaining" value
+                  // Additive fallback: servers predating the bow omit it.
+                  DrawCharge = getFloat "drawCharge" value
+                  Cut = cut
                   Ammo = getInt "ammo" value
                   Reserve = getInt "reserve" value
                   WeaponName = getString "weapon" value
@@ -310,7 +348,9 @@ type OnlineClient(serverUri: Uri, playerName: string, requestedMode: GameMode, w
         { second with
             Position = Vector3.Lerp(first.Position, second.Position, amount)
             Yaw = MathEx.lerpAngle first.Yaw second.Yaw amount
-            Pitch = first.Pitch + (second.Pitch - first.Pitch) * amount }
+            Pitch = first.Pitch + (second.Pitch - first.Pitch) * amount
+            AnimPhase = first.AnimPhase + (second.AnimPhase - first.AnimPhase) * amount
+            DrawCharge = first.DrawCharge + (second.DrawCharge - first.DrawCharge) * amount }
 
     member _.ServerUri = serverUri
     member _.PlayerId = playerId

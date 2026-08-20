@@ -14,6 +14,8 @@ type NetworkPlayer =
       Yaw: float32
       Pitch: float32
       Stance: Stance
+      /// Locomotion pose used by shared anatomical hit proxies and rewind.
+      AnimPhase: float32
       Sprinting: bool
       Ads: float32
       Health: float32<hp>
@@ -35,6 +37,10 @@ type NetworkPlayer =
       /// Kills since the last death; `BestStreak` is the round's high-water mark.
       Streak: int
       BestStreak: int
+      /// Incremented on every fresh body; cuts from an earlier life can never
+      /// be applied to a respawn that reused the same player id.
+      LifeRevision: int64
+      Cut: CutDescriptor option
       LastInputSequence: int64 }
 
 type ReplicatedEvent =
@@ -123,7 +129,8 @@ module Multiplayer =
                     Slots = victim.Slots |> Array.map (fun slot -> { slot with State = Ready })
                     RespawnIn = Units.seconds 5.0f
                     SpawnProtection = Units.seconds 0.0f
-                    Velocity = Vector3.Zero }
+                    Velocity = Vector3.Zero
+                    Cut = None }
             { state with Players = Map.add id dead state.Players }
         | None -> state
 
