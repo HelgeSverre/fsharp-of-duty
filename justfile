@@ -175,6 +175,11 @@ gun-preview weapon="all": _sdk
 arsenal-sync: _sdk
     {{ dotnet }} run --project {{ server_project }} -- --sync-arsenal
 
+# Regenerate the arsenal page's orbitable weapon models.
+[group('tools')]
+model-sync: _sdk
+    {{ dotnet }} run --project {{ server_project }} -- --sync-models
+
 # Build server image.
 [group('container')]
 docker-build:

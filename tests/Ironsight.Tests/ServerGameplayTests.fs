@@ -262,6 +262,27 @@ module ServerGameplayTests =
         Assert.Equal(live["weapons"].ToJsonString(), bundled["weapons"].ToJsonString())
 
     [<Fact>]
+    let ``every weapon has an orbitable model on the website`` () =
+        // Same bargain as the arsenal snapshot: checked in, so the page needs
+        // no build step, and guarded, so it cannot go stale. Regenerate with
+        // `just model-sync` after adding a weapon or reshaping one.
+        let directory = IO.Path.Combine(AppContext.BaseDirectory, "wwwroot", "models")
+        for weapon in Tuning.onlineWeapons do
+            let slug =
+                weapon.Name.ToLowerInvariant()
+                |> String.map (fun character -> if Char.IsAsciiLetterOrDigit character then character else '-')
+                |> fun text -> text.Trim '-'
+            let path = IO.Path.Combine(directory, slug + ".json")
+            Assert.True(IO.File.Exists path, $"{weapon.Name} has no model at models/{slug}.json")
+            let model = System.Text.Json.Nodes.JsonNode.Parse(IO.File.ReadAllText path)
+            let mesh = Guns.meshFor weapon.Name
+            // Triangle and vertex counts are enough to catch a reshaped mesh; a
+            // full comparison would just be the exporter run twice.
+            Assert.Equal(mesh.Indices.Length, model["tris"].AsArray().Count)
+            Assert.Equal(mesh.Vertices.Length * 3, model["positions"].AsArray().Count)
+            Assert.Equal(mesh.Indices.Length / 3, model["mats"].AsArray().Count)
+
+    [<Fact>]
     let ``match returns to waiting once every player slot has expired`` () =
         // Zero grace: removed players expire on the very next tick instead of
         // after the production 30 s reconnect window.

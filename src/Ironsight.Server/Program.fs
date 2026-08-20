@@ -332,6 +332,51 @@ module Program =
         let contentEnd = html.IndexOf("</script>", contentStart)
         IO.File.WriteAllText(path, html[.. contentStart - 1] + json + html[contentEnd ..])
 
+    /// The arsenal page's orbitable weapon models, one file per weapon.
+    ///
+    /// Positions are quantised to a millimetre and shared between triangles;
+    /// normals are left out entirely because the viewer flat-shades and can
+    /// derive a face normal from the triangle it is already holding. That is
+    /// most of the payload gone: a weapon lands around 20 KB of JSON, a few
+    /// kilobytes over the wire, fetched only when its tab is opened.
+    let private syncModels (directory: string) =
+        IO.Directory.CreateDirectory directory |> ignore
+        let slug (name: string) =
+            name.ToLowerInvariant()
+            |> String.map (fun character -> if Char.IsAsciiLetterOrDigit character then character else '-')
+            |> fun text -> text.Trim '-'
+        let hex (colour: Numerics.Vector3) =
+            let channel (value: float32) = int (Math.Clamp(value, 0.0f, 1.0f) * 255.0f + 0.5f)
+            $"#%02x{channel colour.X}%02x{channel colour.Y}%02x{channel colour.Z}"
+        let mutable written = 0
+        for weapon in Tuning.onlineWeapons do
+            let mesh = Ironsight.ProcGen.Guns.meshFor weapon.Name
+            let materials =
+                mesh.Vertices |> Array.map _.MaterialId |> Array.distinct |> Array.sort
+            let colourIndex = materials |> Array.mapi (fun index id -> id, index) |> Map.ofArray
+            let quantise (value: float32) = int (MathF.Round(value * 1000.0f))
+            let positions =
+                mesh.Vertices
+                |> Array.collect (fun vertex ->
+                    [| quantise vertex.Position.X; quantise vertex.Position.Y; quantise vertex.Position.Z |])
+            let triangleMaterials =
+                Array.init (mesh.Indices.Length / 3) (fun triangle ->
+                    colourIndex[mesh.Vertices[int mesh.Indices[triangle * 3]].MaterialId])
+            let numbers (values: int array) = values |> Array.map string |> String.concat ","
+            let colours =
+                materials
+                |> Array.map (fun id -> $"\"{hex (Ironsight.ProcGen.Materials.previewColour Ironsight.ProcGen.Materials.all[id])}\"")
+                |> String.concat ","
+            let json =
+                $"{{\"name\":{JsonSerializer.Serialize weapon.Name},\"scale\":0.001,"
+                + $"\"colors\":[{colours}],"
+                + $"\"positions\":[{numbers positions}],"
+                + $"\"tris\":[{numbers (mesh.Indices |> Array.map int)}],"
+                + $"\"mats\":[{numbers triangleMaterials}]}}"
+            IO.File.WriteAllText(IO.Path.Combine(directory, slug weapon.Name + ".json"), json)
+            written <- written + 1
+        written
+
     [<EntryPoint>]
     let main args =
         match args with
@@ -344,6 +389,13 @@ module Program =
                 | _ -> IO.Path.GetFullPath("../../website/arsenal.html", __SOURCE_DIRECTORY__)
             syncArsenal path
             printfn $"Wrote {(Protocol.arsenal ()).weapons.Length} weapons to {path}"
+            0
+        | [| "--sync-models" |] | [| "--sync-models"; _ |] ->
+            let directory =
+                match args with
+                | [| _; explicit |] -> explicit
+                | _ -> IO.Path.GetFullPath("../../website/models", __SOURCE_DIRECTORY__)
+            printfn $"Wrote {syncModels directory} weapon models to {directory}"
             0
         | _ ->
             let port =

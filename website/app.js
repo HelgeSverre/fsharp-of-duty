@@ -184,12 +184,150 @@
     ["MachineGun", "MACHINE GUNS"],
   ];
 
+  // Orbitable weapon models, drawn straight from the procedural meshes the
+  // game builds. Painter's algorithm on a 2D canvas — the same approach
+  // tools/GunPreview.fsx uses to draw its contact sheets, and no WebGL or
+  // library for a few hundred flat-shaded triangles.
+  const modelCache = new Map();
+
+  function weaponSlug(name) {
+    return name.toLowerCase().replace(/[^a-z0-9]/g, "-").replace(/^-+|-+$/g, "");
+  }
+
+  function mountWeaponModel(canvas, name) {
+    const context = canvas.getContext("2d");
+    if (!context) return () => {};
+    // Spins on its own; hovering stops it so you can look, dragging turns it.
+    let yaw = 0.9;
+    let pitch = -0.28;
+    let hovered = false;
+    let dragging = false;
+    let last = null;
+    let model = null;
+    let frame = 0;
+    let previous = 0;
+
+    const pointerDown = (event) => { dragging = true; last = event; canvas.setPointerCapture(event.pointerId); };
+    const pointerUp = (event) => { dragging = false; last = null; if (canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId); };
+    const pointerMove = (event) => {
+      if (!dragging || !last) return;
+      yaw += (event.clientX - last.clientX) * 0.01;
+      pitch = Math.max(-1.2, Math.min(1.2, pitch + (event.clientY - last.clientY) * 0.01));
+      last = event;
+    };
+    canvas.addEventListener("pointerenter", () => { hovered = true; });
+    canvas.addEventListener("pointerleave", () => { hovered = false; dragging = false; last = null; });
+    canvas.addEventListener("pointerdown", pointerDown);
+    canvas.addEventListener("pointerup", pointerUp);
+    canvas.addEventListener("pointercancel", pointerUp);
+    canvas.addEventListener("pointermove", pointerMove);
+
+    function draw(now) {
+      frame = requestAnimationFrame(draw);
+      const delta = previous ? Math.min(0.05, (now - previous) / 1000) : 0;
+      previous = now;
+      if (!hovered && !dragging) yaw += delta * 0.55;
+      if (!model) return;
+      const ratio = Math.min(2, window.devicePixelRatio || 1);
+      const width = canvas.clientWidth;
+      const height = canvas.clientHeight;
+      if (!width || !height) return;
+      if (canvas.width !== width * ratio || canvas.height !== height * ratio) {
+        canvas.width = width * ratio;
+        canvas.height = height * ratio;
+      }
+      context.setTransform(ratio, 0, 0, ratio, 0, 0);
+      context.clearRect(0, 0, width, height);
+
+      const cosYaw = Math.cos(yaw), sinYaw = Math.sin(yaw);
+      const cosPitch = Math.cos(pitch), sinPitch = Math.sin(pitch);
+      const points = model.points;
+      const rotated = new Float32Array(points.length);
+      for (let i = 0; i < points.length; i += 3) {
+        const x = points[i] - model.centre[0];
+        const y = points[i + 1] - model.centre[1];
+        const z = points[i + 2] - model.centre[2];
+        const rx = x * cosYaw + z * sinYaw;
+        const rz = z * cosYaw - x * sinYaw;
+        rotated[i] = rx;
+        rotated[i + 1] = y * cosPitch - rz * sinPitch;
+        rotated[i + 2] = rz * cosPitch + y * sinPitch;
+      }
+      const scale = Math.min(width, height) / (model.radius * 2.15);
+      const originX = width / 2;
+      const originY = height / 2;
+      // Depth sort, far to near. A few hundred triangles per weapon, so the
+      // sort costs nothing and a real depth buffer would be overkill.
+      const order = model.order;
+      const tris = model.tris;
+      for (let t = 0; t < order.length; t++) {
+        const i = order[t] * 3;
+        order[t] = order[t];
+        model.depth[order[t]] =
+          rotated[tris[i] * 3 + 2] + rotated[tris[i + 1] * 3 + 2] + rotated[tris[i + 2] * 3 + 2];
+      }
+      order.sort((a, b) => model.depth[a] - model.depth[b]);
+      for (let t = 0; t < order.length; t++) {
+        const triangle = order[t];
+        const a = tris[triangle * 3] * 3, b = tris[triangle * 3 + 1] * 3, c = tris[triangle * 3 + 2] * 3;
+        const ax = rotated[a], ay = rotated[a + 1], az = rotated[a + 2];
+        const ux = rotated[b] - ax, uy = rotated[b + 1] - ay, uz = rotated[b + 2] - az;
+        const vx = rotated[c] - ax, vy = rotated[c + 1] - ay, vz = rotated[c + 2] - az;
+        const nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
+        if (nz <= 0) continue; // facing away
+        const length = Math.hypot(nx, ny, nz) || 1;
+        // The same key light and ambient floor GunPreview shades with, so a
+        // weapon looks the same on the site as in the tool.
+        const lambert = Math.max(0, (nx * 0.4 + ny * 0.8 + nz * 0.45) / (length * 0.9925));
+        const shade = 0.35 + 0.65 * lambert;
+        const colour = model.colors[model.mats[triangle]];
+        context.fillStyle = `rgb(${Math.round(colour[0] * shade)} ${Math.round(colour[1] * shade)} ${Math.round(colour[2] * shade)})`;
+        context.beginPath();
+        context.moveTo(originX + ax * scale, originY - ay * scale);
+        context.lineTo(originX + rotated[b] * scale, originY - rotated[b + 1] * scale);
+        context.lineTo(originX + rotated[c] * scale, originY - rotated[c + 1] * scale);
+        context.closePath();
+        context.fill();
+      }
+    }
+
+    const slug = weaponSlug(name);
+    const load = modelCache.get(slug) || fetch(`models/${slug}.json`).then((response) => {
+      if (!response.ok) throw new Error(response.statusText);
+      return response.json();
+    }).then((raw) => {
+      const points = new Float32Array(raw.positions.length);
+      const bounds = [Infinity, Infinity, Infinity, -Infinity, -Infinity, -Infinity];
+      for (let i = 0; i < raw.positions.length; i++) {
+        points[i] = raw.positions[i] * raw.scale;
+        const axis = i % 3;
+        bounds[axis] = Math.min(bounds[axis], points[i]);
+        bounds[axis + 3] = Math.max(bounds[axis + 3], points[i]);
+      }
+      const centre = [0, 1, 2].map((axis) => (bounds[axis] + bounds[axis + 3]) / 2);
+      const radius = Math.max(...[0, 1, 2].map((axis) => (bounds[axis + 3] - bounds[axis]) / 2)) || 1;
+      const tris = new Uint16Array(raw.tris);
+      return {
+        points, centre, radius, tris,
+        mats: raw.mats,
+        colors: raw.colors.map((hex) => [1, 3, 5].map((offset) => parseInt(hex.slice(offset, offset + 2), 16))),
+        order: Array.from({ length: raw.mats.length }, (_, index) => index),
+        depth: new Float32Array(raw.mats.length),
+      };
+    });
+    modelCache.set(slug, load);
+    load.then((value) => { model = value; canvas.classList.add("ready"); }).catch(() => { canvas.remove(); });
+    frame = requestAnimationFrame(draw);
+    return () => cancelAnimationFrame(frame);
+  }
+
   function initializeArsenal() {
     const dossier = byId("weapon-dossier");
     const tabs = byId("weapon-tabs");
     if (!dossier || !tabs) return;
     let weapons = [];
     let selected = 0;
+    let disposeModel = null;
 
     function stat(label, value, unit, percentage) {
       const wrapper = document.createElement("div");
@@ -227,7 +365,18 @@
       silhouette.className = `weapon-silhouette ${weaponStyle(weapon.kind, weapon.fireMode)}`;
       ["body", "long-barrel", "wood", "grip"].forEach((className) => { const part = document.createElement("i"); part.className = className; silhouette.append(part); });
       const availability = document.createElement("p"); text(availability, `${weapon.availability} // ${weapon.fireMode}`);
-      visual.append(title, silhouette, availability);
+      // The CSS silhouette stays as the ground truth for "something is here":
+      // the model is layered over it and removes itself if it cannot load, so a
+      // failed fetch degrades to what the page has always shown.
+      const model = document.createElement("canvas");
+      model.className = "weapon-model";
+      model.setAttribute("aria-hidden", "true");
+      const stage = document.createElement("div");
+      stage.className = "weapon-stage";
+      stage.append(silhouette, model);
+      visual.append(title, stage, availability);
+      if (disposeModel) disposeModel();
+      disposeModel = mountWeaponModel(model, weapon.name);
 
       const panel = document.createElement("div");
       panel.className = "stat-panel";
