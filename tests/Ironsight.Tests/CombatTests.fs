@@ -355,6 +355,31 @@ module CombatTests =
         Assert.Empty shallowMarks
 
     [<Fact>]
+    let ``glancing arrows embed in enemies and emit blood instead of bouncing`` () =
+        let world = Sim.createTrainingWorld 2205UL
+        let victim = TestKit.soldier 41 Vector3.Zero
+        // Skim the outer edge of the torso capsule. This incidence is shallow
+        // enough to ricochet from a wall, but flesh must always catch the arrow.
+        let arrow =
+            { Owner = world.Player.Id
+              Kind = ArrowRound(Units.health 72.0f)
+              Position = Vector3(-1.0f, 1.10f, 0.25f)
+              Velocity = Vector3.UnitX * SpecialProjectiles.ArrowSpeed
+              DistanceTravelled = 0.0f
+              Bounces = 0
+              Remaining = Units.seconds 6.0f }
+        let active, marks, _, soldiers, events = runSpecial 1 openLevel world.Player [| victim |] arrow
+        Assert.Empty active
+        Assert.InRange(Units.raw soldiers[0].Health, 27.9f, 28.1f)
+        Assert.Contains(
+            marks,
+            function
+            | StuckArrow(_, direction, Some target, _) -> target = victim.Id && direction.X > 0.9f
+            | _ -> false)
+        Assert.Contains(events, function ArrowImpact(_, _, true) -> true | _ -> false)
+        Assert.Contains(events, function BloodImpact(_, direction, false) when direction.X > 0.9f -> true | _ -> false)
+
+    [<Fact>]
     let ``speargun bands contract after firing and compact nailgun stays tool-sized`` () =
         let loaded = Guns.harpoonGunForLoad 1.0f
         let fired = Guns.harpoonGunForLoad 0.0f

@@ -544,20 +544,18 @@ module SpecialProjectiles =
                     elif not (bounce 2 projectile hitPosition normal 0.38f) then
                         events.Add(ArrowImpact(hitPosition, normal, false))
                 | ArrowRound damage, Character(_, index, _) ->
-                    let sticks = Vector3.Dot(-direction, normal) >= stickIncidence
                     currentSoldiers <-
                         damageSoldier "Bow" damage projectile.Owner hitPosition normal
-                            (if sticks then Some(ArrowMark direction) else None)
+                            (Some(ArrowMark direction))
                             index currentSoldiers events marks
-                    events.Add(ArrowImpact(hitPosition, normal, sticks))
-                    if not sticks then bounce 2 projectile hitPosition normal 0.38f |> ignore
+                    events.Add(ArrowImpact(hitPosition, normal, true))
+                    events.Add(BloodImpact(hitPosition, direction, false))
                 | ArrowRound damage, LocalPlayer _ ->
-                    let sticks = Vector3.Dot(-direction, normal) >= stickIncidence
                     let health = max (Units.health 0.0f) (currentPlayer.Health - damage)
                     currentPlayer <- { currentPlayer with Health = health; RegenIn = Tuning.RegenDelay }
-                    if sticks then marks.Add(markTarget currentPlayer.Position currentPlayer.Id hitPosition normal (ArrowMark direction))
-                    else bounce 2 projectile hitPosition normal 0.38f |> ignore
-                    events.Add(ArrowImpact(hitPosition, normal, sticks))
+                    marks.Add(markTarget currentPlayer.Position currentPlayer.Id hitPosition normal (ArrowMark direction))
+                    events.Add(ArrowImpact(hitPosition, normal, true))
+                    events.Add(BloodImpact(hitPosition, direction, false))
                     events.Add(PlayerHurt(-direction, health))
                 | WaterDroplet, Surface _ ->
                     refreshWetMark Vector3.Zero None hitPosition normal marks
