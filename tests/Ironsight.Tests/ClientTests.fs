@@ -298,6 +298,34 @@ module ClientTests =
         Assert.True((LoadoutMenu.weaponAt stepped.Selected).IsSome)
 
     [<Fact>]
+    let ``every weapon can be reached and clicked with the mouse alone`` () =
+        // The window used to be re-centred on the keyboard cursor every frame,
+        // so the wheel could never carry it past the first row's group and the
+        // last weapons in the list were unclickable.
+        let idle = TestKit.idleMenuInput
+        let rowsRect = LoadoutMenu.rowsRect (LoadoutMenu.panelRect 1280 720)
+        let mutable state = LoadoutMenu.create ()
+        let reached = System.Collections.Generic.HashSet<string>()
+        for _ in 1 .. LoadoutMenu.rows.Length + 5 do
+            let first, visible = LoadoutMenu.visibleRows state
+            visible
+            |> List.iteri (fun slot (index, row) ->
+                match row with
+                | LoadoutMenu.Weapon _ ->
+                    let pointer = TestKit.rowMiddle LoadoutMenu.RowHeight slot rowsRect
+                    let struct (_, action) =
+                        LoadoutMenu.update 1280 720 { idle with Pointer = Some pointer; Clicked = true } state
+                    // The row the pointer sits on is the one that gets equipped.
+                    Assert.Equal(LoadoutMenu.Chosen (LoadoutMenu.weaponAt index).Value.Name, action)
+                    reached.Add (LoadoutMenu.weaponAt index).Value.Name |> ignore
+                | LoadoutMenu.Header _ -> ())
+            ignore first
+            let struct (next, _) = LoadoutMenu.update 1280 720 { idle with Scroll = 1 } state
+            state <- next
+        for weapon in Tuning.onlineWeapons do
+            Assert.True(reached.Contains weapon.Name, $"{weapon.Name} is unreachable in the picker")
+
+    [<Fact>]
     let ``the picker tracks which row the pointer is over`` () =
         let idle = TestKit.idleMenuInput
         let rows = LoadoutMenu.rowsRect (LoadoutMenu.panelRect 1280 720)

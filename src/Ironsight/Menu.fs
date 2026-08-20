@@ -180,9 +180,13 @@ module LoadoutMenu =
 
     let rowsRect (panel: Rect) = Rect.rowsIn FirstRowTop RowHeight visibleCount panel
 
-    /// The window the HUD draws, with the selection always inside it.
+    let private maxFirstVisible = max 0 (rows.Length - MaxVisibleRows)
+
+    /// The window the HUD draws. `update` already keeps the selection inside it,
+    /// so this only clamps to the list — re-centring on the selection here would
+    /// undo wheel scrolling on the very next frame.
     let visibleRows (state: State) =
-        let first = MenuNav.scrollWindow rows.Length MaxVisibleRows state.Selected state.FirstVisible
+        let first = Math.Clamp(state.FirstVisible, 0, maxFirstVisible)
         let last = min (rows.Length - 1) (first + MaxVisibleRows - 1)
         first, [ for index in first..last -> index, rows[index] ]
 
@@ -199,10 +203,7 @@ module LoadoutMenu =
     let update (width: int) (height: int) (input: MenuInput) (state: State) =
         // The wheel scrolls the window without moving the cursor, so a mouse
         // can reach rows the keyboard selection has not walked to.
-        let scrolled =
-            if input.Scroll = 0 then state.FirstVisible
-            else Math.Clamp(state.FirstVisible + input.Scroll, 0, max 0 (rows.Length - MaxVisibleRows))
-        let first = MenuNav.scrollWindow rows.Length MaxVisibleRows state.Selected scrolled
+        let first = Math.Clamp(state.FirstVisible + input.Scroll, 0, maxFirstVisible)
         // Hover hits the same rect the HUD draws, offset by the scroll position;
         // headings are skipped so the cursor cannot land on one.
         let hovered =
@@ -217,8 +218,11 @@ module LoadoutMenu =
         let activateIndex = if input.Clicked && hovered.IsSome then hovered.Value else selected
         let activate = input.Activate || (input.Clicked && hovered.IsSome)
         // Wheel scrolling alone must not drag the selection with it: keep the
-        // scrolled window unless the selection itself moved out of view.
-        let window = MenuNav.scrollWindow rows.Length MaxVisibleRows selected (if selected = state.Selected then scrolled else first)
+        // scrolled window unless the selection itself moved, and only then pull
+        // the window back to wherever the cursor went.
+        let window =
+            if selected = state.Selected then first
+            else MenuNav.scrollWindow rows.Length MaxVisibleRows selected first
         let next = { Selected = selected; FirstVisible = window; Hovered = hovered }
         if input.Back then struct (next, Closed)
         else
@@ -351,9 +355,15 @@ module StartMenu =
             input.Pointer
             |> Option.bind (hoveredIndex width height visibleCount)
             |> Option.map (fun slot -> min (firstVisible + slot) (options.Length - 1))
-        let selected =
+        let stepped =
             MenuNav.stepSelection [| 0 .. options.Length - 1 |] input fromPointer
                 (min state.Selected (options.Length - 1))
+        // The wheel walks the selection rather than the window: every page here
+        // resets Selected but not FirstVisible, so the window has to stay
+        // derived from the cursor or a page change would open on a stale row.
+        let selected =
+            if input.Scroll = 0 then stepped
+            else Math.Clamp(stepped + input.Scroll, 0, options.Length - 1)
         let next = { state with Selected = selected; FirstVisible = scrollOffset options.Length selected firstVisible }
         // A click lands on the row under the cursor even if a dpad step
         // arrived in the same frame.
