@@ -584,7 +584,9 @@ module Program =
                                  setScreen Screen.Playing
                              else screen <- Screen.Chat(MenuNav.editText 120 typed draft)
                          | Screen.Menu _ -> ())
-                        let sampledFrame = inputSampler.Sample()
+                        // The input sampler uses the current ADS blend to ease
+                        // only right-stick sensitivity down as the sight settles.
+                        let sampledFrame = inputSampler.Sample(current.Player.Ads)
                         // While the loadout picker is open the world keeps
                         // simulating, but the player stands idle (CS buy-menu
                         // feel); online the server coasts us the same way.

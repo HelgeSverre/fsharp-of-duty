@@ -9,6 +9,14 @@ open Xunit
 
 module ClientTests =
     [<Fact>]
+    let ``gamepad look sensitivity eases to half speed during ADS`` () =
+        Assert.Equal(1.0f, InputTuning.gamepadAdsScale 0.0f)
+        Assert.Equal(0.75f, InputTuning.gamepadAdsScale 0.5f)
+        Assert.Equal(0.5f, InputTuning.gamepadAdsScale 1.0f)
+        Assert.Equal(1.0f, InputTuning.gamepadAdsScale -1.0f)
+        Assert.Equal(0.5f, InputTuning.gamepadAdsScale 2.0f)
+
+    [<Fact>]
     let ``katana viewmodel travels left to right and up to down`` () =
         let tip = -Vector3.UnitZ
         let primaryStart = Vector3.Transform(tip, Matrix4x4.CreateRotationY(ViewmodelAnimation.katanaYaw true (Some 0.0f) (Some KatanaSweep)))

@@ -4,6 +4,19 @@ open System.Numerics
 open Ironsight
 open Silk.NET.Input
 
+[<RequireQualifiedAccess>]
+module InputTuning =
+    /// Keep the right stick precise through a sight without changing the
+    /// player's configured hip-fire sensitivity (or mouse sensitivity).
+    [<Literal>]
+    let GamepadAdsMultiplier = 0.5f
+
+    /// ADS itself eases in, so the matching sensitivity change eases in too
+    /// instead of snapping the instant the left trigger is pulled.
+    let gamepadAdsScale ads =
+        let amount = System.Math.Clamp(ads, 0.0f, 1.0f)
+        1.0f + (GamepadAdsMultiplier - 1.0f) * amount
+
 type InputSampler(context: IInputContext) =
     /// Plain held-key bindings. Fire/ADS/crouch/reload are handled separately
     /// because they latch or toggle.
@@ -193,7 +206,7 @@ type InputSampler(context: IInputContext) =
                     gamepad |> Option.iter attachGamepad
             | _ -> ())
 
-    member _.Sample() =
+    member _.Sample(adsAmount: float32) =
         sequence <- sequence + 1L
         let pressed key = keyboard |> Option.exists (fun device -> device.IsKeyPressed key)
         let mousePressed button = mouse |> Option.exists (fun device -> device.IsButtonPressed button)
@@ -215,7 +228,11 @@ type InputSampler(context: IInputContext) =
             // Sample() runs once per fixed tick, so the tick duration is the
             // exact frame delta — a wall clock would smear pauses into a snap.
             // ponytail: linear response; add a curve if aiming feels twitchy.
-            let scale = StickTurnRate * gamepadSensitivity / float32 Tuning.TickRate
+            let scale =
+                StickTurnRate
+                * gamepadSensitivity
+                * InputTuning.gamepadAdsScale adsAmount
+                / float32 Tuning.TickRate
             lookDelta <- lookDelta + Vector2(lookStick.X * scale, -lookStick.Y * scale)
         let mutable buttons = InputButtons.None
         if fireLatched || mousePressed MouseButton.Left || padTrigger 1 > TriggerThreshold then
