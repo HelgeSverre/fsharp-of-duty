@@ -30,7 +30,9 @@ module Weapons =
     /// down rather than as the game refusing an input.
     let heatDwell (weapon: WeaponClass) (heat: float32) =
         if not (overheats weapon) then 0.0f
-        else float32 (int (heat * heat * Tuning.MaxHeatExtraTicks + 0.5f)) * Units.raw Tuning.TickDuration
+        else
+            let bite = MathF.Pow(MathEx.clamp01 heat, Tuning.HeatBiteExponent)
+            float32 (int (bite * Tuning.MaxHeatExtraTicks + 0.5f)) * Units.raw Tuning.TickDuration
 
     let step (dt: float32<s>) moveSpeed stance trigger reload ads (rng: byref<Rng.State>) slot =
         let current = advanceState dt slot

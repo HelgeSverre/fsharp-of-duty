@@ -243,13 +243,15 @@ module CoreTests =
         let _, hot = fire (Tuning.TickRate * 10) cold
         // Held fire settles at an equilibrium rather than pinning at 1.0: heat
         // stops climbing once the gun has slowed to what cooling can carry.
-        Assert.InRange(hot.Heat, 0.25f, 1.0f)
+        // That equilibrium has to sit high on the gauge, or the heat bar the
+        // player reads spends the whole fight parked near its bottom.
+        Assert.InRange(hot.Heat, 0.6f, 1.0f)
         let sustained, _ = fire Tuning.TickRate hot
         Assert.True(sustained * 3 < opening, $"hot gun still fired {sustained} of {opening} rounds")
-        // Off the trigger it recovers, and is cold again inside twenty seconds.
+        // Off the trigger it recovers, and is cold again inside ten seconds.
         let mutable rng = Rng.create 29UL
         let mutable cooling = hot
-        for _ in 1 .. Tuning.TickRate * 20 do
+        for _ in 1 .. Tuning.TickRate * 10 do
             let struct (next, _) = Weapons.step Tuning.TickDuration 0.0f Standing false false 0.0f &rng cooling
             cooling <- next
         Assert.Equal(0.0f, cooling.Heat)
