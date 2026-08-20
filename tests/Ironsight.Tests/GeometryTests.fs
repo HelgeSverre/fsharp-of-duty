@@ -228,6 +228,42 @@ module GeometryTests =
         Assert.True(finish.Y > 2.0f, $"expected to gain height, ended at y={finish.Y}")
 
     [<Fact>]
+    let ``you can jump while pressed against a wall, but not through a ceiling`` () =
+        // The vertical resolve refused any upward move whenever the capsule was
+        // touching geometry — and pressed against a face it always is, so a jump
+        // taken within a body's width of a wall or the foot of a ramp did
+        // nothing at all.
+        let jumpRise (level: Level) (start: Vector3) =
+            let jump = { Sequence = 1L; Move = Vector2.Zero; Look = Vector2.Zero; Buttons = InputButtons.Jump }
+            let world = Sim.createTrainingWorld 5UL
+            let mutable player = { world.Player with Position = start; Velocity = Vector3.Zero }
+            let mutable peak = start.Y
+            for _ in 1..40 do
+                player <- Movement.step Tuning.TickDuration jump level player
+                peak <- max peak player.Position.Y
+            peak - start.Y
+        let ramp =
+            LevelDsl.level "Ramp foot"
+                [ LevelDsl.street 40.0f 12.0f Mud
+                  LevelDsl.ramp (Vector3(0.0f, 0.0f, 6.0f)) (Vector3(0.0f, 3.6f, 0.0f)) 8.0f Mud ]
+            |> LevelCompile.compile
+        let openGround = jumpRise ramp (Vector3(0.0f, 0.0f, -4.0f))
+        Assert.True(openGround > 1.0f, $"a plain jump only rose {openGround}")
+        // Every stance from touching the ramp's end face outward clears too.
+        for z in [ -0.25f; -0.4f; -0.6f ] do
+            let rise = jumpRise ramp (Vector3(0.0f, 0.0f, z))
+            Assert.True(rise > 1.0f, $"jump at z={z}, against the ramp face, rose only {rise}")
+
+        // A ceiling still stops one: moving up touches something new.
+        let lowRoom =
+            LevelDsl.level "Low room"
+                [ LevelDsl.street 20.0f 8.0f Concrete
+                  LevelDsl.block (Vector3(0.0f, 2.2f, 0.0f)) (Vector3(12.0f, 0.4f, 12.0f)) Concrete ]
+            |> LevelCompile.compile
+        let capped = jumpRise lowRoom Vector3.Zero
+        Assert.InRange(capped, 0.0f, 0.35f)
+
+    [<Fact>]
     let ``a player cannot climb a slope past the limit`` () =
         // 70 degrees is well beyond the 45 degree limit.
         let level = rampLevel 2.75f

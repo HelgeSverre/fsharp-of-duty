@@ -19,10 +19,17 @@ module Movement =
         elif Input.hasButton InputButtons.Crouch buttons then Crouched
         else Standing
 
-    let private collides (level: Level) (stance: Stance) (position: Vector3) =
+    /// How many triangles the capsule is touching. A count rather than a bool
+    /// so two positions can be compared: "already stuck in this" versus
+    /// "moving into something new".
+    let private collisionCount (level: Level) (stance: Stance) (position: Vector3) =
         LevelCompile.trianglesNear position (Tuning.PlayerRadius + 0.6f) level
-        |> Array.exists (fun triangle ->
-            (MathEx.capsuleIntersectsTriangle Tuning.PlayerRadius (stanceHeight stance) position triangle.A triangle.B triangle.C).IsSome)
+        |> Array.sumBy (fun triangle ->
+            if (MathEx.capsuleIntersectsTriangle Tuning.PlayerRadius (stanceHeight stance) position triangle.A triangle.B triangle.C).IsSome
+            then 1 else 0)
+
+    let private collides (level: Level) (stance: Stance) (position: Vector3) =
+        collisionCount level stance position > 0
 
     /// The surface under a position: its height and its normal. Probes the
     /// capsule footprint rather than a single point, so standing on the lip of a
@@ -94,7 +101,15 @@ module Movement =
             Vector3(horizontalPosition.X, floorY, horizontalPosition.Z)
         | _ ->
             let vertical = Vector3(horizontalPosition.X, bounded.Y, horizontalPosition.Z)
-            if collides level stance vertical then horizontalPosition else vertical
+            // Pressed against a wall or standing at the foot of a slope, the
+            // capsule is already touching geometry — and re-testing that same
+            // overlap at a higher Y refused the move outright, which is what
+            // swallowed a jump taken anywhere within a body's width of a face.
+            // Refuse only when the new height touches MORE than staying put
+            // does, so a ceiling still stops a jump dead.
+            let hits = collisionCount level stance vertical
+            if hits = 0 || hits <= collisionCount level stance horizontalPosition then vertical
+            else horizontalPosition
 
     /// Resolve a grounded humanoid displacement through the same capsule and
     /// broadphase used by the player controller.
