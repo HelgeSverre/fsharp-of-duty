@@ -40,7 +40,7 @@ button, input { font: inherit; }
 .eyebrow, .section-number { color: var(--olive); font-size: 11px; font-weight: 900; letter-spacing: .18em; text-transform: uppercase; }
 .live-dot { display: inline-block; width: 8px; height: 8px; margin-right: 8px; border-radius: 50%; background: #9bc75b; box-shadow: 0 0 12px #9bc75b; animation: pulse 2s infinite; }
 
-.hero { position: relative; min-height: 770px; padding-top: 92px; border-left: 1px solid var(--line); border-right: 1px solid var(--line); }
+.hero { position: relative; min-height: 770px; padding-top: 92px; border-left: 1px solid var(--line); }
 .hero::before { content: "OPERATION 0x4653"; position: absolute; right: -50px; top: 280px; color: rgba(233,223,197,.11); font: 13px var(--body); letter-spacing: .35em; transform: rotate(90deg); }
 .hero h1, .arsenal-hero h1 { position: relative; z-index: 2; max-width: 820px; margin: 18px 0 24px; font: clamp(74px, 10vw, 148px)/.78 var(--display); letter-spacing: -.025em; text-transform: uppercase; }
 .hero h1 em, .arsenal-hero h1 em { color: var(--signal); font-style: normal; }
@@ -61,7 +61,7 @@ button, input { font: inherit; }
 .object-label { position: absolute; right: 5px; bottom: 15px; color: var(--muted); font: 9px var(--body); letter-spacing: .18em; }
 
 .ticker { display: grid; grid-template-columns: repeat(4, 1fr); border-block: 1px solid var(--line); background: rgba(18,21,15,.8); }
-.ticker div { min-height: 140px; padding: 30px; display: flex; flex-direction: column; justify-content: center; border-right: 1px solid var(--line); }
+.ticker div { min-height: 140px; padding: 30px; display: flex; flex-direction: column; justify-content: center; }
 .ticker strong { color: var(--signal); font: 46px/1 var(--display); }
 .ticker span { color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: .12em; }
 
@@ -81,10 +81,7 @@ button, input { font: inherit; }
 .server-badge b, .data-source b { display: inline-block; vertical-align: middle; font-size: 10px; letter-spacing: .12em; }
 .server-badge small, .data-source small { display: block; font-size: 10px; letter-spacing: .12em; }
 .server-badge small, .data-source small { margin: 6px 0 0 16px; color: var(--muted); }
-.weapon-tabs { display: flex; gap: 14px; overflow-x: auto; align-items: flex-start; }
-.weapon-tab-group { display: flex; flex-direction: column; gap: 4px; flex: 1; min-width: 150px; }
-.weapon-tab-group-label { padding-bottom: 4px; border-bottom: 1px solid var(--line); color: var(--muted); font-size: 9px; font-weight: 900; letter-spacing: .18em; white-space: nowrap; }
-.weapon-tab { text-align: left; }
+.weapon-tabs { display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-start; }
 .weapon-tab { padding: 13px 20px; border: 1px solid var(--line); color: var(--muted); background: #0b0d0a; cursor: pointer; white-space: nowrap; text-transform: uppercase; font-size: 10px; font-weight: 900; letter-spacing: .12em; }
 .weapon-tab.active { color: var(--paper); border-color: var(--signal); background: #37170d; }
 .leaderboard-frame { border: 1px solid var(--line); background: var(--panel); box-shadow: 16px 16px 0 rgba(0,0,0,.3); }
@@ -110,7 +107,7 @@ td:first-child { color: var(--signal); font-family: var(--display); font-size: 1
 .features { padding-block: 130px; }
 .features > h2 { margin: 18px 0 55px; }
 .feature-grid { display: grid; grid-template-columns: repeat(3, 1fr); border-top: 1px solid var(--line); border-left: 1px solid var(--line); }
-.feature-grid article { min-height: 275px; padding: 30px; border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); background: rgba(14,17,12,.72); }
+.feature-grid article { min-height: 275px; padding: 30px; border-bottom: 1px solid var(--line); background: rgba(14,17,12,.72); }
 .feature-grid article > b, .doctrine-grid article > b { color: var(--signal); font: 26px var(--display); }
 .feature-grid h3 { margin: 35px 0 10px; font: 28px var(--display); text-transform: uppercase; }
 .feature-grid p { color: var(--muted); }
@@ -125,11 +122,11 @@ td:first-child { color: var(--signal); font-family: var(--display); font-size: 1
 .arsenal-hero h1 { max-width: 1100px; font-size: clamp(62px, 8vw, 122px); }
 .arsenal-hero > p { max-width: 750px; color: var(--muted); font-size: 18px; }
 .data-source { width: max-content; max-width: 100%; margin-top: 35px; }
-.arsenal-controls { padding-block: 20px; border-block: 1px solid var(--line); }
+.arsenal-controls { padding-block: 20px; border-top: 1px solid var(--line); }
 .weapon-dossier { min-height: 600px; padding-block: 55px 120px; }
 .dossier-loading { padding: 100px 20px; color: var(--muted); border: 1px solid var(--line); text-align: center; letter-spacing: .15em; }
 .dossier-grid { display: grid; grid-template-columns: 1.1fr 1.4fr; border: 1px solid var(--line); background: var(--panel); }
-.weapon-visual { position: relative; min-height: 520px; display: flex; flex-direction: column; justify-content: space-between; padding: 45px; overflow: hidden; border-right: 1px solid var(--line); background: radial-gradient(circle at 55% 45%, rgba(141,149,99,.28), transparent 52%); }
+.weapon-visual { position: relative; min-height: 520px; display: flex; flex-direction: column; justify-content: space-between; padding: 45px; overflow: hidden; background: radial-gradient(circle at 55% 45%, rgba(141,149,99,.28), transparent 52%); }
 .weapon-visual::before { content: attr(data-index); position: absolute; right: -15px; bottom: -70px; color: rgba(233,223,197,.05); font: 360px/1 var(--display); }
 .weapon-visual h2 { position: relative; margin: 0; font: clamp(45px, 6vw, 80px)/.88 var(--display); text-transform: uppercase; }
 .weapon-visual p { position: relative; color: var(--olive); font-size: 11px; letter-spacing: .14em; text-transform: uppercase; }
@@ -174,7 +171,7 @@ td:first-child { color: var(--signal); font-family: var(--display); font-size: 1
   .feature-grid { grid-template-columns: repeat(2,1fr); }
   .arsenal-callout { align-items: flex-start; flex-direction: column; padding: 45px; }
   .dossier-grid { grid-template-columns: 1fr; }
-  .weapon-visual { min-height: 400px; border-right: 0; border-bottom: 1px solid var(--line); }
+  .weapon-visual { min-height: 400px; border-bottom: 0; }
   .doctrine-grid { grid-template-columns: repeat(2,1fr); }
 }
 @media (max-width: 600px) {
@@ -214,3 +211,21 @@ td:first-child { color: var(--signal); font-family: var(--display); font-size: 1
 .weapon-model.ready { opacity: 1; }
 .weapon-model:active { cursor: grabbing; }
 @media (prefers-reduced-motion: reduce) { .weapon-model { transition: none; } }
+
+/* Category dropdowns. A flat list of every weapon ran the height of the
+   viewport, which put the act of changing weapon nowhere near the stats it
+   changed. */
+.weapon-group { position: relative; }
+.weapon-group > summary { display: flex; align-items: baseline; gap: 10px; padding: 11px 34px 11px 16px; border: 1px solid var(--line); background: #0b0d0a; cursor: pointer; list-style: none; white-space: nowrap; }
+.weapon-group > summary::-webkit-details-marker { display: none; }
+.weapon-group > summary::after { content: ""; position: absolute; right: 14px; top: 50%; width: 6px; height: 6px; margin-top: -4px; border-right: 1px solid var(--muted); border-bottom: 1px solid var(--muted); transform: rotate(45deg); transition: transform .18s ease; }
+.weapon-group[open] > summary::after { transform: rotate(-135deg); margin-top: -1px; }
+.weapon-group.holds-selection > summary { border-color: var(--signal); background: #37170d; }
+.weapon-group-label { color: var(--muted); font-size: 9px; font-weight: 900; letter-spacing: .18em; }
+.weapon-group.holds-selection .weapon-group-label { color: var(--paper); }
+.weapon-group-current { color: var(--signal); font-size: 10px; font-weight: 900; letter-spacing: .12em; text-transform: uppercase; }
+.weapon-group-current:empty { display: none; }
+.weapon-menu { position: absolute; z-index: 20; top: calc(100% + 6px); left: 0; min-width: 100%; display: flex; flex-direction: column; border: 1px solid var(--line); background: #0b0d0a; box-shadow: 0 18px 40px rgba(0,0,0,.6); }
+.weapon-menu .weapon-tab { border: 0; border-bottom: 1px solid var(--line); text-align: left; }
+.weapon-menu .weapon-tab:last-child { border-bottom: 0; }
+.weapon-menu .weapon-tab:hover { color: var(--paper); background: #161a13; }

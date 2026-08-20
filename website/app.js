@@ -175,14 +175,19 @@
     return classes.join(" ");
   }
 
-  const kindSections = [
-    ["Rifle", "RIFLES"],
-    ["SniperRifle", "SNIPERS"],
-    ["Smg", "SUBMACHINE GUNS"],
-    ["Pistol", "PISTOLS"],
-    ["Shotgun", "SHOTGUNS"],
-    ["MachineGun", "MACHINE GUNS"],
-  ];
+  // Section order follows the game's number keys. The names come with the
+  // weapons, so there is no second table here to fall out of step.
+  const sectionOrder = ["RIFLES", "AUTOMATICS", "SIDEARMS", "PRECISION", "HEAVY"];
+
+  // A deployed server can be older than the site in front of it — the live one
+  // is, right now — and older servers send no category at all. Falling back to
+  // the weapon kind reproduces exactly how this page grouped before the field
+  // existed, which is the right answer for the arsenal those servers have.
+  const legacySections = {
+    Rifle: "RIFLES", SniperRifle: "SNIPERS", Smg: "SUBMACHINE GUNS",
+    Pistol: "PISTOLS", Shotgun: "SHOTGUNS", MachineGun: "MACHINE GUNS",
+  };
+  const sectionOf = (weapon) => weapon.category || legacySections[weapon.kind] || "OTHER";
 
   // Orbitable weapon models, drawn straight from the procedural meshes the
   // game builds. Painter's algorithm on a 2D canvas — the same approach
@@ -349,10 +354,15 @@
     function render() {
       const weapon = weapons[selected];
       if (!weapon) return;
-      tabs.querySelectorAll("button").forEach((button, index) => {
-        const active = index === selected;
-        button.classList.toggle("active", active);
-        button.setAttribute("aria-selected", String(active));
+      tabs.querySelectorAll(".weapon-tab").forEach((button, index) => {
+        button.classList.toggle("active", index === selected);
+      });
+      // The summary carries the selected weapon's name, so the closed dropdown
+      // says what is on screen rather than just naming its category.
+      tabs.querySelectorAll("details.weapon-group").forEach((group) => {
+        const holds = selected >= Number(group.dataset.first) && selected <= Number(group.dataset.last);
+        group.classList.toggle("holds-selection", holds);
+        text(group.querySelector(".weapon-group-current"), holds ? weapon.name : "");
       });
       dossier.replaceChildren();
       const grid = document.createElement("div");
@@ -414,33 +424,55 @@
       const loaded = Array.isArray(payload.weapons) ? payload.weapons : [];
       // Group into kind sections; `weapons` is rebuilt in section order so the
       // flat selection index stays aligned with the rendered buttons.
-      const known = new Set(kindSections.map(([kind]) => kind));
-      const sections = kindSections
-        .map(([kind, label]) => [label, loaded.filter((weapon) => weapon.kind === kind)])
-        .concat([["OTHER", loaded.filter((weapon) => !known.has(weapon.kind))]])
+      const labels = [...new Set(loaded.map(sectionOf))]
+        .sort((a, b) => (sectionOrder.indexOf(a) + 1 || 99) - (sectionOrder.indexOf(b) + 1 || 99));
+      const sections = labels
+        .map((label) => [label, loaded.filter((weapon) => sectionOf(weapon) === label)])
         .filter(([, members]) => members.length > 0);
       weapons = sections.flatMap(([, members]) => members);
+      // One dropdown per category rather than every weapon at once: the flat
+      // list ran the height of the viewport, so changing weapon happened too
+      // far from the stats it changed to be noticed.
       let index = 0;
       for (const [label, members] of sections) {
-        const group = document.createElement("div");
-        group.className = "weapon-tab-group";
+        const group = document.createElement("details");
+        group.className = "weapon-group";
+        const summary = document.createElement("summary");
         const caption = document.createElement("span");
-        caption.className = "weapon-tab-group-label";
+        caption.className = "weapon-group-label";
         text(caption, label);
-        group.append(caption);
+        const current = document.createElement("b");
+        current.className = "weapon-group-current";
+        summary.append(caption, current);
+        const menu = document.createElement("div");
+        menu.className = "weapon-menu";
+        const first = index;
         for (const weapon of members) {
           const at = index;
           const button = document.createElement("button");
           button.className = "weapon-tab";
-          button.setAttribute("role", "tab");
-          button.setAttribute("aria-selected", String(at === 0));
+          button.type = "button";
           text(button, weapon.name);
-          button.addEventListener("click", () => { selected = at; render(); });
-          group.append(button);
+          button.addEventListener("click", () => {
+            selected = at;
+            group.open = false;
+            render();
+          });
+          menu.append(button);
           index += 1;
         }
+        group.dataset.first = String(first);
+        group.dataset.last = String(index - 1);
+        group.append(summary, menu);
+        // One open at a time, and clicking anywhere else closes it.
+        summary.addEventListener("click", () => {
+          tabs.querySelectorAll("details[open]").forEach((other) => { if (other !== group) other.open = false; });
+        });
         tabs.append(group);
       }
+      document.addEventListener("click", (event) => {
+        if (!tabs.contains(event.target)) tabs.querySelectorAll("details[open]").forEach((open) => { open.open = false; });
+      });
       render();
     }
 

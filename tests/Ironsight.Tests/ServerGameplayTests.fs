@@ -267,7 +267,9 @@ module ServerGameplayTests =
         // no build step, and guarded, so it cannot go stale. Regenerate with
         // `just model-sync` after adding a weapon or reshaping one.
         let directory = IO.Path.Combine(AppContext.BaseDirectory, "wwwroot", "models")
-        for weapon in Tuning.onlineWeapons do
+        // Every weapon the arsenal page lists, which is one more than you can
+        // carry: the MG42 is emplaced, and still has a tab.
+        for weapon in Array.append Tuning.onlineWeapons [| Tuning.mg42 |] do
             let slug =
                 weapon.Name.ToLowerInvariant()
                 |> String.map (fun character -> if Char.IsAsciiLetterOrDigit character then character else '-')

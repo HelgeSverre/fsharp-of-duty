@@ -207,7 +207,11 @@ type ArsenalWeapon =
       falloffStartMetres: float32
       falloffEndMetres: float32
       minimumDamagePerProjectile: float32
-      availability: string }
+      availability: string
+      /// The number key this weapon lives on in game, by name — so the site
+      /// groups its dropdowns exactly as the loadout picker groups its rows.
+      /// Kind alone cannot: a bow and a flamethrower are both `Rifle`.
+      category: string }
 
 [<CLIMutable>]
 type ArsenalResponse =
@@ -505,4 +509,5 @@ module Protocol =
                   falloffStartMetres = stats.FalloffStartMetres
                   falloffEndMetres = stats.FalloffEndMetres
                   minimumDamagePerProjectile = stats.MinimumDamagePerProjectile
-                  availability = if Set.contains weapon.Name onlineNames then "Player loadout" else "Mounted weapon" }) }
+                  availability = (if Set.contains weapon.Name onlineNames then "Player loadout" else "Mounted weapon")
+                  category = Tuning.categoryName (Tuning.categoryOf weapon) }) }

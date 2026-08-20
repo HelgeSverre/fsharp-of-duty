@@ -349,7 +349,9 @@ module Program =
             let channel (value: float32) = int (Math.Clamp(value, 0.0f, 1.0f) * 255.0f + 0.5f)
             $"#%02x{channel colour.X}%02x{channel colour.Y}%02x{channel colour.Z}"
         let mutable written = 0
-        for weapon in Tuning.onlineWeapons do
+        // The same set the arsenal page lists, not just the ones you can carry:
+        // the MG42 has a tab and a dossier, so it needs a model behind it too.
+        for weapon in Array.append Tuning.onlineWeapons [| Tuning.mg42 |] do
             let mesh = Ironsight.ProcGen.Guns.meshFor weapon.Name
             let materials =
                 mesh.Vertices |> Array.map _.MaterialId |> Array.distinct |> Array.sort
