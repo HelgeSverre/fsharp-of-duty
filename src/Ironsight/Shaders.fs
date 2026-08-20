@@ -19,6 +19,14 @@ uniform float uYaw;
 uniform float uPitch;
 uniform float uAspect;
 uniform float uTanHalfFov;
+// Per-level sky. The defaults reproduce the overcast Normandy palette every
+// map used when this was hardcoded, so a level that says nothing is unchanged.
+uniform vec3 uSkyLow;
+uniform vec3 uSkyHigh;
+uniform vec3 uSkyCloud;
+uniform vec3 uSkyRidge;
+uniform float uSkyCloudAmount;
+uniform float uSkyHaze;
 out vec4 outColor;
 
 float hash(vec2 p) { return fract(sin(dot(p, vec2(41.31, 289.17))) * 43758.5453); }
@@ -57,16 +65,14 @@ void main() {
                        + cameraUp * screen.y * uTanHalfFov);
 
     float horizon = smoothstep(-0.08, 0.72, ray.y);
-    vec3 low = vec3(0.43, 0.45, 0.42);
-    vec3 high = vec3(0.12, 0.22, 0.31);
-    vec3 color = mix(low, high, horizon);
+    vec3 color = mix(uSkyLow, uSkyHigh, horizon);
 
     // A broad overcast layer keeps the generated sky from reading as a flat
     // clear colour. Sampling from the world ray keeps it fixed while turning.
     vec2 cloudPosition = ray.xz * 3.8 + vec2(ray.y * 1.7, -ray.y * 2.1);
     float cloud = smoothstep(0.50, 0.78, fbm(cloudPosition));
-    cloud *= 0.20 + 0.28 * (1.0 - horizon);
-    color = mix(color, vec3(0.52, 0.53, 0.49), cloud);
+    cloud *= (0.20 + 0.28 * (1.0 - horizon)) * uSkyCloudAmount;
+    color = mix(color, uSkyCloud, cloud);
 
     // This is the same fixed world-space direction used by level lighting.
     vec3 sunDirection = normalize(vec3(-0.45, 0.82, 0.34));
@@ -83,10 +89,10 @@ void main() {
     float nearRidge = 0.005 + ridgeProfile(azimuth, 5.0, 2.4) * 1.22;
     float farMask = 1.0 - smoothstep(farRidge, farRidge + 0.010, ray.y);
     float nearMask = 1.0 - smoothstep(nearRidge, nearRidge + 0.008, ray.y);
-    color = mix(color, vec3(0.20, 0.24, 0.22), farMask * 0.82);
-    color = mix(color, vec3(0.105, 0.135, 0.115), nearMask * 0.88);
+    color = mix(color, uSkyRidge, farMask * 0.82);
+    color = mix(color, uSkyRidge * 0.52, nearMask * 0.88);
     float horizonMist = (1.0 - smoothstep(-0.01, 0.18, ray.y)) * (1.0 - nearMask * 0.65);
-    color = mix(color, vec3(0.43, 0.45, 0.42), horizonMist * 0.22);
+    color = mix(color, uSkyLow, horizonMist * uSkyHaze);
 
     color = pow(max(color, vec3(0.0)), vec3(1.0 / 2.2));
     outColor = vec4(color, 1.0);
@@ -214,6 +220,27 @@ vec3 materialColor() {
     if (vMaterial == 7) return vec3(0.25,0.31,0.14) * (0.90 + 0.10*noise(p*5.0));
     if (vMaterial == 8) return vec3(0.27,0.30,0.26) * (0.90 + 0.10*noise(p*5.0));
     if (vMaterial == 9) return vec3(0.61,0.43,0.31) * (0.93 + 0.07*noise(p*4.0));
+    if (vMaterial == 11) {
+        // Desert sand: pale, with dune ripples and a scatter of darker grit.
+        float ripple = sin(p.x * 1.6 + noise(p * 0.5) * 4.0) * 0.5 + 0.5;
+        float grit = noise(p * 14.0);
+        vec3 pale = vec3(0.80, 0.71, 0.53);
+        vec3 shade = vec3(0.62, 0.53, 0.38);
+        return mix(shade, pale, 0.45 + 0.35 * ripple + 0.20 * grit);
+    }
+    if (vMaterial == 12) {
+        // Corroded steel: oxide blotches over dark metal, streaked downward.
+        float blotch = noise(vec2(p.x * 2.2, p.y * 1.1));
+        float streak = noise(vec2(p.x * 9.0, p.y * 0.6));
+        vec3 oxide = mix(vec3(0.42, 0.20, 0.09), vec3(0.58, 0.31, 0.14), streak);
+        return mix(vec3(0.19, 0.17, 0.16), oxide, smoothstep(0.35, 0.75, blotch * 0.7 + streak * 0.3));
+    }
+    if (vMaterial == 13) {
+        // Poured concrete: flat grey, faint form lines, patchy staining.
+        float stain = noise(p * 1.7) * 0.6 + noise(p * 6.0) * 0.4;
+        float form = smoothstep(0.02, 0.06, abs(fract(p.y * 0.55) - 0.5));
+        return vec3(0.52, 0.51, 0.48) * (0.80 + 0.24 * stain) * (0.90 + 0.10 * form);
+    }
     if (vMaterial == 10) {
         // Sea: deep blue-green with a moving noise shimmer along the surface.
         float ripple = noise(p * 2.2) * 0.5 + noise(p * 7.0) * 0.5;

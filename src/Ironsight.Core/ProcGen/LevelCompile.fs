@@ -345,6 +345,21 @@ module LevelCompile =
             pieces.Add(brush (Vector3(center.X + halfX * 0.48f, bottom + height + 0.20f, center.Z + halfZ * 0.20f)) (Vector3(center.X + halfX * 0.66f, bottom + height + 1.25f, center.Z + halfZ * 0.42f)) Brick)
         pieces.ToArray()
 
+    /// A procedural mesh flattened into world triangles. MeshGen and the level
+    /// compiler share one MeshVertex, so this is a placement and a rewind of
+    /// the material id — no conversion, no second geometry format.
+    let private propTriangles (mesh: ProceduralMesh) (position: Vector3) (yaw: float32) =
+        let placed = mesh |> MeshGen.rotateY yaw |> MeshGen.translate position
+        Array.init (placed.Indices.Length / 3) (fun triangle ->
+            let corner offset = placed.Vertices[int placed.Indices[triangle * 3 + offset]]
+            let a, b, c = corner 0, corner 1, corner 2
+            let normal =
+                let face = Vector3.Cross(b.Position - a.Position, c.Position - a.Position)
+                if face.LengthSquared() < 1e-12f then Vector3.UnitY else Vector3.Normalize face
+            { A = a.Position; B = b.Position; C = c.Position
+              Normal = normal
+              Material = Materials.all[a.MaterialId] })
+
     let private faces (item: Brush) =
         let min, max = item.Bounds.Min, item.Bounds.Max
         let positions =
@@ -562,6 +577,7 @@ module LevelCompile =
                         let reach = Vector3(size.X * 0.5f + 0.6f, 0.0f, size.Z * 0.5f + 0.6f) * facing
                         covers.Add { Pos = Vector3(center.X, 0.0f, center.Z) + reach; PeekDir = facing; Crouch = true; Owner = None }
             | Ramp(startPoint, endPoint, width, material) -> sloped.AddRange(rampTriangles startPoint endPoint width material)
+            | Prop(mesh, position, yaw) -> sloped.AddRange(propTriangles mesh position yaw)
             | Heightfield(center, size, cells, height, material) ->
                 // Terrain is notched wherever a trench crosses it, so a trench
                 // network works on a hilltop and not only on flat ground. The

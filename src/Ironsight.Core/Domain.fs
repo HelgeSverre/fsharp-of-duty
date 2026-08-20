@@ -105,7 +105,11 @@ type Soldier =
     member this.IsAlive = this.Health > Units.health 0.0f
     member this.IsDead = not this.IsAlive
 
-type Material = Brick | Plaster | Wood | Mud | Snow | Sandbag | Metal | UniformOlive | UniformFeldgrau | Skin | Water
+type Material =
+    | Brick | Plaster | Wood | Mud | Snow | Sandbag | Metal | UniformOlive | UniformFeldgrau | Skin | Water
+    // Appended after Water so every existing on-disk material tag keeps its
+    // index (see Materials.all).
+    | Sand | RustedMetal | Concrete
 
 type Brush =
     { Bounds: Aabb

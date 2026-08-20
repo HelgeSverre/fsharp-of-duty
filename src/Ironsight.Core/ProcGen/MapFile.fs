@@ -154,6 +154,14 @@ module MapFile =
 
     let private writeItem (writer: BinaryWriter) item =
         match item with
+        | Prop _ ->
+            // A prop carries arbitrary generated geometry — a mesh, not a
+            // handful of numbers — so there is no compact on-disk form for it.
+            // Maps that use props ship as builtins, which the client resolves
+            // by name and generates itself. Loud, because silently dropping the
+            // geometry would serve a map with holes in it.
+            failwith "Prop geometry has no .map representation; ship this map as a builtin"
+
         | Street(length, width, surface) ->
             writer.Write 1uy
             writer.Write length

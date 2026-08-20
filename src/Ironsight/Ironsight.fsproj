@@ -39,6 +39,7 @@
     <Compile Include="Input.fs" />
     <Compile Include="GlUtil.fs" />
     <Compile Include="Shaders.fs" />
+    <Compile Include="SkyPalette.fs" />
     <Compile Include="NetworkClient.fs" />
     <Compile Include="OnlineWorld.fs" />
     <Compile Include="RenderInterpolation.fs" />

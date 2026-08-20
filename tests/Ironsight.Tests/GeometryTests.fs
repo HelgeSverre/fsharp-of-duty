@@ -155,6 +155,36 @@ module GeometryTests =
         player.Position
 
     [<Fact>]
+    let ``a prop is solid: you stand on it and cannot walk through it`` () =
+        // Props are how the level gets round and angled geometry out of a brush
+        // set that is otherwise axis-aligned boxes. They are only worth having
+        // if they collide, so this walks a player into one and onto one.
+        let drum =
+            MeshGen.cylinder 16 2.0f 3.0f RustedMetal |> MeshGen.rotateX (MathF.PI * 0.5f)
+        let level =
+            LevelDsl.level "Props"
+                [ LevelDsl.street 80.0f 30.0f Sand
+                  LevelDsl.prop drum (Vector3(0.0f, 1.5f, 0.0f)) 0.0f ]
+            |> LevelCompile.compile
+        // Dropped from above, the player comes to rest on top of the drum
+        // rather than falling through it to the street.
+        let landed =
+            let world = Sim.createTrainingWorld 3UL
+            let mutable player = { world.Player with Position = Vector3(0.0f, 6.0f, 0.0f); Velocity = Vector3.Zero }
+            let still = { Sequence = 0L; Move = Vector2.Zero; Look = Vector2.Zero; Buttons = InputButtons.None }
+            for _ in 1..120 do
+                player <- Movement.step Tuning.TickDuration still level player
+            player.Position
+        Assert.True(landed.Y > 2.5f, $"expected to land on the drum, ended at y={landed.Y}")
+        // Walking at its flank is stopped by it, well short of the far side.
+        let blocked = walkForward level (Vector3(0.0f, 0.0f, -8.0f)) 180
+        Assert.True(blocked.Z < -2.0f, $"expected the drum to block the walk, reached z={blocked.Z}")
+        // And it is drawn, not merely collidable.
+        let bare =
+            LevelDsl.level "Props" [ LevelDsl.street 80.0f 30.0f Sand ] |> LevelCompile.compile
+        Assert.True(level.Vertices.Length > bare.Vertices.Length, "the prop contributed no geometry")
+
+    [<Fact>]
     let ``a player walks up a gentle slope and gains height`` () =
         // 20 degrees: tan 20 is about 0.36.
         let level = rampLevel 0.36f

@@ -285,6 +285,13 @@ type Renderer(gl: GL) =
             uniform1f skyProgram "uPitch" cameraPitch
             uniform1f skyProgram "uAspect" (float32 width / float32 (max 1 height))
             uniform1f skyProgram "uTanHalfFov" (MathF.Tan(fieldOfView * 0.5f))
+            let sky = SkyPalette.forLevel world.Level.Name
+            uniform3 skyProgram "uSkyLow" sky.Low
+            uniform3 skyProgram "uSkyHigh" sky.High
+            uniform3 skyProgram "uSkyCloud" sky.Cloud
+            uniform3 skyProgram "uSkyRidge" sky.Ridge
+            uniform1f skyProgram "uSkyCloudAmount" sky.CloudAmount
+            uniform1f skyProgram "uSkyHaze" sky.Haze
             gl.BindVertexArray vao
             gl.DrawArrays(PrimitiveType.Triangles, 0, 3u)
             gl.Enable EnableCap.CullFace

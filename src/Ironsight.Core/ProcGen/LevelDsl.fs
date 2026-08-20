@@ -13,6 +13,15 @@ type LevelItem =
     | Trench of startPoint: Vector3 * endPoint: Vector3 * width: float32
     | Mg42 of position: Vector3 * facing: float32 * owner: Team
     | Block of center: Vector3 * size: Vector3 * material: Material
+    /// Arbitrary procedural geometry placed in the world: whatever MeshGen can
+    /// build — cylinders, lathes, trusses, unions of all three — dropped in at
+    /// a position and a yaw. This is how the level gets round and angled shapes
+    /// out of a brush set that is otherwise axis-aligned boxes.
+    ///
+    /// It contributes rendering and collision, but NOT a nav obstruction: the
+    /// navmesh only consults brushes. Put a Block inside anything a bot must
+    /// path around; the prop shell hides it.
+    | Prop of mesh: ProceduralMesh * position: Vector3 * yaw: float32
     /// A genuinely sloped surface between two heights, solid down to the ground
     /// beneath it. Walkable if the grade is inside the slope limit.
     | Ramp of startPoint: Vector3 * endPoint: Vector3 * width: float32 * material: Material
@@ -41,6 +50,7 @@ module LevelDsl =
     let trench startPoint endPoint width = Trench(startPoint, endPoint, width)
     let mg42 position facing owner = Mg42(position, facing, owner)
     let block center size material = Block(center, size, material)
+    let prop mesh position yaw = Prop(mesh, position, yaw)
     let ramp startPoint endPoint width material = Ramp(startPoint, endPoint, width, material)
     let heightfield center size cells height material = Heightfield(center, size, cells, height, material)
     let water height = WaterPlane height
