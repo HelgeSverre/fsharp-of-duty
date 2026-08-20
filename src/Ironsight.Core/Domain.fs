@@ -257,6 +257,10 @@ type InputButtons =
     | Weapon3 = 1024
     | Weapon4 = 2048
     | Weapon5 = 4096
+    /// Scroll wheel, Half-Life style: step through the carried weapons in
+    /// slot order rather than jumping to a category.
+    | WeaponNext = 8192
+    | WeaponPrev = 16384
 
 [<Struct>]
 type InputFrame =

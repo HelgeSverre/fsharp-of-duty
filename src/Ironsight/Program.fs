@@ -67,6 +67,7 @@ module Program =
     let private weaponKeys =
         InputButtons.Weapon1 ||| InputButtons.Weapon2 ||| InputButtons.Weapon3
         ||| InputButtons.Weapon4 ||| InputButtons.Weapon5
+        ||| InputButtons.WeaponNext ||| InputButtons.WeaponPrev
 
     let private hitMarkerKind events =
         let hits = events |> List.choose (function HitConfirmed(_, lethal) -> Some lethal | _ -> None)

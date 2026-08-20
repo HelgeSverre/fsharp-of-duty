@@ -691,6 +691,30 @@ module ServerTests =
         Assert.Equal("Kar98k", heldName ())
 
     [<Fact>]
+    let ``the scroll wheel switches weapons online`` () =
+        // Same mask that used to swallow the number keys: the scroll bits have
+        // to be let through too or the wheel is dead online only.
+        let host = MatchHost(TeamDeathmatch, TestKit.streetArena "Scroll range")
+        let playerId, _ = host.TryAddPlayer("Scroller", weaponName = "Kar98k").Value
+        let otherId, _ = host.TryAddPlayer("Other").Value
+        TestKit.readyUp host [ playerId; otherId ]
+        let heldName () =
+            let player = host.Snapshot().Players[playerId]
+            player.Slots[player.Active].Class.Name
+        Assert.Equal("Kar98k", heldName ())
+        let scroll button =
+            let mutable sequence = 1L
+            for _ in 1..40 do
+                applyCustom sequence 0.0f 0.0f (int button) host playerId
+                host.AdvanceTick()
+                sequence <- sequence + 1L
+        scroll InputButtons.WeaponNext
+        Assert.Equal(Tuning.sidearm(host.Snapshot().Players[playerId].Team).Name, heldName ())
+        // Two slots, so back the other way returns to the primary.
+        scroll InputButtons.WeaponPrev
+        Assert.Equal("Kar98k", heldName ())
+
+    [<Fact>]
     let ``ammunition spent on one weapon survives a switch away and back`` () =
         // Per-slot state is the point of carrying a kit: the sidearm must not
         // share the rifle's magazine, and neither may be silently refilled.

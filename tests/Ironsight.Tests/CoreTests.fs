@@ -392,6 +392,39 @@ module CoreTests =
         Assert.False lockedByEmpty
         Assert.Equal(1, untouched.Active)
 
+    [<Fact>]
+    let ``the scroll wheel walks every carried weapon in slot order`` () =
+        // Half-Life/Counter-Strike invnext: it steps through the inventory
+        // rather than jumping by category, so it always reaches every gun even
+        // when two share a key.
+        let world = Sim.createTrainingWorld 5UL
+        let kit =
+            { world.Player with
+                Slots =
+                    [| Tuning.weaponSlot Tuning.kar98k 4
+                       Tuning.weaponSlot Tuning.m1911 3
+                       Tuning.weaponSlot Tuning.m1897 3 |]
+                Active = 0 }
+        // Complete a switch: the request only starts one, and it lands 0.35s on.
+        let settle player button =
+            let started, _ = Sim.stepWeaponSwitch (input 1L button Vector2.Zero) player
+            let mutable current = started
+            for _ in 1 .. int (0.35f * float32 Tuning.TickRate) + 1 do
+                let stepped, _ = Sim.stepWeaponSwitch (input 2L InputButtons.None Vector2.Zero) current
+                current <- stepped
+            current
+        let next = settle kit InputButtons.WeaponNext
+        Assert.Equal(1, next.Active)
+        let wrapped = settle (settle next InputButtons.WeaponNext) InputButtons.WeaponNext
+        // 0 -> 1 -> 2 -> 0: it wraps rather than stopping at the end.
+        Assert.Equal(0, wrapped.Active)
+        // And backwards from the first slot wraps to the last.
+        Assert.Equal(2, (settle wrapped InputButtons.WeaponPrev).Active)
+        // Nothing to cycle with a single weapon.
+        let lone = { kit with Slots = [| Tuning.weaponSlot Tuning.kar98k 4 |]; Active = 0 }
+        let _, locked = Sim.stepWeaponSwitch (input 1L InputButtons.WeaponNext Vector2.Zero) lone
+        Assert.False locked
+
     let private makePlayer id team : NetworkPlayer =
         { Id = EntityId id; Name = string id; Team = team; Position = Vector3.Zero; Velocity = Vector3.Zero
           Yaw = 0.0f; Pitch = 0.0f; Stance = Standing; Sprinting = false; Ads = 0.0f

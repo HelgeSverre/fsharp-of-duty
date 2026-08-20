@@ -146,6 +146,11 @@ offline sandbox uses, so a gun sits under the same key in both:
 | 4 | Scoped |
 | 5 | Heavy (shotgun, BAR) |
 
+The scroll wheel steps through the carried weapons in slot order instead,
+the way Half-Life and Counter-Strike bind `invnext`/`invprev` — it ignores
+categories, so it always reaches every gun even when two share a key, and it
+wraps at both ends.
+
 The category comes from the weapon's own kind and fire mode rather than a table
 of inventory positions, so it describes a two-weapon kit and the twelve-weapon
 offline loadout alike. A key holding nothing is a no-op. Switching takes 0.35 s,

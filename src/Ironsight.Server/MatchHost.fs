@@ -330,7 +330,8 @@ type MatchHost(mode: GameMode, ?matchLevel: Level, ?disconnectGrace: TimeSpan, ?
                             // Weapon keys were masked off while an online player
                             // carried a single slot; with a kit they select it.
                             ||| InputButtons.Weapon1 ||| InputButtons.Weapon2 ||| InputButtons.Weapon3
-                            ||| InputButtons.Weapon4 ||| InputButtons.Weapon5)
+                            ||| InputButtons.Weapon4 ||| InputButtons.Weapon5
+                            ||| InputButtons.WeaponNext ||| InputButtons.WeaponPrev)
                     let buttons = enum<InputButtons> (int (rawButtons &&& allowedButtons))
                     let input = { Sequence = sequence; Move = Vector2(moveX, moveY); Look = Vector2(lookX, lookY); Buttons = buttons }
                     let requestedTick = Protocol.tryInt64 "estimatedServerTick" message |> Option.defaultValue state.Tick

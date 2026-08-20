@@ -56,6 +56,10 @@ type InputSampler(context: IInputContext) =
     let mutable lastMenuPointer = Vector2(System.Single.NaN, System.Single.NaN)
     let mutable lookSensitivity = 1.0f
     let mutable gamepadSensitivity = 1.0f
+    // Scroll notches waiting to be turned into weapon steps. Accumulated on
+    // the mouse callback and drained one per sampled frame, so a fast flick
+    // walks the inventory instead of collapsing into a single step.
+    let mutable scrollPending = 0
     let mutable adsToggleEnabled = false
     let mutable adsLatched = false
     let mutable adsPrevHeld = false
@@ -159,6 +163,13 @@ type InputSampler(context: IInputContext) =
             device.add_MouseDown(fun _ button ->
                 if button = MouseButton.Left then
                     if menuActive then pending <- { pending with Clicked = true } else fireLatched <- true)
+            device.add_Scroll(fun _ wheel ->
+                if not menuActive then
+                    let notches = int (round wheel.Y)
+                    // A trackpad reports fractional deltas; anything non-zero
+                    // still counts as one notch so it is not silently lost.
+                    let step = if notches <> 0 then notches elif wheel.Y > 0.0f then 1 elif wheel.Y < 0.0f then -1 else 0
+                    scrollPending <- System.Math.Clamp(scrollPending + step, -8, 8))
             device.add_MouseMove(fun _ position ->
                 mousePosition <- position
                 if firstMouseSample then firstMouseSample <- false
@@ -218,6 +229,14 @@ type InputSampler(context: IInputContext) =
             else adsHeld
         if ads then buttons <- buttons ||| InputButtons.Ads
         if reloadLatched then buttons <- buttons ||| InputButtons.Reload
+        // One notch per sampled frame. The sim ignores further requests while a
+        // switch is in flight, so the leftovers queue rather than being eaten.
+        if scrollPending > 0 then
+            buttons <- buttons ||| InputButtons.WeaponNext
+            scrollPending <- scrollPending - 1
+        elif scrollPending < 0 then
+            buttons <- buttons ||| InputButtons.WeaponPrev
+            scrollPending <- scrollPending + 1
         // Hold-to-crouch is the default; toggle mode latches here in the input
         // layer and simply keeps the button held, so the simulation only ever
         // sees hold semantics.
@@ -258,6 +277,8 @@ type InputSampler(context: IInputContext) =
         escapeLatched <- false
         loadoutLatched <- false
         chatLatched <- false
+        // Notches spun while a menu was open must not fire on resume.
+        scrollPending <- 0
         pending <- { MenuInput.empty with TextInput = pending.TextInput }
         if value then
             suppressedPadButtons <- Set.empty

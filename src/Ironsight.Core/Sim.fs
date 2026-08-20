@@ -196,14 +196,23 @@ module Sim =
         // category. Holding the key is rate-limited naturally by the 0.35 s
         // Switching state, which ignores requests while in flight.
         let requestedWeapon =
-            requestedCategory
-            |> Option.bind (fun category ->
+            match requestedCategory with
+            | Some category ->
                 match Tuning.categorySlots player.Slots category with
                 | [||] -> None
                 | members ->
                     match Array.tryFindIndex ((=) player.Active) members with
                     | Some position -> Some members[(position + 1) % members.Length]
-                    | None -> Some members[0])
+                    | None -> Some members[0]
+            | None ->
+                // Scroll wheel steps through the carried weapons in slot order,
+                // the way Half-Life and Counter-Strike bind invnext/invprev —
+                // it ignores categories, so it always reaches every gun.
+                let step =
+                    (if Input.hasButton InputButtons.WeaponNext input.Buttons then 1 else 0)
+                    - (if Input.hasButton InputButtons.WeaponPrev input.Buttons then 1 else 0)
+                if step = 0 || player.Slots.Length < 2 then None
+                else Some((player.Active + step + player.Slots.Length) % player.Slots.Length)
         match player.Slots[player.Active].State with
         | Switching(incoming, remaining) when remaining <= Tuning.TickDuration ->
             { withActiveState Ready player with Active = incoming }, false
