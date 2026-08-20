@@ -70,6 +70,12 @@ type OnlineGrenade =
       Position: Vector3
       Fuse: float32 }
 
+/// The server closed the socket before completing the join — banned, room
+/// full, no such room, or an incompatible hello. The close frame's reason
+/// rides along. Retrying cannot succeed, so callers must stop auto-retrying
+/// and surface the reason instead of hammering the handshake.
+exception OnlineRefused of Reason: string
+
 [<Struct>]
 type OnlineEvent =
     { Id: int64
@@ -281,6 +287,10 @@ type OnlineClient(serverUri: Uri, playerName: string, requestedMode: GameMode, w
     let mutable sendTask: Task = Task.CompletedTask
     let mutable closing = 0
     let mutable disposed = 0
+    // The server's parting words from the most recent close frame. A close
+    // that arrives before the welcome is a policy refusal (ban, full room,
+    // no such room), and this is the only place the reason survives.
+    let mutable closeDescription: string option = None
     let receiveBuffer = Array.zeroCreate<byte> (256 * 1024)
 
     let jsonOptions = JsonSerializerOptions(JsonSerializerDefaults.Web)
@@ -295,8 +305,20 @@ type OnlineClient(serverUri: Uri, playerName: string, requestedMode: GameMode, w
         let mutable finished = false
         let mutable closed = false
         while not finished && not closed do
-            let! result = socket.ReceiveAsync(Memory(receiveBuffer, total, receiveBuffer.Length - total), cancellation.Token)
-            if result.MessageType = WebSocketMessageType.Close then closed <- true
+            // The ArraySegment overload, not Memory: only it reports the close
+            // status and description, which is how a refusal reason survives.
+            let! result = socket.ReceiveAsync(ArraySegment(receiveBuffer, total, receiveBuffer.Length - total), cancellation.Token)
+            if result.MessageType = WebSocketMessageType.Close then
+                closed <- true
+                // PolicyViolation is the server saying no; the description is
+                // only how it phrased it. Keying on the description meant a
+                // refusal that forgot to attach one read as a transport blip
+                // and got retried forever.
+                if closeDescription.IsNone && result.CloseStatus = Nullable WebSocketCloseStatus.PolicyViolation then
+                    closeDescription <-
+                        Some(
+                            if String.IsNullOrWhiteSpace result.CloseStatusDescription then "Refused by the server."
+                            else result.CloseStatusDescription)
             else
                 total <- total + result.Count
                 finished <- result.EndOfMessage
@@ -405,7 +427,10 @@ type OnlineClient(serverUri: Uri, playerName: string, requestedMode: GameMode, w
                    sessionToken = requestedSessionToken |}
         let! welcome = receiveDocument ()
         match welcome with
-        | None -> invalidOp "Server closed before welcome."
+        | None ->
+            match closeDescription with
+            | Some reason -> raise (OnlineRefused reason)
+            | None -> invalidOp "Server closed before welcome."
         | Some document ->
             use document = document
             let root = document.RootElement

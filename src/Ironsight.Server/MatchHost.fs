@@ -68,7 +68,13 @@ type MatchHost(mode: GameMode, ?matchLevel: Level, ?disconnectGrace: TimeSpan, ?
     // Op elevation is per-connection and deliberately not persisted: it is
     // dropped in RemovePlayer, so a resumed session must say /op again.
     let mutable ops: Set<EntityId> = Set.empty
-    let mutable lastOpAttemptTick: Map<EntityId, int64> = Map.empty
+    // Failed /op guesses are throttled by client *address*, not player id:
+    // every join mints a fresh id, so an id-keyed budget reset on every
+    // reconnect and let one client guess the shared key at one guess per
+    // second per slot, forever. Addresses outlive connections (Bans remembers
+    // them), so the budget survives a leave/rejoin round trip. Entries are
+    // pruned on insert so sweeping addresses cannot grow the map unbounded.
+    let mutable lastOpAttemptTick: Map<string, int64> = Map.empty
     // Kicking has no socket to close — sockets are locals in handleSocket and
     // nothing stores them — so the victim's own receive loop polls this.
     let mutable kicked: Set<EntityId> = Set.empty
@@ -81,8 +87,8 @@ type MatchHost(mode: GameMode, ?matchLevel: Level, ?disconnectGrace: TimeSpan, ?
     let mutable lastAnnounceTick: Map<EntityId, int64> = Map.empty
 
     /// True once per player per second, in ticks. Callers already hold the gate.
-    let cooledSince (stamps: Map<EntityId, int64>) id =
-        match Map.tryFind id stamps with
+    let cooledSince (stamps: Map<'a, int64>) key =
+        match Map.tryFind key stamps with
         | Some tick -> state.Tick - tick >= int64 Tuning.TickRate
         | None -> true
 
@@ -99,6 +105,14 @@ type MatchHost(mode: GameMode, ?matchLevel: Level, ?disconnectGrace: TimeSpan, ?
         if cooledSince lastAnnounceTick id then
             lastAnnounceTick <- Map.add id state.Tick lastAnnounceTick
             enqueue None event
+
+    /// Length-checked constant-time comparison, so guessing the op key cannot
+    /// be helped by timing how fast a wrong guess fails.
+    let matchesOpKey (candidate: string) (expected: string) =
+        let candidateBytes = Text.Encoding.UTF8.GetBytes candidate
+        let expectedBytes = Text.Encoding.UTF8.GetBytes expected
+        candidateBytes.Length = expectedBytes.Length
+        && Security.Cryptography.CryptographicOperations.FixedTimeEquals(candidateBytes, expectedBytes)
 
     let clamp (minimum: float32) (maximum: float32) (value: float32) = Math.Clamp(value, minimum, maximum)
     let selectedWeapon team weaponName =
@@ -375,9 +389,9 @@ type MatchHost(mode: GameMode, ?matchLevel: Level, ?disconnectGrace: TimeSpan, ?
                 inputCredits <- Map.remove id inputCredits
                 // Not in RemovePlayer: the slot is still resumable during the
                 // grace, and clearing there would let a flooder reset his chat
-                // and op-guess throttles with a leave/rejoin round trip.
+                // throttle with a leave/rejoin round trip. Op-guess stamps are
+                // keyed by address, so they need no per-id cleanup here.
                 lastChatTick <- Map.remove id lastChatTick
-                lastOpAttemptTick <- Map.remove id lastOpAttemptTick
                 lastAnnounceTick <- Map.remove id lastAnnounceTick
                 sessionOwners <- sessionOwners |> Map.filter (fun _ owner -> owner <> id)
             let readyPlayers = state.Players |> Map.toSeq |> Seq.filter (fun (_, player) -> player.Connected && player.Ready) |> Seq.length
@@ -778,17 +792,28 @@ type MatchHost(mode: GameMode, ?matchLevel: Level, ?disconnectGrace: TimeSpan, ?
     member _.TryChatCredit(id: EntityId) = lock gate (fun () -> tryChatCredit id)
 
     /// Grants op to a player who typed the right key. Failed guesses are
-    /// throttled to one per second per player, in ticks like the chat cooldown:
-    /// the connection limiter's 120 msg/s is a flood guard, not a rate a shared
-    /// secret should be guessable at.
-    member _.TryElevate(id: EntityId, key: string) =
+    /// throttled to one per second per client *address* (falling back to the
+    /// connection id when no address is resolvable), in ticks like the chat
+    /// cooldown: the connection limiter's 120 msg/s is a flood guard, not a
+    /// rate a shared secret should be guessable at.
+    member _.TryElevate(id: EntityId, address: string option, key: string) =
         lock gate (fun () ->
-            if String.IsNullOrEmpty opKey || not (cooledSince lastOpAttemptTick id) || not (Map.containsKey id state.Players) then false
-            elif String.Equals(key, opKey, StringComparison.Ordinal) then
+            let throttleKey =
+                address
+                |> Option.filter (fun value -> not (String.IsNullOrWhiteSpace value))
+                |> Option.defaultWith (fun () -> $"id:{id}")
+            if String.IsNullOrEmpty opKey || not (cooledSince lastOpAttemptTick throttleKey) || not (Map.containsKey id state.Players) then false
+            elif matchesOpKey key opKey then
                 ops <- Set.add id ops
                 true
             else
-                lastOpAttemptTick <- Map.add id state.Tick lastOpAttemptTick
+                // Keep only recent failures: the point of keying by address is
+                // surviving a reconnect, not remembering every address forever.
+                let stale tick = state.Tick - tick >= int64 Tuning.TickRate * 300L
+                lastOpAttemptTick <-
+                    lastOpAttemptTick
+                    |> Map.add throttleKey state.Tick
+                    |> Map.filter (fun _ tick -> not (stale tick))
                 false)
 
     member _.IsOp(id: EntityId) = lock gate (fun () -> Set.contains id ops)

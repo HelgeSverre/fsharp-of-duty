@@ -67,6 +67,51 @@ module IntegrationTests =
 
     [<Fact>]
     [<Trait("Category", Integration)>]
+    let ``a refused join reaches the client as a reason, not a retry`` () =
+        // The refusal has to survive as an exception the caller can act on: a
+        // client that treats "no such room" as a transport blip reconnects
+        // every couple of seconds forever against a door that is never opening.
+        // An unknown room id falls back to any room of the asked-for mode, so a
+        // refusal needs a server hosting no such mode at all.
+        let config = IO.Path.Combine(IO.Path.GetTempPath(), $"ironsight-ffa-only-{Guid.NewGuid():N}.json")
+        IO.File.WriteAllText(
+            config,
+            """{ "rooms": [ { "id": "ffa", "name": "FFA only", "mode": "FreeForAll", "level": "depot" } ] }""")
+        let previous = Environment.GetEnvironmentVariable "IRONSIGHT_CONFIG"
+        Environment.SetEnvironmentVariable("IRONSIGHT_CONFIG", config)
+        let app, uri = try startServer () finally Environment.SetEnvironmentVariable("IRONSIGHT_CONFIG", previous)
+        try
+            use client = new OnlineClient(uri, "Lost", TeamDeathmatch, "Kar98k", room = "no-such-room")
+            let refusal =
+                Assert.Throws<OnlineRefused>(fun () -> client.ConnectAsync().GetAwaiter().GetResult())
+            // The close frame's own words, carried through the handshake.
+            Assert.False(String.IsNullOrWhiteSpace refusal.Reason)
+            Assert.Contains("room", refusal.Reason, StringComparison.OrdinalIgnoreCase)
+        finally
+            app.StopAsync().GetAwaiter().GetResult()
+            try IO.File.Delete config with _ -> ()
+
+    [<Fact>]
+    [<Trait("Category", Integration)>]
+    let ``readiness reports ready only while the rooms are still ticking`` () =
+        let app, uri = startServer ()
+        try
+            use http = new Net.Http.HttpClient()
+            let readiness () =
+                http.GetAsync($"http://127.0.0.1:{uri.Port}/health/ready").GetAwaiter().GetResult()
+            // Booting counts as ready: no room has ticked yet, so there is no
+            // stale heartbeat to fail on.
+            use booting = readiness ()
+            Assert.Equal(Net.HttpStatusCode.OK, booting.StatusCode)
+            // And it stays ready once the loop is genuinely running.
+            Threading.Thread.Sleep 400
+            use ticking = readiness ()
+            Assert.Equal(Net.HttpStatusCode.OK, ticking.StatusCode)
+        finally
+            app.StopAsync().GetAwaiter().GetResult()
+
+    [<Fact>]
+    [<Trait("Category", Integration)>]
     let ``a player switches to the issued sidearm over a real socket`` () =
         // Three things had to agree for this to work and none of them could be
         // checked in isolation: the server's button mask has to let Weapon1-5

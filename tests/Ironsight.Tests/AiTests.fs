@@ -344,3 +344,28 @@ module AiTests =
         let shots = events |> List.sumBy (function ShotFired(Some(EntityId 10), _, _, _) -> 1 | _ -> 0)
         Assert.True(shots > 0)
         Assert.True(soldiers[1].Health < Units.health 100.0f)
+
+    [<Fact>]
+    let ``pathfinding survives a navmesh denser than its node count`` () =
+        // Lazy-deletion A* re-pushes a node on every cost improvement, so the
+        // total number of pushes is bounded by edges (~8 per node here), not
+        // by nodes. A heap sized by node count overflowed mid-search on open
+        // terrain like this grid.
+        let baseLevel = Levels.paintballArena
+        let side = 48
+        let indexOf x z = z * side + x
+        let nav =
+            [| for z in 0 .. side - 1 do
+                   for x in 0 .. side - 1 do
+                       let neighbours =
+                           [ for dz in -1..1 do
+                                 for dx in -1..1 do
+                                     let nx, nz = x + dx, z + dz
+                                     if (dx <> 0 || dz <> 0) && nx >= 0 && nx < side && nz >= 0 && nz < side then indexOf nx nz ]
+                           |> Array.ofList
+                       { Position = Vector3(float32 x, 0.0f, float32 z); Neighbours = neighbours } |]
+        let level = { baseLevel with Nav = nav }
+        let goal = nav[indexOf (side - 1) (side - 1)]
+        let path = AiBrain.findPath level nav[0].Position goal.Position
+        Assert.NotEmpty path
+        Assert.Equal(goal.Position, List.last path)

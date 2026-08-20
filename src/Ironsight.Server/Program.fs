@@ -250,6 +250,20 @@ module Program =
         // at boot, rather than leaving an operator wondering why it was ignored.
         let identity, rooms = ServerConfig.load matchLevel
         let matches = MatchDirectory(identity, rooms, matchLevel, mapBytes)
+        // Liveness the health check can actually see: every room stamps after
+        // its own successful AdvanceTick, and readiness goes stale when any of
+        // them stops advancing. A hung sim otherwise kept passing checks and
+        // receiving players while the matches on the Machine froze. Two seconds
+        // is ~120 missed ticks; a loaded-but-alive server never approaches that.
+        //
+        // Per room, not one clock for the whole loop: a room whose AdvanceTick
+        // throws every tick is caught and logged, so a single shared stamp kept
+        // being refreshed by the rooms that still worked while that one was
+        // dead to everyone standing in it.
+        //
+        // Empty until the loop's first pass, which is what makes a still-booting
+        // process read ready rather than flapping 503 before it has ticked.
+        let roomHeartbeats = Collections.Concurrent.ConcurrentDictionary<string, int64>()
         builder.Services.AddSingleton matches |> ignore
         builder.Services.AddHostedService(fun _ ->
             { new BackgroundService() with
@@ -264,6 +278,7 @@ module Program =
                     let tickSafely name (host: MatchHost) =
                         try
                             host.AdvanceTick()
+                            roomHeartbeats[name] <- Stopwatch.GetTimestamp()
                             let state = host.Snapshot()
                             for extension in extensions do
                                 extension.OnEvent
@@ -282,7 +297,16 @@ module Program =
         app.UseStaticFiles() |> ignore
         app.UseWebSockets() |> ignore
         app.MapGet("/health/live", Func<string>(fun () -> "ok")) |> ignore
-        app.MapGet("/health/ready", Func<string>(fun () -> "ready")) |> ignore
+        app.MapGet(
+            "/health/ready",
+            Func<IResult>(fun () ->
+                let stale =
+                    roomHeartbeats
+                    |> Seq.exists (fun room ->
+                        Stopwatch.GetElapsedTime(room.Value, Stopwatch.GetTimestamp()) > TimeSpan.FromSeconds 2.0)
+                if stale then Results.StatusCode(StatusCodes.Status503ServiceUnavailable)
+                else Results.Text "ready"))
+        |> ignore
         app.MapGet(
             "/api/leaderboard",
             Func<HttpContext, IResult>(fun context ->

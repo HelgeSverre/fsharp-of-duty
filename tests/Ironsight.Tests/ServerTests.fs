@@ -249,8 +249,9 @@ module ServerTests =
         // Behind Fly every socket's peer is the edge proxy. Banning that would
         // ban every player at once, so Fly-Client-IP wins whenever it is set.
         Assert.Equal("203.0.113.7", Bans.clientAddress "203.0.113.7" "198.51.100.9" "172.16.0.1")
-        // Other proxies: first hop of X-Forwarded-For, the client end of the chain.
-        Assert.Equal("198.51.100.9", Bans.clientAddress "" "198.51.100.9, 172.16.0.1" "172.16.0.1")
+        // Other proxies: the last X-Forwarded-For hop, the one our own proxy
+        // appended. The first hop is client-typed and must never be trusted.
+        Assert.Equal("172.16.0.1", Bans.clientAddress "" "198.51.100.9, 172.16.0.1" "172.16.0.1")
         Assert.Equal("198.51.100.9", Bans.clientAddress "  " " 198.51.100.9 " "172.16.0.1")
         // Direct connection: the socket's peer is genuinely the client.
         Assert.Equal("172.16.0.1", Bans.clientAddress "" "" "172.16.0.1")
@@ -403,7 +404,7 @@ module ServerTests =
         let opId, _ = host.TryAddPlayer("Ally").Value
         let targetId, _ = host.TryAddPlayer("Griefer").Value
         Bans.remember targetId "203.0.113.50"
-        Assert.True(host.TryElevate(opId, "hunter2"))
+        Assert.True(host.TryElevate(opId, None, "hunter2"))
         waitOutCooldown host
         Commands.handleChat [ Commands.builtins ] host opId "/ban Griefer"
         Assert.Contains("Banned Griefer (203.0.113.50).", repliesTo host opId)
@@ -426,7 +427,7 @@ module ServerTests =
         waitOutCooldown host
         Commands.handleChat [ Commands.builtins ] host playerId "/kick Ally"
         Assert.Equal("Unknown command '/kick'. Try /help.", List.last (repliesTo host playerId))
-        Assert.True(host.TryElevate(playerId, "hunter2"))
+        Assert.True(host.TryElevate(playerId, None, "hunter2"))
         waitOutCooldown host
         Commands.handleChat [ Commands.builtins ] host playerId "/help"
         Assert.Contains(repliesTo host playerId, fun usage -> usage.StartsWith "/kick")
@@ -461,13 +462,13 @@ module ServerTests =
     let ``op elevates only on the configured key`` () =
         let host = MatchHost(TeamDeathmatch, opKey = "hunter2")
         let playerId, _ = host.TryAddPlayer("Ally").Value
-        Assert.False(host.TryElevate(playerId, "wrong"))
+        Assert.False(host.TryElevate(playerId, None, "wrong"))
         Assert.False(host.IsOp playerId)
         // Guesses are throttled to one per second, so the right key only lands
         // after the cooldown the wrong one just started.
-        Assert.False(host.TryElevate(playerId, "hunter2"))
+        Assert.False(host.TryElevate(playerId, None, "hunter2"))
         for _ in 1 .. int Tuning.TickRate do host.AdvanceTick()
-        Assert.True(host.TryElevate(playerId, "hunter2"))
+        Assert.True(host.TryElevate(playerId, None, "hunter2"))
         Assert.True(host.IsOp playerId)
         // Elevation is per-connection: a reserved slot comes back unprivileged.
         host.RemovePlayer playerId
@@ -478,9 +479,33 @@ module ServerTests =
         // An unconfigured server has no ops at all — never "everyone is op".
         let host = MatchHost(TeamDeathmatch, opKey = "")
         let playerId, _ = host.TryAddPlayer("Ally").Value
-        Assert.False(host.TryElevate(playerId, ""))
-        Assert.False(host.TryElevate(playerId, "hunter2"))
+        Assert.False(host.TryElevate(playerId, None, ""))
+        Assert.False(host.TryElevate(playerId, None, "hunter2"))
         Assert.False(host.IsOp playerId)
+
+    [<Fact>]
+    let ``op guess throttle follows the address across a rejoin`` () =
+        // Every join mints a fresh player id; if the budget followed the id,
+        // one client could guess the shared key at one guess per second per
+        // slot forever by disconnecting and rejoining.
+        let host = MatchHost(TeamDeathmatch, opKey = "hunter2")
+        let firstId, _ = host.TryAddPlayer("Ally").Value
+        Bans.remember firstId "203.0.113.9"
+        Assert.False(host.TryElevate(firstId, Some "203.0.113.9", "wrong"))
+        host.RemovePlayer firstId
+        Bans.forget firstId
+        let secondId, _ = host.TryAddPlayer("Ally").Value
+        Bans.remember secondId "203.0.113.9"
+        // Same address, brand-new id: still inside the cooldown it started.
+        Assert.False(host.TryElevate(secondId, Some "203.0.113.9", "hunter2"))
+        waitOutCooldown host
+        Assert.True(host.TryElevate(secondId, Some "203.0.113.9", "hunter2"))
+        // A different address has its own budget and is not blocked.
+        let otherId, _ = host.TryAddPlayer("Free Agent").Value
+        Bans.remember otherId "203.0.113.10"
+        Assert.True(host.TryElevate(otherId, Some "203.0.113.10", "hunter2"))
+        Bans.forget secondId
+        Bans.forget otherId
 
     [<Fact>]
     let ``a command answers the caller alone and is never broadcast`` () =
@@ -541,7 +566,7 @@ module ServerTests =
         // Refused before elevation, and refused as an unknown verb so a
         // non-op cannot even confirm the command exists.
         Assert.Equal("Unknown command '/say'. Try /help.", List.last (repliesTo host playerId))
-        Assert.True(host.TryElevate(playerId, "hunter2"))
+        Assert.True(host.TryElevate(playerId, None, "hunter2"))
         waitOutCooldown host
         Commands.handleChat [ Commands.builtins ] host playerId "/say the server is going down"
         // Sender None is what the client renders as a highlighted server line.
@@ -570,7 +595,7 @@ module ServerTests =
     let ``map accepts builtin aliases only and applies between rounds`` () =
         let host = MatchHost(TeamDeathmatch, Levels.canalYard, opKey = "hunter2")
         let playerId, _ = host.TryAddPlayer("Ally").Value
-        Assert.True(host.TryElevate(playerId, "hunter2"))
+        Assert.True(host.TryElevate(playerId, None, "hunter2"))
         Commands.handleChat [ Commands.builtins ] host playerId "/map somebody-elses-map.ironmap"
         Assert.Equal("Unknown map. Builtins only.", List.last (repliesTo host playerId))
         waitOutCooldown host
@@ -591,7 +616,7 @@ module ServerTests =
         let atBoot = Protocol.welcomeFor playerId token Levels.canalYard.Name bootHash "tdm" (host.Snapshot())
         Assert.Equal(Levels.canalYard.Name, atBoot.level)
         Assert.Equal(bootHash, atBoot.mapHash)
-        Assert.True(host.TryElevate(playerId, "hunter2"))
+        Assert.True(host.TryElevate(playerId, None, "hunter2"))
         Commands.handleChat [ Commands.builtins ] host playerId "/map omaha"
         host.Restart()
         let afterSwap = Protocol.welcomeFor playerId token Levels.canalYard.Name bootHash "tdm" (host.Snapshot())

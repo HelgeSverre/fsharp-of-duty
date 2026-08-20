@@ -67,12 +67,16 @@ module Bans =
 
     /// Behind Fly the socket's peer is the proxy, so banning RemoteIpAddress
     /// would ban every player at once. Fly-Client-IP is set by the edge and is
-    /// the only header here that a client cannot forge; X-Forwarded-For is
-    /// accepted only as a fallback for other proxies, taking the first hop.
+    /// the only header here that a client cannot forge. X-Forwarded-For is
+    /// accepted only as a fallback for other proxies, taking the *last* hop:
+    /// proxies append themselves left to right, so the rightmost entry is the
+    /// one your own proxy observed. The first hop is whatever the client
+    /// typed — trusting it would let a socket both dodge a ban and frame
+    /// someone else's address into one.
     let clientAddress (flyClientIp: string) (forwardedFor: string) (remote: string) =
         if not (String.IsNullOrWhiteSpace flyClientIp) then flyClientIp.Trim()
         elif not (String.IsNullOrWhiteSpace forwardedFor) then
-            forwardedFor.Split(',') |> Array.head |> fun value -> value.Trim()
+            forwardedFor.Split(',') |> Array.last |> fun value -> value.Trim()
         else remote
 
     let isBanned address =
@@ -105,8 +109,10 @@ module Commands =
 
     let private op =
         command "op" Everyone "/op <key> - elevate with the server's op key" (fun context arguments ->
+            // The address rides along so the guess throttle survives a
+            // reconnect; see MatchHost.TryElevate.
             match arguments with
-            | [ key ] when context.Host.TryElevate(context.PlayerId, key) -> context.Reply "You are now an op."
+            | [ key ] when context.Host.TryElevate(context.PlayerId, Bans.addressOf context.PlayerId, key) -> context.Reply "You are now an op."
             | _ -> context.Reply "Rejected.")
 
     let private say =

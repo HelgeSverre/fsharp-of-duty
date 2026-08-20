@@ -209,6 +209,15 @@ module Program =
         /// The start or pause menu, optionally with settings pushed over it.
         | Menu of home: MenuHome * state: StartMenuState * settings: SettingsUi.State option
 
+    /// How a background reconnect attempt ended. A refusal is the server
+    /// naming its price — banned, room full, no such room — and retrying
+    /// cannot succeed, so the session stops and the reason surfaces instead
+    /// of hammering the handshake every couple of seconds forever.
+    type ReconnectOutcome =
+        | Reconnected of OnlineClient
+        | Refused of reason: string
+        | Failed
+
     [<EntryPoint>]
     let main args =
         let mutable onlineRequested = args |> Array.contains "--online"
@@ -242,9 +251,14 @@ module Program =
         let mutable renderer: Renderer option = None
         let mutable audio: AudioSystem option = None
         let mutable onlineClient: OnlineClient option = None
-        let mutable reconnectTask: Task<struct (int * OnlineClient option)> option = None
+        let mutable reconnectTask: Task<struct (int * ReconnectOutcome)> option = None
         let mutable connectionGeneration = 0
         let mutable reconnectAfter = DateTimeOffset.MinValue
+        // Exponential backoff for transport-level failures: doubling from 2 s
+        // to a 30 s ceiling, with jitter so a flapping server does not
+        // synchronise every client into a retry stampede. Reset on success.
+        let reconnectJitter = Random()
+        let mutable reconnectAttempts = 0
         let pendingInputs = System.Collections.Generic.Queue<InputFrame>()
         let mutable reconciledTick = -1L
         let mutable lastOnlineEventId = 0L
@@ -347,21 +361,38 @@ module Program =
                 try (ServerDirectory.probeAll (ServerDirectory.load ())).GetAwaiter().GetResult() |> List.toArray |> Some
                 with _ -> None)
 
+        /// Schedules the next reconnect attempt with escalating backoff. The
+        /// first retry stays immediate (reconnectAfter starts at MinValue);
+        /// this only shapes the retries after a failure.
+        let scheduleReconnect () =
+            reconnectAttempts <- reconnectAttempts + 1
+            let ceiling = min (2.0 ** float reconnectAttempts) 30.0
+            reconnectAfter <- DateTimeOffset.UtcNow.AddSeconds(1.0 + reconnectJitter.NextDouble() * ceiling)
+
         let beginReconnect generation token =
             task {
                 let client = new OnlineClient(selectedServerUri, playerName, selectedOnlineMode, selectedOnlineWeapon, ?resumeToken = token, room = selectedOnlineRoom)
                 try
                     do! client.ConnectAsync()
-                    return struct (generation, Some client)
-                with error ->
+                    return struct (generation, Reconnected client)
+                with
+                | :? OnlineRefused as refusal ->
+                    (client :> IDisposable).Dispose()
+                    return struct (generation, Refused refusal.Reason)
+                | error ->
                     Console.Error.WriteLine($"Online reconnect failed: {error.Message}")
                     (client :> IDisposable).Dispose()
-                    return struct (generation, None)
+                    return struct (generation, Failed)
             }
 
         let disconnectOnline () =
             connectionGeneration <- connectionGeneration + 1
             onlineRequested <- false
+            // A new session starts its backoff from scratch: carrying the old
+            // one over meant joining a healthy server after six failures
+            // against a dead one sat at the 30 s ceiling for no reason.
+            reconnectAttempts <- 0
+            reconnectAfter <- DateTimeOffset.MinValue
             onlineClient |> Option.iter closeClient
             onlineClient <- None
             onlineSnapshot <- None
@@ -427,7 +458,15 @@ module Program =
                         onlineClient <- Some client
                         window.Title <- $"IRONSIGHT — ONLINE — {client.ServerUri.Host}"
                     else closeClient client
-                with error ->
+                with
+                | :? OnlineRefused as refusal ->
+                    // Same terminal handling as the update loop's refusal
+                    // branch: the server has said no, so do not let the retry
+                    // loop knock on a closed door.
+                    onlineRequested <- false
+                    Console.Error.WriteLine($"Server refused the connection: {refusal.Reason}")
+                    window.Title <- "IRONSIGHT — JOIN REFUSED"
+                | error ->
                     Console.Error.WriteLine($"Online connection failed: {error.Message}")
                     window.Title <- "IRONSIGHT — CONNECTING")
 
@@ -442,7 +481,8 @@ module Program =
                     reconnectTask <- None
                     let struct (generation, result) = attempt.GetAwaiter().GetResult()
                     match result with
-                    | Some client when onlineRequested && generation = connectionGeneration ->
+                    | Reconnected client when onlineRequested && generation = connectionGeneration ->
+                        reconnectAttempts <- 0
                         if applyServerMap client then
                             onlineClient |> Option.iter closeClient
                             onlineClient <- Some client
@@ -452,11 +492,26 @@ module Program =
                             window.Title <- $"IRONSIGHT — ONLINE — {client.ServerUri.Host}"
                         else
                             closeClient client
-                            reconnectAfter <- DateTimeOffset.UtcNow.AddSeconds 2.0
-                    | Some client -> closeClient client
-                    | None when onlineRequested && generation = connectionGeneration ->
-                        reconnectAfter <- DateTimeOffset.UtcNow.AddSeconds 2.0
-                    | None -> ()
+                            scheduleReconnect ()
+                    | Reconnected client -> closeClient client
+                    | Refused reason when onlineRequested && generation = connectionGeneration ->
+                        // Terminal: the server answered the join itself (ban,
+                        // full room, no such room). Stop auto-retrying — a
+                        // refused client hammering the handshake forever is
+                        // exactly wrong — and say why in the log, the title,
+                        // and the chat log so it is visible on any screen.
+                        disconnectOnline ()
+                        Console.Error.WriteLine($"Server refused the connection: {reason}")
+                        feedback <-
+                            { feedback with
+                                Chat =
+                                    { Text = $"SERVER: {reason}"; Highlight = true; Remaining = Feedback.chatLifetime }
+                                    :: feedback.Chat
+                                    |> List.truncate Feedback.chatCapacity }
+                        window.Title <- "IRONSIGHT — JOIN REFUSED"
+                    | Refused _ -> ()
+                    | Failed when onlineRequested && generation = connectionGeneration -> scheduleReconnect ()
+                    | Failed -> ()
                 | _ -> ()
                 match sampler with
                 | Some inputSampler ->

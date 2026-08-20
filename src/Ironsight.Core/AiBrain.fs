@@ -13,7 +13,9 @@ module AiBrain =
     // weapon cycles at its natural cadence (and eventually empties + reloads).
     let private wantsFire desired (weapon: WeaponSlot) =
         desired && (weapon.Class.Mode = FullAuto || weapon.BurstIx = 0)
-    let private findPath (level: Level) startPosition goalPosition =
+    /// A* over the navgraph. Public so the heap-invariant test below can reach
+    /// it without a full world.
+    let findPath (level: Level) startPosition goalPosition =
         if level.Nav.Length = 0 then []
         else
             let nearest position =
@@ -26,7 +28,15 @@ module AiBrain =
             let previous = Array.create level.Nav.Length -1
             let closed = Array.create level.Nav.Length false
             let heuristic node = Vector3.Distance(level.Nav[node].Position, level.Nav[goalNode].Position)
-            let heap = Array.create (level.Nav.Length + 1) (struct (0.0f, -1))
+            // Lazy deletion re-pushes a node on every cost improvement, and a
+            // node's cost can improve once per incoming edge, so total pushes
+            // are bounded by the edge count — not the node count. Sizing the
+            // heap by node count overflowed mid-search on open terrain with
+            // many equal-cost paths.
+            let heap =
+                Array.create
+                    (2 + (level.Nav |> Seq.sumBy (fun node -> node.Neighbours.Length)))
+                    (struct (0.0f, -1))
             let mutable heapSize = 0
             let heapAdd f node =
                 heapSize <- heapSize + 1
