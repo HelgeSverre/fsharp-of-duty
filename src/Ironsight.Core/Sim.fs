@@ -221,7 +221,7 @@ module Sim =
         | _ ->
             match requestedWeapon with
             | Some incoming when incoming >= 0 && incoming < player.Slots.Length && incoming <> player.Active ->
-                withActiveState (Switching(incoming, Units.seconds 0.35f)) player, true
+                withActiveState (Switching(incoming, Tuning.WeaponSwitchTime)) player, true
             | _ -> player, false
 
     let step (input: InputFrame) (world: World) =

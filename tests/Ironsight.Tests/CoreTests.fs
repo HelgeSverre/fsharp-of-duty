@@ -375,14 +375,14 @@ module CoreTests =
         Assert.Equal<int array>([| 0 |], Tuning.categorySlots kit.Slots 0)
         Assert.Equal<int array>([| 1 |], Tuning.categorySlots kit.Slots 2)
         // Key 3 is the pistol: the switch starts, locks the weapon clock, and
-        // only lands when the 0.35 s raise finishes.
+        // only lands when the raise finishes.
         let pressing = input 1L InputButtons.Weapon3 Vector2.Zero
         let switching, locked = Sim.stepWeaponSwitch pressing kit
         Assert.True locked
         Assert.Equal(0, switching.Active)
         Assert.Equal(0.0f, switching.Ads)
         let mutable current = switching
-        for _ in 1 .. int (0.35f * float32 Tuning.TickRate) + 1 do
+        for _ in 1 .. int (Units.raw Tuning.WeaponSwitchTime * float32 Tuning.TickRate) + 1 do
             let stepped, _ = Sim.stepWeaponSwitch (input 2L InputButtons.None Vector2.Zero) current
             current <- stepped
         Assert.Equal(1, current.Active)
@@ -405,11 +405,12 @@ module CoreTests =
                        Tuning.weaponSlot Tuning.m1911 3
                        Tuning.weaponSlot Tuning.m1897 3 |]
                 Active = 0 }
-        // Complete a switch: the request only starts one, and it lands 0.35s on.
+        // Complete a switch: the request only starts one, and it lands a
+        // WeaponSwitchTime later.
         let settle player button =
             let started, _ = Sim.stepWeaponSwitch (input 1L button Vector2.Zero) player
             let mutable current = started
-            for _ in 1 .. int (0.35f * float32 Tuning.TickRate) + 1 do
+            for _ in 1 .. int (Units.raw Tuning.WeaponSwitchTime * float32 Tuning.TickRate) + 1 do
                 let stepped, _ = Sim.stepWeaponSwitch (input 2L InputButtons.None Vector2.Zero) current
                 current <- stepped
             current

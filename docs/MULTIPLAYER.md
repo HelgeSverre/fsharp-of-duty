@@ -153,8 +153,9 @@ wraps at both ends.
 
 The category comes from the weapon's own kind and fire mode rather than a table
 of inventory positions, so it describes a two-weapon kit and the twelve-weapon
-offline loadout alike. A key holding nothing is a no-op. Switching takes 0.35 s,
-during which the weapon clock is frozen — no firing, no reloading — and the
+offline loadout alike. A key holding nothing is a no-op. Switching takes
+`Tuning.WeaponSwitchTime` (0.18 s), during which the weapon clock is frozen —
+no firing, no reloading — and the
 switch is replicated, so other players see the raise rather than a gun that
 teleports into your hands.
 

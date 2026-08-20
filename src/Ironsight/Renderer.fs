@@ -369,7 +369,7 @@ type Renderer(gl: GL) =
                     | _ -> 0.0f
                 let switchPose =
                     match activeSlot.State with
-                    | Switching(_, remaining) -> 1.0f - MathEx.clamp01 (Units.raw remaining / 0.35f)
+                    | Switching(_, remaining) -> 1.0f - MathEx.clamp01 (Units.raw remaining / Units.raw Tuning.WeaponSwitchTime)
                     | _ -> 0.0f
                 // Bolt rifles and the pump shotgun visibly cycle during the
                 // post-shot cooldown: the weapon cants right and pulls back.

@@ -26,6 +26,11 @@ module Tuning =
     let StandingHeight = 1.8f
     let CrouchedHeight = 1.3f
     let ProneHeight = 0.6f
+    /// Time to bring a new weapon up, during which the weapon clock is frozen
+    /// — no firing, no reloading. Tuned against ADS (0.14-0.20 s): a swap that
+    /// costs much more than a sight picture makes the sidearm not worth having.
+    /// The viewmodel's lower/raise animation reads the same number.
+    let WeaponSwitchTime = Units.seconds 0.18f
     let RegenDelay = Units.seconds 4.0f
     let RegenPerSecond = Units.health 40.0f
     let EnemySightRange = 65.0f
