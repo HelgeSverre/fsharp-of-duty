@@ -111,9 +111,21 @@ let triangle (c: Canvas) (a: Vector3) (b: Vector3) (d: Vector3) (colour: Vector3
 let materialColour id =
     match Materials.all[id] with
     | Wood -> Vector3(0.55f, 0.34f, 0.16f)
+    | Plaster -> Vector3(0.82f, 0.84f, 0.86f)
     | Metal -> Vector3(0.62f, 0.65f, 0.70f)
+    | Sandbag -> Vector3(0.58f, 0.48f, 0.30f)
     | Skin -> Vector3(0.85f, 0.66f, 0.52f)
     | UniformOlive -> Vector3(0.34f, 0.38f, 0.22f)
+    | PaintRed -> Vector3(0.95f, 0.06f, 0.08f)
+    | PaintBlue -> Vector3(0.04f, 0.30f, 0.98f)
+    | PaintGreen -> Vector3(0.08f, 0.90f, 0.22f)
+    | PaintYellow -> Vector3(1.0f, 0.82f, 0.04f)
+    | PaintPurple -> Vector3(0.68f, 0.08f, 0.92f)
+    | PaintOrange | FoamOrange -> Vector3(1.0f, 0.30f, 0.03f)
+    | FoamBlue -> Vector3(0.04f, 0.22f, 0.72f)
+    | ToolBlack -> Vector3(0.035f, 0.04f, 0.045f)
+    | WaterBlue -> Vector3(0.05f, 0.52f, 0.88f)
+    | WetDark -> Vector3(0.075f, 0.10f, 0.12f)
     | _ -> Vector3(0.7f, 0.4f, 0.7f)
 
 /// name, world -> (screen right, screen up, towards-viewer depth)

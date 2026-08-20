@@ -15,6 +15,10 @@ module OnlineWorld =
             | "Snow" -> Snow | "Sandbag" -> Sandbag | "Metal" -> Metal
             | "UniformOlive" -> UniformOlive | "UniformFeldgrau" -> UniformFeldgrau
             | "Skin" -> Skin | "Water" -> Water
+            | "PaintRed" -> PaintRed | "PaintBlue" -> PaintBlue | "PaintGreen" -> PaintGreen
+            | "PaintYellow" -> PaintYellow | "PaintPurple" -> PaintPurple | "PaintOrange" -> PaintOrange
+            | "FoamBlue" -> FoamBlue | "FoamOrange" -> FoamOrange
+            | "ToolBlack" -> ToolBlack | "WaterBlue" -> WaterBlue | "WetDark" -> WetDark
             | _ -> Mud
         match event.Kind with
         | "shot" -> Some(ShotFired((if event.EntityId = 0 then None else Some(EntityId event.EntityId)), event.Position, event.Direction, event.Text))
@@ -23,6 +27,20 @@ module OnlineWorld =
         | "blood" -> Some(BloodImpact(event.Position, event.Direction, event.Value > 0.5f))
         | "head-gib" -> Some(HeadGib(event.Position, event.Direction))
         | "explosion" -> Some(Explosion(event.Position, event.Value))
+        | "paint" -> Some(PaintImpact(event.Position, event.Direction, material))
+        | "dart" -> Some(DartImpact(event.Position, event.Direction, event.Value > 0.5f))
+        | "rocket-dud" -> Some(RocketDud(event.Position, event.Direction))
+        | "backblast" -> Some(Backblast(event.Position, event.Direction))
+        | "flame-stream" -> Some(FlameStream(event.Position, event.Position + event.Direction * event.Value))
+        | "flame-impact" -> Some(FlameImpact(event.Position, event.Direction))
+        | "water-impact" -> Some(WaterImpact(event.Position, event.Direction))
+        | "nail-impact" -> Some(NailImpact(event.Position, event.Direction, event.Value > 0.5f))
+        | "harpoon-skewer" -> Some(HarpoonSkewer(event.Position, event.Direction, EntityId event.EntityId))
+        | "harpoon-embedded" -> Some(HarpoonEmbedded(event.Position, event.Direction))
+        | "arrow-impact" -> Some(ArrowImpact(event.Position, event.Direction, event.Value > 0.5f))
+        | "ignited" -> Some(Ignited(EntityId event.EntityId, event.Position))
+        | "extinguished" -> Some(Extinguished(EntityId event.EntityId, event.Position))
+        | "burning" -> Some(Burning(EntityId event.EntityId, event.Position))
         | "footstep" -> Some(FootStep(event.Position, material))
         | "hurt" -> Some(PlayerHurt(event.Direction, Units.health event.Value))
         // The wire text already carries "{speaker}: {line}" pre-formatted, so
@@ -77,6 +95,10 @@ module OnlineWorld =
             let switching = Array.copy slots
             switching[active] <- { switching[active] with State = Switching(player.SwitchTo, Units.seconds player.SwitchRemaining) }
             switching, active
+        elif player.DrawCharge > 0.0f && slots[active].Class.Mechanism = Bow then
+            let drawing = Array.copy slots
+            drawing[active] <- { drawing[active] with State = Drawing(Units.seconds player.DrawCharge) }
+            drawing, active
         else slots, active
 
     let private weaponFor (player: OnlinePlayer) =
@@ -142,7 +164,15 @@ module OnlineWorld =
                 |> Array.filter (fun player -> player.Id <> localId)
                 |> Array.map remoteSoldier
             let grenades = snapshot.Grenades |> Array.map toGrenade
-            { world with Tick = snapshot.Tick; Player = predicted; Soldiers = soldiers; Grenades = grenades; Squads = Map.empty }, pending
+            { world with
+                Tick = snapshot.Tick
+                Player = predicted
+                Soldiers = soldiers
+                Grenades = grenades
+                SpecialProjectiles = [||]
+                PersistentMarks = [||]
+                ElementalStatus = Map.empty
+                Squads = Map.empty }, pending
 
     let applyPrediction level input (world: World) =
         { world with
@@ -160,6 +190,7 @@ module OnlineWorld =
                         Position = remote.Position
                         Facing = remote.Yaw
                         Health = Units.health remote.Health
+                        Weapon = weaponFor remote
                         Behavior = if remote.Alive then soldier.Behavior else Dying(Units.seconds 0.7f) }
                 | _ -> soldier)
         let grenades = snapshot.Grenades |> Array.map toGrenade

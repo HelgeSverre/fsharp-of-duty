@@ -69,6 +69,35 @@ module ServerTests =
         Assert.True(host.Snapshot().Players[playerId].Position.Y <= 0.01f)
 
     [<Fact>]
+    let ``missing input preserves a drawn bow until explicit release`` () =
+        let host = MatchHost(FreeForAll, TestKit.streetArenaWithSpawns "Bow packet range")
+        let archer, _ = host.TryAddPlayer("Archer", weaponName = "Bow").Value
+        let target, _ = host.TryAddPlayer("Target").Value
+        TestKit.readyUp host [ archer; target ]
+        applyCustom 1L 0.0f 0.0f (int InputButtons.Fire) host archer
+        host.AdvanceTick()
+        let started = host.Snapshot().Players[archer]
+        Assert.True(match started.Slots[started.Active].State with Drawing _ -> true | _ -> false)
+        let ammo = started.Slots[started.Active].InMag
+        // No input frames at all: the host must synthesize held Fire rather
+        // than treating the network stall as a release edge.
+        for _ in 1..20 do host.AdvanceTick()
+        let stalled = host.Snapshot().Players[archer]
+        match stalled.Slots[stalled.Active].State with
+        | Drawing charge ->
+            Assert.True(charge > Units.seconds 0.25f)
+            let wire = Protocol.snapshot (host.Snapshot())
+            let archerWire = wire.players |> Array.find (fun player -> player.name = "Archer")
+            Assert.Equal(Units.raw charge, archerWire.drawCharge)
+        | other -> failwith $"packet stall released the bow into {other}"
+        Assert.Equal(ammo, stalled.Slots[stalled.Active].InMag)
+        applyCustom 2L 0.0f 0.0f (int InputButtons.None) host archer
+        host.AdvanceTick()
+        let released = host.Snapshot().Players[archer]
+        Assert.Equal(ammo - 1, released.Slots[released.Active].InMag)
+        Assert.True(match released.Slots[released.Active].State with Cooling _ -> true | _ -> false)
+
+    [<Fact>]
     let ``disconnected reserved player is not a hittable ghost`` () =
         let arena = TestKit.streetArena "Ghost range"
         let host = MatchHost(FreeForAll, arena)
@@ -845,6 +874,7 @@ module ServerTests =
         let arsenal = Protocol.arsenal ()
         let sniper = arsenal.weapons |> Array.find (fun weapon -> weapon.name = Tuning.kar98kSniper.Name)
         let shotgun = arsenal.weapons |> Array.find (fun weapon -> weapon.name = Tuning.m1897.Name)
+        let bow = arsenal.weapons |> Array.find (fun weapon -> weapon.name = Tuning.bow.Name)
         let mg42 = arsenal.weapons |> Array.find (fun weapon -> weapon.name = Tuning.mg42.Name)
 
         Assert.Equal(Tuning.onlineWeapons.Length + 1, arsenal.weapons.Length)
@@ -852,6 +882,7 @@ module ServerTests =
         Assert.Equal(0.18f, sniper.aimDownSightSeconds)
         Assert.Equal(8, shotgun.projectilesPerShot)
         Assert.Equal(128.0f, shotgun.maximumDamagePerShot)
+        Assert.Equal(42.0f, bow.minimumDamagePerProjectile)
         Assert.Equal("Mounted weapon", mg42.availability)
 
     [<Fact>]

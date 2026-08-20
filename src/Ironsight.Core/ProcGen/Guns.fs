@@ -13,6 +13,21 @@ module Guns =
         MeshGen.cylinder 9 radius (max 0.01f (delta.Length())) material
         |> MeshGen.transform (Matrix4x4.CreateFromQuaternion(MathEx.rotationFromZ delta) * Matrix4x4.CreateTranslation((startPoint + endPoint) * 0.5f))
 
+    /// Four triangular cutting fins around the shaft. The point is local Z=0,
+    /// the ferrule/shaft connection is at +Z, and the 45-degree clocking makes
+    /// the blades read as an X when viewed head-on.
+    let private broadhead material =
+        let blade =
+            MeshGen.wedge (Vector3(0.007f, 0.074f, 0.14f)) material
+            |> placed (Vector3(0.0f, 0.037f, 0.07f))
+        let blades =
+            Array.init 4 (fun index ->
+                let angle = MathF.PI * 0.25f + float32 index * MathF.PI * 0.5f
+                blade |> MeshGen.transform (Matrix4x4.CreateRotationZ angle))
+        MeshGen.union
+            [| yield! blades
+               MeshGen.cylinder 6 0.013f 0.045f material |> placed (Vector3(0.0f, 0.0f, 0.118f)) |]
+
     let private rifleArms =
         MeshGen.union
             [| limb 0.115f UniformOlive (Vector3(0.34f, -0.62f, 0.34f)) (Vector3(0.18f, -0.24f, -0.04f))
@@ -287,11 +302,300 @@ module Guns =
                // Rear sight ladder.
                MeshGen.box (Vector3(0.06f, 0.06f, 0.03f)) Metal |> placed (Vector3(0.0f, 0.155f, -0.24f)) |]
 
+    // Tippmann 98-inspired: long receiver, vertical feed neck, oversized
+    // hopper and a rear air bottle make it unmistakable even in silhouette.
+    let private paintballMarker =
+        MeshGen.union
+            [| MeshGen.box (Vector3(0.18f, 0.18f, 0.52f)) Metal |> placed (Vector3(0.0f, 0.03f, -0.30f))
+               MeshGen.cylinder 12 0.035f 0.72f Metal |> placed (Vector3(0.0f, 0.055f, -0.88f))
+               MeshGen.box (Vector3(0.12f, 0.24f, 0.14f)) Metal |> MeshGen.rotateX -0.34f |> placed (Vector3(0.0f, -0.15f, -0.09f))
+               MeshGen.box (Vector3(0.13f, 0.19f, 0.20f)) Metal |> placed (Vector3(0.0f, -0.08f, -0.48f))
+               // Feed neck and broad ellipsoidal gravity hopper.
+               MeshGen.cylinder 10 0.045f 0.16f Metal |> MeshGen.rotateX (MathF.PI * 0.5f) |> placed (Vector3(0.0f, 0.20f, -0.31f))
+               MeshGen.lathe 16
+                   [| Vector2(0.02f, -0.14f); Vector2(0.15f, -0.10f); Vector2(0.20f, 0.0f)
+                      Vector2(0.15f, 0.10f); Vector2(0.02f, 0.14f) |]
+                   PaintBlue
+               |> MeshGen.rotateX (MathF.PI * 0.5f)
+               |> placed (Vector3(0.0f, 0.39f, -0.28f))
+               // Angled ASA and compressed-air bottle behind the grip.
+               MeshGen.cylinder 10 0.045f 0.18f Metal |> MeshGen.rotateX -0.18f |> placed (Vector3(0.0f, -0.015f, 0.035f))
+               MeshGen.cylinder 14 0.085f 0.46f Metal |> MeshGen.rotateX -0.18f |> placed (Vector3(0.0f, -0.06f, 0.22f))
+               MeshGen.cylinder 14 0.095f 0.06f Metal |> MeshGen.rotateX -0.18f |> placed (Vector3(0.0f, -0.02f, 0.46f))
+               MeshGen.box (Vector3(0.025f, 0.08f, 0.03f)) Metal |> placed (Vector3(0.0f, 0.11f, -0.83f)) |]
+
+    // Deliberately toy-like rather than a real firearm: chunky blue shell,
+    // orange muzzle, top priming rail, and a large removable box magazine.
+    let private nerfBlaster =
+        MeshGen.union
+            [| MeshGen.box (Vector3(0.24f, 0.25f, 0.62f)) FoamBlue |> placed (Vector3(0.0f, 0.03f, -0.28f))
+               MeshGen.box (Vector3(0.18f, 0.10f, 0.52f)) FoamOrange |> placed (Vector3(0.0f, 0.15f, -0.29f))
+               MeshGen.cylinder 12 0.075f 0.24f FoamOrange |> placed (Vector3(0.0f, 0.04f, -0.70f))
+               MeshGen.cylinder 12 0.095f 0.08f FoamOrange |> placed (Vector3(0.0f, 0.04f, -0.86f))
+               MeshGen.box (Vector3(0.13f, 0.28f, 0.16f)) FoamBlue |> MeshGen.rotateX -0.35f |> placed (Vector3(0.0f, -0.18f, -0.05f))
+               MeshGen.box (Vector3(0.16f, 0.36f, 0.20f)) FoamOrange |> MeshGen.rotateX -0.08f |> placed (Vector3(0.0f, -0.22f, -0.36f))
+               MeshGen.box (Vector3(0.18f, 0.19f, 0.42f)) FoamBlue |> placed (Vector3(0.0f, 0.03f, 0.20f))
+               MeshGen.box (Vector3(0.20f, 0.23f, 0.06f)) FoamOrange |> placed (Vector3(0.0f, 0.02f, 0.43f))
+               MeshGen.box (Vector3(0.07f, 0.05f, 0.24f)) FoamOrange |> placed (Vector3(0.0f, 0.23f, -0.24f))
+               MeshGen.box (Vector3(0.03f, 0.08f, 0.03f)) FoamOrange |> placed (Vector3(0.0f, 0.13f, -0.69f)) |]
+
+    // M1-style tube launcher: simple olive tube, flared rear venturi, sights,
+    // trigger grip and shoulder rest. The tube stays slim enough to see over.
+    let private bazooka =
+        MeshGen.union
+            [| MeshGen.cylinder 18 0.095f 1.72f UniformOlive |> placed (Vector3(0.0f, 0.06f, -0.48f))
+               MeshGen.cylinder 18 0.115f 0.10f Metal |> placed (Vector3(0.0f, 0.06f, -1.38f))
+               MeshGen.lathe 16
+                   [| Vector2(0.16f, -0.13f); Vector2(0.12f, -0.06f); Vector2(0.095f, 0.06f); Vector2(0.095f, 0.13f) |]
+                   UniformOlive
+               |> placed (Vector3(0.0f, 0.06f, 0.44f))
+               MeshGen.box (Vector3(0.12f, 0.30f, 0.13f)) Wood |> MeshGen.rotateX -0.18f |> placed (Vector3(0.0f, -0.16f, -0.38f))
+               MeshGen.box (Vector3(0.30f, 0.06f, 0.13f)) Metal |> placed (Vector3(0.0f, -0.03f, 0.12f))
+               MeshGen.box (Vector3(0.04f, 0.22f, 0.04f)) Metal |> placed (Vector3(-0.13f, 0.17f, -0.76f))
+               MeshGen.box (Vector3(0.04f, 0.16f, 0.04f)) Metal |> placed (Vector3(-0.13f, 0.15f, -0.18f))
+               MeshGen.box (Vector3(0.03f, 0.04f, 0.60f)) Metal |> placed (Vector3(-0.13f, 0.24f, -0.47f))
+               // Loaded olive warhead peeking from the muzzle.
+               MeshGen.lathe 14
+                   [| Vector2(0.0f, -0.12f); Vector2(0.055f, -0.05f); Vector2(0.055f, 0.10f); Vector2(0.038f, 0.16f) |]
+                   UniformOlive
+               |> placed (Vector3(0.0f, 0.06f, -1.48f)) |]
+
+    // Boring Company-inspired compact propane torch: a white rifle-like shell,
+    // black furniture, exposed burner tube and a bottle tucked underneath.
+    let private flamethrower =
+        MeshGen.union
+            [| MeshGen.box (Vector3(0.22f, 0.24f, 0.62f)) Plaster |> placed (Vector3(0.0f, 0.04f, -0.30f))
+               MeshGen.box (Vector3(0.16f, 0.12f, 0.44f)) ToolBlack |> placed (Vector3(0.0f, 0.17f, -0.28f))
+               MeshGen.cylinder 14 0.050f 0.48f Metal |> placed (Vector3(0.0f, 0.055f, -0.82f))
+               MeshGen.cylinder 14 0.075f 0.12f ToolBlack |> placed (Vector3(0.0f, 0.055f, -1.12f))
+               MeshGen.box (Vector3(0.13f, 0.30f, 0.15f)) ToolBlack |> MeshGen.rotateX -0.30f |> placed (Vector3(0.0f, -0.18f, -0.10f))
+               MeshGen.box (Vector3(0.17f, 0.18f, 0.48f)) ToolBlack |> placed (Vector3(0.0f, 0.02f, 0.25f))
+               MeshGen.box (Vector3(0.22f, 0.25f, 0.07f)) ToolBlack |> placed (Vector3(0.0f, 0.01f, 0.51f))
+               MeshGen.cylinder 14 0.105f 0.38f Plaster |> MeshGen.rotateX (MathF.PI * 0.5f) |> placed (Vector3(0.0f, -0.18f, -0.43f))
+               MeshGen.cylinder 10 0.035f 0.15f Metal |> MeshGen.rotateX (MathF.PI * 0.5f) |> placed (Vector3(0.0f, -0.04f, -0.43f))
+               MeshGen.box (Vector3(0.08f, 0.06f, 0.30f)) ToolBlack |> placed (Vector3(0.0f, 0.25f, -0.34f)) |]
+
+    // Oversized pressure toy with an obvious water reservoir, pump sleeve and
+    // bright safety colours. WaterBlue reads as translucent in the flat shader.
+    let private superSoaker =
+        MeshGen.union
+            [| MeshGen.box (Vector3(0.25f, 0.28f, 0.64f)) WaterBlue |> placed (Vector3(0.0f, 0.04f, -0.30f))
+               MeshGen.box (Vector3(0.20f, 0.13f, 0.58f)) PaintYellow |> placed (Vector3(0.0f, 0.18f, -0.28f))
+               MeshGen.cylinder 14 0.070f 0.42f FoamOrange |> placed (Vector3(0.0f, 0.06f, -0.83f))
+               MeshGen.cylinder 12 0.040f 0.18f WaterBlue |> placed (Vector3(0.0f, 0.06f, -1.13f))
+               MeshGen.box (Vector3(0.16f, 0.30f, 0.16f)) FoamOrange |> MeshGen.rotateX -0.28f |> placed (Vector3(0.0f, -0.19f, -0.07f))
+               MeshGen.lathe 16
+                   [| Vector2(0.05f, -0.25f); Vector2(0.15f, -0.20f); Vector2(0.17f, 0.15f); Vector2(0.09f, 0.24f) |]
+                   WaterBlue
+               |> placed (Vector3(0.0f, 0.00f, 0.24f))
+               MeshGen.box (Vector3(0.24f, 0.12f, 0.30f)) FoamOrange |> placed (Vector3(0.0f, -0.10f, -0.70f))
+               MeshGen.box (Vector3(0.18f, 0.08f, 0.20f)) PaintYellow |> placed (Vector3(0.0f, 0.27f, -0.18f)) |]
+
+    // Compact pneumatic framing nailer. The tall yellow driver housing, black
+    // horizontal fastener magazine and arched rear handle deliberately follow
+    // the familiar DeWalt contractor-tool silhouette instead of looking like
+    // a conventional firearm.
+    let private nailgun =
+        MeshGen.union
+            [| // Tall driver/motor body and its grey service cap.
+               MeshGen.box (Vector3(0.30f, 0.46f, 0.36f)) PaintYellow |> placed (Vector3(0.0f, 0.10f, -0.39f))
+               MeshGen.box (Vector3(0.31f, 0.13f, 0.35f)) Metal |> placed (Vector3(0.0f, 0.385f, -0.39f))
+               MeshGen.box (Vector3(0.23f, 0.055f, 0.27f)) ToolBlack |> placed (Vector3(0.0f, 0.47f, -0.39f))
+               // Rear pneumatic cylinder with a black collar and air fitting.
+               MeshGen.cylinder 14 0.145f 0.52f PaintYellow
+               |> MeshGen.rotateY (MathF.PI * 0.5f)
+               |> placed (Vector3(0.0f, 0.22f, 0.07f))
+               MeshGen.cylinder 14 0.150f 0.10f ToolBlack
+               |> MeshGen.rotateY (MathF.PI * 0.5f)
+               |> placed (Vector3(0.0f, 0.22f, 0.38f))
+               MeshGen.cylinder 10 0.040f 0.16f Metal
+               |> MeshGen.rotateY (MathF.PI * 0.5f)
+               |> placed (Vector3(0.0f, 0.22f, 0.50f))
+               // Rubberised bridge grip and the little trigger tucked below it.
+               MeshGen.box (Vector3(0.25f, 0.19f, 0.52f)) ToolBlack |> placed (Vector3(0.0f, 0.13f, -0.01f))
+               MeshGen.box (Vector3(0.11f, 0.16f, 0.08f)) Metal |> MeshGen.rotateX -0.22f |> placed (Vector3(0.0f, -0.02f, -0.18f))
+               // Long black nail magazine underneath, with a rear latch.
+               MeshGen.box (Vector3(0.25f, 0.18f, 1.02f)) ToolBlack |> placed (Vector3(0.0f, -0.25f, -0.08f))
+               MeshGen.box (Vector3(0.27f, 0.045f, 0.88f)) Metal |> placed (Vector3(0.0f, -0.19f, -0.12f))
+               MeshGen.box (Vector3(0.27f, 0.16f, 0.15f)) ToolBlack |> placed (Vector3(0.0f, -0.24f, 0.49f))
+               MeshGen.cylinder 10 0.040f 0.27f PaintYellow
+               |> MeshGen.rotateY (MathF.PI * 0.5f)
+               |> placed (Vector3(0.0f, -0.18f, 0.31f))
+               // Narrow safety nose and yellow no-mar foot at the business end.
+               MeshGen.box (Vector3(0.16f, 0.42f, 0.15f)) ToolBlack |> placed (Vector3(0.0f, -0.13f, -0.66f))
+               MeshGen.box (Vector3(0.10f, 0.18f, 0.10f)) Metal |> placed (Vector3(0.0f, -0.42f, -0.67f))
+               MeshGen.box (Vector3(0.15f, 0.07f, 0.12f)) PaintYellow |> placed (Vector3(0.0f, -0.53f, -0.67f)) |]
+        |> MeshGen.scale (Vector3(0.72f, 0.72f, 0.72f))
+
+    // Long rail-style diver speargun: laminated central stock, twin black
+    // rubber power bands, compact pistol grip, muzzle bridge and a spear riding
+    // openly along the top rail. Its silhouette follows common band spearguns.
+    let private harpoonGunBody =
+        MeshGen.union
+            [| // Warm laminated rail above the dark structural barrel.
+               MeshGen.box (Vector3(0.13f, 0.11f, 1.95f)) Wood |> placed (Vector3(0.0f, 0.06f, -0.66f))
+               MeshGen.box (Vector3(0.17f, 0.08f, 1.82f)) ToolBlack |> placed (Vector3(0.0f, -0.035f, -0.62f))
+               MeshGen.box (Vector3(0.19f, 0.16f, 0.42f)) ToolBlack |> placed (Vector3(0.0f, 0.02f, 0.54f))
+               // Compact moulded grip and oversized trigger guard.
+               MeshGen.box (Vector3(0.18f, 0.42f, 0.18f)) ToolBlack |> MeshGen.rotateX -0.20f |> placed (Vector3(0.0f, -0.25f, 0.55f))
+               MeshGen.box (Vector3(0.27f, 0.065f, 0.06f)) ToolBlack |> placed (Vector3(0.0f, -0.08f, 0.37f))
+               MeshGen.box (Vector3(0.035f, 0.20f, 0.06f)) ToolBlack |> placed (Vector3(-0.12f, -0.17f, 0.42f))
+               MeshGen.box (Vector3(0.035f, 0.20f, 0.06f)) ToolBlack |> placed (Vector3(0.12f, -0.17f, 0.42f))
+               MeshGen.box (Vector3(0.27f, 0.045f, 0.06f)) ToolBlack |> placed (Vector3(0.0f, -0.27f, 0.46f))
+               MeshGen.box (Vector3(0.025f, 0.11f, 0.035f)) Metal |> MeshGen.rotateX -0.28f |> placed (Vector3(0.0f, -0.14f, 0.39f))
+               // Muzzle bridge gathers the paired bands around the spear rail.
+               MeshGen.box (Vector3(0.28f, 0.22f, 0.10f)) ToolBlack |> placed (Vector3(0.0f, -0.01f, -1.68f))
+               MeshGen.box (Vector3(0.17f, 0.11f, 0.14f)) Metal |> placed (Vector3(0.0f, 0.09f, -1.68f))
+               MeshGen.box (Vector3(0.025f, 0.18f, 0.18f)) ToolBlack |> placed (Vector3(-0.13f, -0.04f, -1.66f))
+               MeshGen.box (Vector3(0.025f, 0.18f, 0.18f)) ToolBlack |> placed (Vector3(0.13f, -0.04f, -1.66f))
+               // Low-profile rear line guide.
+               MeshGen.box (Vector3(0.07f, 0.06f, 0.06f)) Metal |> placed (Vector3(0.0f, 0.145f, 0.27f)) |]
+
+    /// Animated power train for the speargun. `load` is zero immediately
+    /// after firing and one when the bands have been drawn back onto a loaded
+    /// spear. The bands really change length and position rather than being a
+    /// texture or a viewmodel-only wobble.
+    let harpoonGunForLoad load =
+        let load = MathEx.clamp01 load
+        let rearZ = -1.36f + load * 1.62f
+        let rearY = -0.025f + load * 0.17f
+        let band left =
+            let side = if left then -1.0f else 1.0f
+            let anchor = Vector3(side * 0.105f, -0.055f, -1.68f)
+            let wishbone = Vector3(side * (0.09f - load * 0.055f), rearY, rearZ)
+            limb 0.030f ToolBlack anchor wishbone
+        let wishbone =
+            limb 0.010f Metal
+                (Vector3(-0.09f + load * 0.055f, rearY, rearZ))
+                (Vector3(0.09f - load * 0.055f, rearY, rearZ))
+        let spear =
+            if load < 0.18f then MeshGen.empty
+            else
+                // Slide the replacement spear back along the rail during the
+                // reload, then let the wishbone visibly catch its rear notch.
+                let slide = (1.0f - load) * -0.48f
+                MeshGen.union
+                    [| MeshGen.cylinder 10 0.018f 2.32f Metal |> placed (Vector3(0.0f, 0.145f, -0.90f + slide))
+                       MeshGen.lathe 10 [| Vector2(0.0f, -0.13f); Vector2(0.050f, 0.01f); Vector2(0.018f, 0.12f) |] Metal
+                       |> placed (Vector3(0.0f, 0.145f, -2.17f + slide))
+                       MeshGen.box (Vector3(0.12f, 0.018f, 0.14f)) Metal
+                       |> MeshGen.rotateY 0.52f
+                       |> placed (Vector3(0.0f, 0.145f, -2.07f + slide)) |]
+        MeshGen.union [| harpoonGunBody; band true; band false; wishbone; spear |]
+
+    let private harpoonGun = harpoonGunForLoad 1.0f
+
+    /// Recurve bow with a genuinely moving string/nock. At full draw the
+    /// string centre comes back toward the camera while both tips remain
+    /// fixed, forming the characteristic drawn triangle around the arrow.
+    let bowForDraw draw =
+        let draw = MathEx.clamp01 draw
+        let centre = Vector3(0.0f, 0.0f, -0.31f)
+        // -Z is downrange. The working limbs belly toward the target before
+        // their tips recurve back toward the archer; the old profile had this
+        // backwards and read as a bow being fired inside-out in side view.
+        let topTip = Vector3(0.0f, 0.84f, -0.11f)
+        let bottomTip = Vector3(0.0f, -0.84f, -0.11f)
+        // At brace height the nock shares the tips' Z plane, so the resting
+        // string is straight. Pulling it toward +Z creates the draw triangle.
+        let nock = Vector3(0.0f, 0.0f, topTip.Z + draw * 0.43f)
+        MeshGen.union
+            [| // Laminated working limbs sweep downrange, then the short
+               // recurved ends hook back behind the riser to meet the string.
+               limb 0.030f Wood centre (Vector3(0.0f, 0.36f, -0.43f))
+               limb 0.026f Wood (Vector3(0.0f, 0.36f, -0.43f)) (Vector3(0.0f, 0.62f, -0.54f))
+               limb 0.022f Wood (Vector3(0.0f, 0.62f, -0.54f)) (Vector3(0.0f, 0.76f, -0.40f))
+               limb 0.018f Metal (Vector3(0.0f, 0.76f, -0.40f)) topTip
+               limb 0.030f Wood centre (Vector3(0.0f, -0.36f, -0.43f))
+               limb 0.026f Wood (Vector3(0.0f, -0.36f, -0.43f)) (Vector3(0.0f, -0.62f, -0.54f))
+               limb 0.022f Wood (Vector3(0.0f, -0.62f, -0.54f)) (Vector3(0.0f, -0.76f, -0.40f))
+               limb 0.018f Metal (Vector3(0.0f, -0.76f, -0.40f)) bottomTip
+               MeshGen.box (Vector3(0.12f, 0.30f, 0.10f)) ToolBlack |> placed centre
+               // String and small metal nocking loop.
+               limb 0.008f ToolBlack topTip nock
+               limb 0.008f ToolBlack nock bottomTip
+               MeshGen.cylinder 8 0.016f 0.06f Metal |> MeshGen.rotateY (MathF.PI * 0.5f) |> placed nock
+               // Side-mounted hunting sight: guard stem plus a bright pin. It
+               // sits to the archer's right so ADS can line the dot up without
+               // hiding the arrow or string behind the bow grip.
+               limb 0.010f Metal (Vector3(0.075f, -0.02f, -0.34f)) (Vector3(0.19f, -0.02f, -0.34f))
+               limb 0.011f Metal (Vector3(0.19f, -0.14f, -0.34f)) (Vector3(0.19f, 0.14f, -0.34f))
+               MeshGen.lathe 10
+                   [| Vector2(0.0f, -0.018f); Vector2(0.025f, 0.0f); Vector2(0.0f, 0.018f) |]
+                   PaintRed
+               |> placed (Vector3(0.19f, 0.045f, -0.36f))
+               // Loaded arrow. It shifts back with the nock while its point
+               // stays aimed down -Z, making the draw obvious in first person.
+               MeshGen.cylinder 8 0.0075f 1.10f Wood |> placed (Vector3(0.0f, 0.015f, nock.Z - 0.49f))
+               broadhead Metal |> placed (Vector3(0.0f, 0.015f, nock.Z - 1.18f))
+               MeshGen.box (Vector3(0.11f, 0.012f, 0.16f)) PaintRed |> MeshGen.rotateY 0.42f |> placed (Vector3(0.0f, 0.015f, nock.Z + 0.05f)) |]
+
+    let private bow = bowForDraw 0.0f
+
+    /// Small world meshes reused by the renderer for physical special ammo.
+    let paintballMesh color =
+        MeshGen.lathe 10
+            [| Vector2(0.0f, -0.040f); Vector2(0.036f, -0.022f); Vector2(0.042f, 0.0f)
+               Vector2(0.036f, 0.022f); Vector2(0.0f, 0.040f) |]
+            color
+
+    /// Tip points toward -Z; the shaft extends back toward +Z.
+    let dartMesh =
+        MeshGen.union
+            [| MeshGen.cylinder 10 0.018f 0.18f FoamBlue |> placed (Vector3(0.0f, 0.0f, 0.07f))
+               MeshGen.lathe 10
+                   [| Vector2(0.032f, -0.025f); Vector2(0.028f, -0.012f); Vector2(0.014f, 0.018f) |]
+                   FoamOrange
+               |> placed (Vector3(0.0f, 0.0f, -0.045f)) |]
+
+    let rocketMesh =
+        MeshGen.union
+            [| MeshGen.cylinder 12 0.045f 0.34f UniformOlive
+               MeshGen.lathe 12 [| Vector2(0.0f, -0.11f); Vector2(0.065f, -0.02f); Vector2(0.045f, 0.09f) |] UniformOlive
+               |> placed (Vector3(0.0f, 0.0f, -0.22f))
+               MeshGen.box (Vector3(0.14f, 0.015f, 0.14f)) Metal |> placed (Vector3(0.0f, 0.0f, 0.17f)) |]
+
+    let waterDropletMesh =
+        MeshGen.lathe 8
+            [| Vector2(0.0f, -0.032f); Vector2(0.020f, -0.015f); Vector2(0.024f, 0.010f); Vector2(0.0f, 0.038f) |]
+            WaterBlue
+
+    /// Point is -Z, broad head is +Z.
+    let nailMesh =
+        MeshGen.union
+            [| MeshGen.lathe 8 [| Vector2(0.0f, -0.11f); Vector2(0.008f, -0.08f); Vector2(0.008f, 0.09f) |] Metal
+               MeshGen.cylinder 8 0.025f 0.012f Metal |> placed (Vector3(0.0f, 0.0f, 0.096f)) |]
+
+    /// The point begins at local Z=0 and the 1.8 m shaft trails along +Z.
+    /// Renderers rotate +Z opposite the flight direction, putting the point at
+    /// the projectile's simulated position.
+    let harpoonMesh =
+        MeshGen.union
+            [| MeshGen.lathe 14
+                   [| Vector2(0.0f, -0.20f); Vector2(0.105f, -0.015f); Vector2(0.070f, 0.18f) |]
+                   Metal
+               |> placed (Vector3(0.0f, 0.0f, 0.20f))
+               MeshGen.cylinder 10 0.026f 1.56f Metal |> placed (Vector3(0.0f, 0.0f, 1.02f))
+               MeshGen.box (Vector3(0.22f, 0.025f, 0.22f)) Metal |> MeshGen.rotateY 0.48f |> placed (Vector3(0.0f, 0.0f, 0.34f))
+               MeshGen.box (Vector3(0.025f, 0.22f, 0.22f)) Metal |> MeshGen.rotateX -0.48f |> placed (Vector3(0.0f, 0.0f, 0.34f))
+               MeshGen.box (Vector3(0.12f, 0.014f, 0.20f)) Metal |> placed (Vector3(0.0f, 0.0f, 1.77f)) |]
+
+    /// Point is -Z and the fletching trails toward +Z.
+    let arrowMesh =
+        MeshGen.union
+            [| MeshGen.cylinder 8 0.0075f 1.05f Wood |> placed (Vector3(0.0f, 0.0f, 0.46f))
+               broadhead Metal |> placed (Vector3(0.0f, 0.0f, -0.205f))
+               MeshGen.box (Vector3(0.12f, 0.012f, 0.17f)) PaintRed |> MeshGen.rotateY 0.42f |> placed (Vector3(0.0f, 0.0f, 0.95f))
+               MeshGen.box (Vector3(0.012f, 0.12f, 0.17f)) PaintRed |> MeshGen.rotateX -0.42f |> placed (Vector3(0.0f, 0.0f, 0.95f)) |]
+
+    let splatMesh color = MeshGen.cylinder 12 0.17f 0.012f color
+
     /// Every weapon by name, so callers can iterate the set without repeating
     /// the list. `forWeapon` falls back to the Kar98k for anything unlisted.
     let names =
         [| "Thompson"; "M1911"; "Luger P08"; "M1897 Trench Gun"; "Kar98k"; "Kar98k Sniper"
-           "M1 Garand"; "STG-44"; "MP40"; "Lee-Enfield"; "FG42"; "BAR" |]
+           "M1 Garand"; "STG-44"; "MP40"; "Lee-Enfield"; "FG42"; "BAR"
+           "Paintball Marker"; "Nerf Blaster"; "Bazooka"; "Flamethrower"; "Super Soaker"; "Nailgun"; "Harpoon Gun"; "Bow" |]
 
     /// The gun alone, without the arms holding it — what the geometry preview
     /// in tools/GunPreview.fsx inspects.
@@ -308,8 +612,26 @@ module Guns =
         | "Lee-Enfield" -> leeEnfield
         | "FG42" -> fg42
         | "BAR" -> bar
+        | "Paintball Marker" -> paintballMarker
+        | "Nerf Blaster" -> nerfBlaster
+        | "Bazooka" -> bazooka
+        | "Flamethrower" -> flamethrower
+        | "Super Soaker" -> superSoaker
+        | "Nailgun" -> nailgun
+        | "Harpoon Gun" -> harpoonGun
+        | "Bow" -> bow
         | _ -> kar98k
 
     let forWeapon name =
         let arms = if name = "M1911" || name = "Luger P08" then pistolArms else rifleArms
         MeshGen.union [| meshFor name; arms |]
+
+    /// Runtime viewmodel variant used for mechanisms with moving geometry.
+    let forWeaponPose name pose =
+        let arms = if name = "M1911" || name = "Luger P08" then pistolArms else rifleArms
+        let gun =
+            match name with
+            | "Harpoon Gun" -> harpoonGunForLoad pose
+            | "Bow" -> bowForDraw pose
+            | _ -> meshFor name
+        MeshGen.union [| gun; arms |]

@@ -477,7 +477,16 @@ type MatchHost(mode: GameMode, ?matchLevel: Level, ?disconnectGrace: TimeSpan, ?
                             // No input this tick: the player still coasts under
                             // gravity and friction, weapons keep cycling, and a
                             // pinned grenade keeps burning instead of freezing.
-                            let idleButtons = match current.Grenade with Cooking _ -> InputButtons.Grenade | _ -> InputButtons.None
+                            let grenadeButton = match current.Grenade with Cooking _ -> InputButtons.Grenade | _ -> InputButtons.None
+                            // A missing packet cannot be interpreted as a bow
+                            // release: preserve Fire until an explicit input
+                            // arrives without it, just as grenade cooking is
+                            // preserved until an explicit throw frame.
+                            let bowButton =
+                                match current.Slots[current.Active].State with
+                                | Drawing _ -> InputButtons.Fire
+                                | _ -> InputButtons.None
+                            let idleButtons = grenadeButton ||| bowButton
                             let idle = { Sequence = current.LastInputSequence; Move = Vector2.Zero; Look = Vector2.Zero; Buttons = idleButtons }
                             current <- stepFrame id current idle lifecycleState.Tick false
                         if not (List.isEmpty remaining) then leftoverInputs <- Map.add id remaining leftoverInputs

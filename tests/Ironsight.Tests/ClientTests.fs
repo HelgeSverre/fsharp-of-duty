@@ -506,6 +506,39 @@ module ClientTests =
         Assert.Equal(Ready, reconciled.Soldiers[0].Weapon.State)
 
     [<Fact>]
+    let ``bow charge snapshots rebuild Drawing for local and remote players`` () =
+        let world = Sim.createTrainingWorld 904UL
+        let bowKit =
+            [| { WeaponName = "Bow"; Ammo = 11; Reserve = 24; ReloadRemaining = 0.0f }
+               { WeaponName = "M1911"; Ammo = 7; Reserve = 21; ReloadRemaining = 0.0f } |]
+        let drawing id name team position charge =
+            { TestKit.onlinePlayer id name team position with
+                Slots = bowKit
+                DrawCharge = charge }
+        let snapshot =
+            { Tick = 100L; Mode = TeamDeathmatch; LevelName = world.Level.Name; Phase = Playing
+              AlliesScore = 0; AxisScore = 0
+              Players =
+                [| drawing 1 "Local" Allies world.Player.Position 0.8f
+                   drawing 2 "Remote" Axis (world.Player.Position - Vector3.UnitZ * 4.0f) 1.2f |]
+              Grenades = [||]; Events = [||] }
+        let reconciled, _ = OnlineWorld.reconcile world.Level [] 1 world snapshot
+        Assert.Equal(Drawing(Units.seconds 0.8f), reconciled.Player.Slots[0].State)
+        Assert.Equal(Drawing(Units.seconds 1.2f), reconciled.Soldiers[0].Weapon.State)
+
+    [<Fact>]
+    let ``render interpolation smooths bow charge between simulation ticks`` () =
+        let world = Sim.createTrainingWorld 905UL
+        let withCharge charge =
+            let slots = Array.copy world.Player.Slots
+            slots[19] <- { slots[19] with State = Drawing(Units.seconds charge) }
+            { world with Player = { world.Player with Active = 19; Slots = slots } }
+        let blended = RenderInterpolation.world 0.25f (withCharge 0.2f) (withCharge 0.6f)
+        match blended.Player.Slots[19].State with
+        | Drawing charge -> Assert.InRange(Units.raw charge, 0.2999f, 0.3001f)
+        | other -> failwith $"interpolated bow state was {other}"
+
+    [<Fact>]
     let ``the wire kit is rebuilt with the sidearm and the gun in hand`` () =
         // The client used to overwrite Slots with a single weapon every
         // snapshot, so no multi-slot state could survive reconciliation.
@@ -647,3 +680,21 @@ module ClientTests =
         // A respawned (alive-again) soldier takes its corpse with it.
         ragdolls.Prune [| { soldier with Behavior = Idle } |]
         Assert.True((ragdolls.TryGet soldier.Id).IsNone)
+
+    [<Fact>]
+    let ``harpoon constraint pins a ragdoll chest while its limbs remain simulated`` () =
+        let world = Sim.createPaintballWorld 90UL
+        let soldier = { world.Soldiers[0] with Behavior = Dying(Units.seconds 0.0f) }
+        let ragdolls = Ragdoll.System()
+        let anchor = soldier.Position + Vector3(0.0f, 2.8f, -1.0f)
+        ragdolls.Spawn(soldier.Id, Humanoid.worldSkeleton soldier, Vector3(0.0f, 0.0f, -8.0f))
+        for _ in 1..60 do
+            ragdolls.Step(1.0f / 60.0f, world.Level, Map.ofList [ soldier.Id, anchor ])
+        let pinned = (ragdolls.TryGet soldier.Id).Value
+        Assert.Equal(anchor, pinned.Chest)
+        Assert.True(Vector3.Distance(pinned.Pelvis, pinned.Chest) > 0.3f)
+
+        for _ in 1..60 do
+            ragdolls.Step(1.0f / 60.0f, world.Level)
+        let released = (ragdolls.TryGet soldier.Id).Value
+        Assert.True(released.Chest.Y < anchor.Y - 0.5f)

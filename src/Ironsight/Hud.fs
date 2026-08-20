@@ -234,7 +234,7 @@ type Hud(gl: GL) =
             let dim = Vector4(0.62f, 0.66f, 0.60f, 0.62f)
             let highlight = Vector4(1.0f, 0.86f, 0.30f, 0.98f)
             // Derived from the carried slots, so it lists a two-weapon online
-            // kit and the twelve-slot offline sandbox alike, and skips keys
+            // kit and the twenty-slot offline sandbox alike, and skips keys
             // that hold nothing.
             [| 0 .. 4 |]
             |> Array.map (fun category -> category, Tuning.categorySlots world.Player.Slots category)
@@ -242,8 +242,7 @@ type Hud(gl: GL) =
             |> Array.iteri (fun line (category, members) ->
                 let active = members |> Array.contains world.Player.Active
                 let shown = if active then world.Player.Active else members[0]
-                let extras = if members.Length > 1 then " " + String.replicate (members.Length - 1) "." else ""
-                let row = $"{category + 1}  {world.Player.Slots[shown].Class.Name.ToUpperInvariant()}{extras}"
+                let row = $"{category + 1}  {world.Player.Slots[shown].Class.Name.ToUpperInvariant()}"
                 let y = float32 height - 224.0f + float32 line * 20.0f
                 let x = float32 width - textWidth 1.0f row - 28.0f
                 solid (x - 6.0f) (y - 3.0f) (textWidth 1.0f row + 12.0f) 18.0f (Vector4(0.0f, 0.0f, 0.0f, if active then 0.55f else 0.34f))
@@ -260,6 +259,23 @@ type Hud(gl: GL) =
                 meter { X = barLeft; Y = barTop; W = barWidth; H = 8.0f } progress
                     (Vector4(0.16f, 0.18f, 0.16f, 0.92f)) (Vector4(0.92f, 0.55f, 0.14f, 1.0f))
                 addTextRight (barLeft - 14.0f) (barTop - 3.0f) 1.0f white reloadText
+            | _ -> ()
+        let drawBowBar () =
+            match weapon.State, weapon.Class.Mechanism with
+            | Drawing charge, Bow ->
+                let power = Tuning.drawPower charge
+                let elapsed = Units.raw charge
+                let tiring = elapsed > Units.raw Tuning.FullDrawTime + Units.raw Tuning.SteadyDrawTime
+                let barWidth = weaponPanelWidth
+                let barLeft = weaponPanelX
+                let barTop = weaponPanelY - 16.0f
+                let labelText = if tiring then "DRAW FATIGUE" else "DRAW"
+                let drawText = sprintf "%s %d%%" labelText (int (power * 100.0f))
+                let fill = if tiring then Vector4(0.95f, 0.43f, 0.16f, 1.0f) else Vector4(0.52f, 0.90f, 0.24f, 1.0f)
+                solid (barLeft - 2.0f) (barTop - 2.0f) (barWidth + 4.0f) 12.0f (Vector4(0.0f, 0.0f, 0.0f, 0.72f))
+                meter { X = barLeft; Y = barTop; W = barWidth; H = 8.0f } power
+                    (Vector4(0.16f, 0.18f, 0.16f, 0.92f)) fill
+                addTextRight (barLeft - 14.0f) (barTop - 3.0f) 1.0f white drawText
             | _ -> ()
         // ---- Bottom-left health panel with a color-shifting bar ----
         let drawHealthPanel () =
@@ -501,6 +517,7 @@ type Hud(gl: GL) =
         drawWeaponPanel ()
         if info.ShowInventory && world.Player.Slots.Length > 1 then drawInventory ()
         drawReloadBar ()
+        drawBowBar ()
         drawHealthPanel ()
         if info.DebugView then drawDebugLabel ()
         drawCompass ()

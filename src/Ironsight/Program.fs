@@ -608,12 +608,18 @@ module Program =
                             let inLiveMatch = onlineSnapshot |> Option.exists (fun snapshot -> snapshot.Phase = Playing)
                             let triggerEdge = firePressed && not predictedFireHeld
                             let mayRepeat = localWeapon.Class.Mode = FullAuto && firePressed
+                            let bowReleaseEdge =
+                                localWeapon.Class.Mechanism = Bow && predictedFireHeld && not firePressed
+                            let conventionalShot =
+                                localWeapon.Class.Mechanism <> Bow
+                                && localWeapon.State = Ready
+                                && (triggerEdge || mayRepeat)
                             // ponytail: cosmetic predictor mirrors Weapons.step's gate by hand;
                             // route through Sim.stepLocomotion if it drifts again.
                             if inLiveMatch && current.Player.IsAlive && localWeapon.InMag > 0
-                               && localWeapon.State = Ready
                                && not current.Player.Sprinting
-                               && predictedFireCooldown <= 0.0f && (triggerEdge || mayRepeat) then
+                               && predictedFireCooldown <= 0.0f
+                               && (conventionalShot || bowReleaseEdge) then
                                 let origin = Ballistics.playerMuzzleOrigin current.Player localWeapon.Class
                                 let direction = Ballistics.directionFromAngles current.Player.Yaw current.Player.Pitch Vector2.Zero
                                 let cosmetic = [ ShotFired(Some current.Player.Id, origin, direction, localWeapon.Class.Name) ]

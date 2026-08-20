@@ -13,10 +13,25 @@ type FireMode = SemiAuto | FullAuto | BoltAction
 
 type WeaponKind = Rifle | SniperRifle | Smg | Pistol | Shotgun | MachineGun
 
+/// How a trigger pull is resolved. Most physical projectile cases are an
+/// offline toybox; Bow deliberately becomes hitscan only at the online match
+/// boundary so its charge/release state can still be shared by both modes.
+type WeaponMechanism =
+    | Hitscan
+    | Paintball
+    | FoamDart
+    | Rocket
+    | FlameJet
+    | WaterJet
+    | Nail
+    | Harpoon
+    | Bow
+
 type WeaponClass =
     { Name: string
       Mode: FireMode
       Kind: WeaponKind
+      Mechanism: WeaponMechanism
       Damage: float32<hp>
       RoundsPerMin: float32
       MagSize: int
@@ -32,6 +47,7 @@ type WeaponClass =
 
 type WeaponState =
     | Ready
+    | Drawing of charge: float32<s>
     | Cooling of remaining: float32<s>
     | Reloading of remaining: float32<s>
     | Switching of incoming: int * remaining: float32<s>
@@ -100,7 +116,14 @@ type Soldier =
     member this.IsAlive = this.Health > Units.health 0.0f
     member this.IsDead = not this.IsAlive
 
-type Material = Brick | Plaster | Wood | Mud | Snow | Sandbag | Metal | UniformOlive | UniformFeldgrau | Skin | Water
+type Material =
+    | Brick | Plaster | Wood | Mud | Snow | Sandbag | Metal
+    | UniformOlive | UniformFeldgrau | Skin | Water
+    // Render-only palette entries. Appended so existing map material tags stay
+    // stable; collision geometry never uses these cases.
+    | PaintRed | PaintBlue | PaintGreen | PaintYellow | PaintPurple | PaintOrange
+    | FoamBlue | FoamOrange
+    | ToolBlack | WaterBlue | WetDark
 
 type Brush =
     { Bounds: Aabb
@@ -187,6 +210,42 @@ type Grenade =
       Velocity: Vector3
       Fuse: float32<s> }
 
+type HarpoonAttachment =
+    { Victim: EntityId
+      DistanceBehindTip: float32 }
+
+type SpecialProjectileKind =
+    | PaintBall of color: Material
+    | NerfDart
+    | BazookaRocket
+    | WaterDroplet
+    | NailRound
+    | HarpoonRound of skewered: HarpoonAttachment list
+    | ArrowRound of damage: float32<hp>
+
+type SpecialProjectile =
+    { Owner: EntityId
+      Kind: SpecialProjectileKind
+      Position: Vector3
+      Velocity: Vector3
+      DistanceTravelled: float32
+      Bounces: int
+      Remaining: float32<s> }
+
+type PersistentMark =
+    | PaintSplat of position: Vector3 * normal: Vector3 * color: Material * target: EntityId option * localOffset: Vector3
+    | StuckDart of position: Vector3 * normal: Vector3 * target: EntityId option * localOffset: Vector3
+    | WetPatch of position: Vector3 * normal: Vector3 * target: EntityId option * localOffset: Vector3 * remaining: float32<s> * saturation: float32
+    | StuckNail of position: Vector3 * normal: Vector3 * target: EntityId option * localOffset: Vector3
+    | EmbeddedHarpoon of tip: Vector3 * direction: Vector3 * skewered: HarpoonAttachment list
+    | StuckArrow of position: Vector3 * direction: Vector3 * target: EntityId option * localOffset: Vector3
+
+type ElementalStatus =
+    { WetFor: float32<s>
+      BurningFor: float32<s>
+      Heat: float32<s>
+      BurnOwner: EntityId option }
+
 type Objective = { Text: string; Done: bool }
 
 type ScriptState =
@@ -212,6 +271,10 @@ type World =
       Player: Player
       Soldiers: Soldier array
       Grenades: Grenade array
+      SpecialProjectiles: SpecialProjectile array
+      PersistentMarks: PersistentMark array
+      ElementalStatus: Map<EntityId, ElementalStatus>
+      PaintColor: Material
       Level: Level
       Squads: Map<int, SquadBlackboard>
       Script: ScriptState
@@ -226,6 +289,20 @@ type GameEvent =
     | HeadGib of position: Vector3 * direction: Vector3
     | PlayerHurt of fromDirection: Vector3 * newHealth: float32<hp>
     | Explosion of position: Vector3 * radius: float32
+    | PaintImpact of position: Vector3 * normal: Vector3 * color: Material
+    | DartImpact of position: Vector3 * normal: Vector3 * stuck: bool
+    | RocketDud of position: Vector3 * normal: Vector3
+    | Backblast of position: Vector3 * direction: Vector3
+    | FlameStream of origin: Vector3 * endpoint: Vector3
+    | FlameImpact of position: Vector3 * normal: Vector3
+    | WaterImpact of position: Vector3 * normal: Vector3
+    | NailImpact of position: Vector3 * normal: Vector3 * stuck: bool
+    | HarpoonSkewer of position: Vector3 * direction: Vector3 * victim: EntityId
+    | HarpoonEmbedded of position: Vector3 * normal: Vector3
+    | ArrowImpact of position: Vector3 * normal: Vector3 * stuck: bool
+    | Ignited of victim: EntityId * position: Vector3
+    | Extinguished of victim: EntityId * position: Vector3
+    | Burning of victim: EntityId * position: Vector3
     | FootStep of position: Vector3 * surface: Material
     | Subtitle of speaker: string * line: string
     | ObjectiveUpdated of index: int

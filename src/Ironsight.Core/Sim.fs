@@ -18,7 +18,15 @@ module Sim =
            Tuning.weaponSlot Tuning.fg42 4
            Tuning.weaponSlot Tuning.m1897 5
            Tuning.weaponSlot Tuning.bar 5
-           Tuning.weaponSlot Tuning.luger 5 |]
+           Tuning.weaponSlot Tuning.luger 5
+           Tuning.weaponSlot Tuning.paintballMarker 3
+           Tuning.weaponSlot Tuning.nerfBlaster 3
+           Tuning.weaponSlot Tuning.bazooka 2
+           Tuning.weaponSlot Tuning.flamethrower 1
+           Tuning.weaponSlot Tuning.superSoaker 1
+           Tuning.weaponSlot Tuning.nailgun 3
+           Tuning.weaponSlot Tuning.harpoonGun 4
+           Tuning.weaponSlot Tuning.bow 3 |]
 
     /// The paintball round loadout opens on the Thompson.
     let private thompsonSlot = 3
@@ -30,6 +38,8 @@ module Sim =
     let private staggeredReady index = Cooling(Units.seconds (0.18f + float32 index * 0.12f))
 
     let private resetRoundCombatants (world: World) round =
+        let mutable colorRng = world.Rng
+        let paintColor = SpecialProjectiles.chooseNextPaintColor world.PaintColor &colorRng
         let playerSpawn =
             world.Level.Spawns
             |> Array.pick (fun struct (team, position) -> if team = Some Allies then Some position else None)
@@ -53,6 +63,7 @@ module Sim =
                     Suppression = 0.0f
                     AnimPhase = 0.0f })
         { world with
+            Rng = colorRng
             Player =
                 { world.Player with
                     Position = playerSpawn
@@ -65,10 +76,14 @@ module Sim =
                     Health = Units.health 100.0f
                     RegenIn = Units.seconds 0.0f
                     Slots = playerSlots ()
-                    Active = thompsonSlot
+                    Active = world.Player.Active
                     Grenade = GrenadeIdle 3 }
             Soldiers = soldiers
             Grenades = [||]
+            SpecialProjectiles = [||]
+            PersistentMarks = [||]
+            ElementalStatus = Map.empty
+            PaintColor = paintColor
             Squads = Map.empty
             Script = { MissionTime = Units.seconds 0.0f; Ended = false; Rules = world.Level.MissionRules }
             Objectives = world.Objectives |> Array.map (fun objective -> { objective with Done = false })
@@ -155,7 +170,12 @@ module Sim =
         : LocomotionResult =
         let moved = Movement.step dt input level player
         let active = moved.Slots[moved.Active]
-        let fire = stepWeapon && canFire && Input.hasButton InputButtons.Fire input.Buttons && not moved.Sprinting
+        let fireHeld = Input.hasButton InputButtons.Fire input.Buttons
+        // Once a bow is drawn, sprint suppression must not masquerade as a
+        // trigger release and loose an accidental arrow. It may finish/release
+        // a draw while sprinting, but cannot begin one there.
+        let alreadyDrawing = match active.State with Drawing _ -> true | _ -> false
+        let fire = stepWeapon && canFire && fireHeld && (not moved.Sprinting || alreadyDrawing)
         let reload = Input.hasButton InputButtons.Reload input.Buttons
         let moveSpeed = MathEx.horizontalSpeed moved.Velocity
         let weapon, shots =
@@ -235,59 +255,89 @@ module Sim =
         let armedPlayer = { result.Player with Slots = slots }
         let shotEvents = ResizeArray<GameEvent>()
         let mutable soldiers = world.Soldiers
+        let mutable projectilePlayer = armedPlayer
+        let mutable elementalStatus = world.ElementalStatus
+        let spawnedProjectiles = ResizeArray<SpecialProjectile>()
         if not result.Shots.IsEmpty then
             // Tracer starts at the muzzle; the hit trace below leaves the eye.
             let origin = Ballistics.playerMuzzleOrigin armedPlayer result.Weapon.Class
             let struct (_, direction, _) = List.head result.Shots
             shotEvents.Add(ShotFired(Some armedPlayer.Id, origin, direction, result.Weapon.Class.Name))
         for struct (origin, direction, shot) in result.Shots do
-            let hitSoldiers, hitEvents =
-                Ballistics.applyShotFiltered (fun soldier -> soldier.Team = Axis) origin direction shot.Damage shot.Penetration shot.HeadshotMultiplier shot.Kind world.Level soldiers
-            let hitIds =
-                hitEvents
-                |> List.choose (function HitConfirmed(victim, _) -> Some victim | _ -> None)
-                |> Set.ofList
-            soldiers <-
-                hitSoldiers
-                |> Array.map (fun soldier ->
-                    if soldier.Team = Axis && soldier.IsAlive && not (Set.contains soldier.Id hitIds) then
-                        let offset = soldier.Position + Vector3(0.0f, 1.0f, 0.0f) - origin
-                        let alongRay = max 0.0f (Vector3.Dot(offset, direction))
-                        let nearMissDistance = Vector3.Distance(origin + direction * alongRay, soldier.Position + Vector3(0.0f, 1.0f, 0.0f))
-                        let heard = Vector3.Distance(origin, soldier.Position) < 75.0f
-                        let suppression = if nearMissDistance < 1.0f then min 3.0f (soldier.Suppression + 1.0f) else soldier.Suppression
-                        { soldier with
-                            Suppression = suppression
-                            Behavior = if suppression >= 2.0f then Suppressed(Units.seconds 1.5f) else soldier.Behavior
-                            Contacts = if heard then Map.add armedPlayer.Id (struct (armedPlayer.Position, Units.seconds 0.0f)) soldier.Contacts else soldier.Contacts }
-                    elif soldier.Team = Axis && soldier.IsAlive then
-                        // Direct hits flinch and duck living soldiers. A lethal
-                        // hit already carries its Dying/DyingHeadshot behaviour;
-                        // overwriting it with Suppressed would let a corpse
-                        // stand back up and keep walking.
-                        { soldier with
-                            Suppression = 3.0f
-                            Behavior = Suppressed(Units.seconds 1.5f)
-                            Contacts = Map.add armedPlayer.Id (struct (armedPlayer.Position, Units.seconds 0.0f)) soldier.Contacts }
-                    else soldier)
-            shotEvents.AddRange hitEvents
-            // Offline kills feed the same HUD row online ones do. The headshot
-            // flag rides on the dead soldier's behaviour rather than being
-            // re-derived from the event order.
-            for event in hitEvents do
-                match event with
-                | HitConfirmed(victim, true) ->
-                    let headshot =
-                        hitSoldiers
-                        |> Array.tryFind (fun soldier -> soldier.Id = victim)
-                        |> Option.exists (fun soldier -> match soldier.Behavior with DyingHeadshot _ -> true | _ -> false)
-                    shotEvents.Add(Kill(Some armedPlayer.Id, victim, result.Weapon.Class.Name, headshot))
-                | _ -> ()
+            match result.Weapon.Class.Mechanism with
+            | Paintball | FoamDart | Rocket | Nail | Harpoon ->
+                let muzzle = Ballistics.playerMuzzleOrigin armedPlayer result.Weapon.Class
+                match SpecialProjectiles.spawn armedPlayer.Id world.PaintColor result.Weapon.Class.Mechanism muzzle direction with
+                | Some projectile -> spawnedProjectiles.Add projectile
+                | None -> ()
+                if result.Weapon.Class.Mechanism = Rocket then
+                    let nextPlayer, nextSoldiers, backblastEvents =
+                        SpecialProjectiles.applyBackblast muzzle direction world.Level projectilePlayer soldiers
+                    projectilePlayer <- nextPlayer
+                    soldiers <- nextSoldiers
+                    shotEvents.AddRange backblastEvents
+            | Bow ->
+                let muzzle = Ballistics.playerMuzzleOrigin armedPlayer result.Weapon.Class
+                let power = Units.raw shot.Damage / max 0.01f (Units.raw result.Weapon.Class.Damage)
+                spawnedProjectiles.Add(SpecialProjectiles.spawnArrow armedPlayer.Id shot.Damage power muzzle direction)
+            | WaterJet ->
+                let muzzle = Ballistics.playerMuzzleOrigin armedPlayer result.Weapon.Class
+                SpecialProjectiles.spawnWaterBurst armedPlayer.Id muzzle direction &rng
+                |> spawnedProjectiles.AddRange
+            | FlameJet ->
+                let muzzle = Ballistics.playerMuzzleOrigin armedPlayer result.Weapon.Class
+                let nextPlayer, nextSoldiers, nextStatus, flameEvents =
+                    SpecialProjectiles.applyFlameJet armedPlayer.Id muzzle direction world.Level projectilePlayer soldiers elementalStatus
+                projectilePlayer <- nextPlayer
+                soldiers <- nextSoldiers
+                elementalStatus <- nextStatus
+                shotEvents.AddRange flameEvents
+            | Hitscan ->
+              let hitSoldiers, hitEvents =
+                  Ballistics.applyShotFiltered (fun soldier -> soldier.Team = Axis) origin direction shot.Damage shot.Penetration shot.HeadshotMultiplier shot.Kind world.Level soldiers
+              let hitIds =
+                  hitEvents
+                  |> List.choose (function HitConfirmed(victim, _) -> Some victim | _ -> None)
+                  |> Set.ofList
+              soldiers <-
+                  hitSoldiers
+                  |> Array.map (fun soldier ->
+                      if soldier.Team = Axis && soldier.IsAlive && not (Set.contains soldier.Id hitIds) then
+                          let offset = soldier.Position + Vector3(0.0f, 1.0f, 0.0f) - origin
+                          let alongRay = max 0.0f (Vector3.Dot(offset, direction))
+                          let nearMissDistance = Vector3.Distance(origin + direction * alongRay, soldier.Position + Vector3(0.0f, 1.0f, 0.0f))
+                          let heard = Vector3.Distance(origin, soldier.Position) < 75.0f
+                          let suppression = if nearMissDistance < 1.0f then min 3.0f (soldier.Suppression + 1.0f) else soldier.Suppression
+                          { soldier with
+                              Suppression = suppression
+                              Behavior = if suppression >= 2.0f then Suppressed(Units.seconds 1.5f) else soldier.Behavior
+                              Contacts = if heard then Map.add armedPlayer.Id (struct (armedPlayer.Position, Units.seconds 0.0f)) soldier.Contacts else soldier.Contacts }
+                      elif soldier.Team = Axis && soldier.IsAlive then
+                          { soldier with
+                              Suppression = 3.0f
+                              Behavior = Suppressed(Units.seconds 1.5f)
+                              Contacts = Map.add armedPlayer.Id (struct (armedPlayer.Position, Units.seconds 0.0f)) soldier.Contacts }
+                      else soldier)
+              shotEvents.AddRange hitEvents
+              for event in hitEvents do
+                  match event with
+                  | HitConfirmed(victim, true) ->
+                      let headshot =
+                          hitSoldiers
+                          |> Array.tryFind (fun soldier -> soldier.Id = victim)
+                          |> Option.exists (fun soldier -> match soldier.Behavior with DyingHeadshot _ -> true | _ -> false)
+                      shotEvents.Add(Kill(Some armedPlayer.Id, victim, result.Weapon.Class.Name, headshot))
+                  | _ -> ()
+        let projectiles = Array.append world.SpecialProjectiles (spawnedProjectiles.ToArray())
+        let activeSpecial, persistentMarks, specialPlayer, specialSoldiers, projectileStatus, specialEvents =
+            SpecialProjectiles.stepWithStatus Tuning.TickDuration world.Level projectilePlayer soldiers projectiles world.PersistentMarks elementalStatus
         let grenades = match result.Thrown with Some grenade -> Array.append world.Grenades [| grenade |] | None -> world.Grenades
         let activeGrenades, explosions = Grenades.stepProjectiles Tuning.TickDuration world.Level grenades
-        let explodedSoldiers, explosionEvents = Grenades.applyExplosions world.Level explosions soldiers
-        let player, playerExplosionEvents = Grenades.applyExplosionsToPlayer world.Level explosions armedPlayer
-        let aiPlayer, aiSoldiers, aiEvents = AiBrain.step Tuning.TickDuration &rng world.Level world.Squads player explodedSoldiers
+        let explodedSoldiers, explosionEvents = Grenades.applyExplosions world.Level explosions specialSoldiers
+        let player, playerExplosionEvents = Grenades.applyExplosionsToPlayer world.Level explosions specialPlayer
+        let elementalPlayer, elementalSoldiers, nextElementalStatus, elementalEvents =
+            SpecialProjectiles.stepElemental Tuning.TickDuration player explodedSoldiers projectileStatus
+        let aiPlayer, aiSoldiers, aiEvents = AiBrain.step Tuning.TickDuration &rng world.Level world.Squads elementalPlayer elementalSoldiers
         let footstepEvents = result.FootStep |> Option.toList
         let objectives, objectiveEvents =
             if world.Round.IsNone && world.Objectives.Length > 0 && not world.Objectives[0].Done
@@ -312,7 +362,7 @@ module Sim =
                     |> Option.map (fun soldier -> soldier.Id)
                 squad, { Contacts = contacts; Objective = objective; Suppressor = suppressor })
             |> Map.ofArray
-        let events = List.concat [ List.ofSeq shotEvents; explosionEvents; playerExplosionEvents; aiEvents; footstepEvents; objectiveEvents ]
+        let events = List.concat [ List.ofSeq shotEvents; specialEvents; explosionEvents; playerExplosionEvents; elementalEvents; aiEvents; footstepEvents; objectiveEvents ]
         let updated =
             { world with
                 Tick = world.Tick + 1L
@@ -320,6 +370,9 @@ module Sim =
                 Player = aiPlayer
                 Soldiers = aiSoldiers
                 Grenades = activeGrenades
+                SpecialProjectiles = activeSpecial
+                PersistentMarks = persistentMarks
+                ElementalStatus = nextElementalStatus
                 Objectives = objectives
                 Squads = squads
                 Script = { world.Script with MissionTime = world.Script.MissionTime + Tuning.TickDuration } }
@@ -332,6 +385,8 @@ module Sim =
         let playerSpawn =
             level.Spawns
             |> Array.pick (fun struct (team, position) -> if team = Some Allies then Some position else None)
+        let mutable colorRng = Rng.create seed
+        let paintColor = SpecialProjectiles.choosePaintColor &colorRng
         let player =
             { Id = EntityId 1
               Position = playerSpawn
@@ -399,10 +454,14 @@ module Sim =
                   AnimPhase = 0.0f })
         let soldiers = Array.append infantry mountedCrews
         { Tick = 0L
-          Rng = Rng.create seed
+          Rng = colorRng
           Player = player
           Soldiers = soldiers
           Grenades = [||]
+          SpecialProjectiles = [||]
+          PersistentMarks = [||]
+          ElementalStatus = Map.empty
+          PaintColor = paintColor
           Level = level
           Squads = Map.empty
           Script = { MissionTime = Units.seconds 0.0f; Ended = false; Rules = level.MissionRules }
@@ -459,4 +518,3 @@ module Sim =
         | "canal" -> createCanalYardWorld seed
         | "omaha" -> createOmahaWorld seed
         | _ -> createPaintballWorld seed
-

@@ -108,12 +108,95 @@ type Renderer(gl: GL) =
         loadedLevel <- level.Name
         loadedLevelRevision <- level.Revision
 
-    let uploadGun name =
-        let mesh = Guns.forWeapon name
+    let localPlayerMarks (world: World) =
+        world.PersistentMarks
+        |> Array.filter (function
+            | PaintSplat(_, _, _, Some id, _)
+            | StuckDart(_, _, Some id, _)
+            | WetPatch(_, _, Some id, _, _, _)
+            | StuckNail(_, _, Some id, _)
+            | StuckArrow(_, _, Some id, _) -> id = world.Player.Id
+            | _ -> false)
+
+    // Wet-patch lifetimes tick every frame, but the viewmodel only needs a new
+    // mesh when a mark appears, disappears, changes colour, or becomes wetter.
+    let localMarkKey marks =
+        marks
+        |> Array.map (function
+            | PaintSplat(_, _, color, _, localOffset) -> hash (0, color, localOffset)
+            | StuckDart(_, _, _, localOffset) -> hash (1, localOffset)
+            | WetPatch(_, _, _, localOffset, _, saturation) -> hash (2, localOffset, saturation)
+            | StuckNail(_, _, _, localOffset) -> hash (3, localOffset)
+            | EmbeddedHarpoon(tip, direction, skewered) -> hash (4, tip, direction, skewered)
+            | StuckArrow(_, direction, _, localOffset) -> hash (5, direction, localOffset))
+        |> hash
+
+    let harpoonLoadPose (slot: WeaponSlot) =
+        if slot.Class.Mechanism <> Harpoon then 1.0f
+        else
+            match slot.State with
+            | Reloading remaining ->
+                1.0f - MathEx.clamp01 (Units.raw remaining / max 0.01f (Units.raw slot.Class.ReloadTime))
+            | _ when slot.InMag > 0 -> 1.0f
+            | _ -> 0.0f
+
+    let weaponMeshKey name paintKey localMarks mechanismPose =
+        let poseKey =
+            if name = "Harpoon Gun" || name = "Bow" then int (MathF.Round(mechanismPose * 1000.0f))
+            else -1
+        $"{name}:{paintKey}:{localMarkKey localMarks}:{poseKey}"
+
+    let uploadGun name (world: World) mechanismPose =
+        let localMarks = localPlayerMarks world
+        let sleevePositions =
+            [| Vector3(0.31f, -0.48f, 0.19f); Vector3(-0.34f, -0.45f, 0.05f)
+               Vector3(0.22f, -0.31f, -0.04f); Vector3(-0.23f, -0.29f, -0.25f) |]
+        let markMesh =
+            localMarks
+            |> Array.mapi (fun index mark ->
+                let position = sleevePositions[index % sleevePositions.Length]
+                match mark with
+                | PaintSplat(_, _, color, _, _) ->
+                    Guns.paintballMesh color
+                    |> MeshGen.scale (Vector3(1.3f, 0.45f, 1.3f))
+                    |> MeshGen.translate position
+                | StuckDart _ ->
+                    Guns.dartMesh
+                    |> MeshGen.rotateX (MathF.PI * 0.5f)
+                    |> MeshGen.translate position
+                | WetPatch(_, _, _, _, _, saturation) ->
+                    let size = 0.5f + saturation
+                    Guns.splatMesh WetDark
+                    |> MeshGen.scale (Vector3(size, 0.35f, size))
+                    |> MeshGen.translate position
+                | StuckNail _ ->
+                    Guns.nailMesh
+                    |> MeshGen.rotateX (MathF.PI * 0.5f)
+                    |> MeshGen.translate position
+                | StuckArrow _ ->
+                    Guns.arrowMesh
+                    |> MeshGen.scale (Vector3(0.55f, 0.55f, 0.55f))
+                    |> MeshGen.rotateX (MathF.PI * 0.5f)
+                    |> MeshGen.translate position
+                | EmbeddedHarpoon _ -> MeshGen.empty)
+            |> MeshGen.union
+        let baseMesh =
+            let mesh = Guns.forWeaponPose name mechanismPose
+            if name = "Paintball Marker" then
+                { mesh with
+                    Vertices =
+                        mesh.Vertices
+                        |> Array.map (fun vertex ->
+                            if vertex.MaterialId = Materials.id PaintBlue then
+                                { vertex with MaterialId = Materials.id world.PaintColor }
+                            else vertex) }
+            else mesh
+        let mesh = MeshGen.union [| baseMesh; markMesh |]
         let vertices = GlUtil.flattenVertices mesh.Vertices
-        uploadMesh gunVao gunVertexBuffer gunIndexBuffer vertices mesh.Indices BufferUsageARB.StaticDraw
+        uploadMesh gunVao gunVertexBuffer gunIndexBuffer vertices mesh.Indices BufferUsageARB.DynamicDraw
         gunIndexCount <- uint32 mesh.Indices.Length
-        loadedGun <- name
+        let paintKey = if name = "Paintball Marker" then string world.PaintColor else ""
+        loadedGun <- weaponMeshKey name paintKey localMarks mechanismPose
 
     /// Spawn ragdolls for newly dead soldiers, seeded from whatever recent
     /// event plausibly killed them, then advance the simulation on wall-clock
@@ -150,7 +233,23 @@ type Renderer(gl: GL) =
             | _ -> ()
         let dt = float32 (Stopwatch.GetElapsedTime ragdollClock).TotalSeconds
         ragdollClock <- now
-        ragdolls.Step(dt, world.Level)
+        let pinsAt tip direction skewered =
+            let forward = MathEx.normalizedOrZero direction
+            skewered
+            |> List.map (fun attachment -> attachment.Victim, tip - forward * attachment.DistanceBehindTip)
+        let flyingPins =
+            world.SpecialProjectiles
+            |> Array.collect (fun projectile ->
+                match projectile.Kind with
+                | HarpoonRound skewered -> pinsAt projectile.Position projectile.Velocity skewered |> List.toArray
+                | _ -> [||])
+        let embeddedPins =
+            world.PersistentMarks
+            |> Array.collect (function
+                | EmbeddedHarpoon(tip, direction, skewered) -> pinsAt tip direction skewered |> List.toArray
+                | _ -> [||])
+        let harpoonPins = Array.append flyingPins embeddedPins |> Map.ofArray
+        ragdolls.Step(dt, world.Level, harpoonPins)
 
     let uploadActors (world: World) =
         let visibleSoldiers =
@@ -177,14 +276,104 @@ type Renderer(gl: GL) =
                 MeshGen.box (Vector3(0.14f, 0.18f, 0.14f)) Metal
                 |> MeshGen.translate grenade.Position)
             |> MeshGen.union
+        let oriented direction mesh =
+            mesh
+            |> MeshGen.transform (Matrix4x4.CreateFromQuaternion(MathEx.rotationFromZ direction))
+        let projectileMesh =
+            world.SpecialProjectiles
+            |> Array.map (fun projectile ->
+                match projectile.Kind with
+                | PaintBall color -> Guns.paintballMesh color |> MeshGen.translate projectile.Position
+                | NerfDart ->
+                    Guns.dartMesh
+                    |> oriented -projectile.Velocity
+                    |> MeshGen.translate projectile.Position
+                | BazookaRocket ->
+                    Guns.rocketMesh
+                    |> oriented -projectile.Velocity
+                    |> MeshGen.translate projectile.Position
+                | WaterDroplet ->
+                    Guns.waterDropletMesh
+                    |> oriented -projectile.Velocity
+                    |> MeshGen.translate projectile.Position
+                | NailRound ->
+                    Guns.nailMesh
+                    |> oriented -projectile.Velocity
+                    |> MeshGen.translate projectile.Position
+                | HarpoonRound _ ->
+                    Guns.harpoonMesh
+                    |> oriented -projectile.Velocity
+                    |> MeshGen.translate projectile.Position
+                | ArrowRound _ ->
+                    Guns.arrowMesh
+                    |> oriented -projectile.Velocity
+                    |> MeshGen.translate projectile.Position)
+            |> MeshGen.union
+        let skeletonPoints (skeleton: Skeleton) =
+            [| skeleton.Pelvis; skeleton.Chest; skeleton.Neck; skeleton.Head
+               skeleton.LeftHip; skeleton.RightHip; skeleton.LeftKnee; skeleton.RightKnee
+               skeleton.LeftAnkle; skeleton.RightAnkle; skeleton.LeftShoulder; skeleton.RightShoulder
+               skeleton.LeftElbow; skeleton.RightElbow; skeleton.LeftHand; skeleton.RightHand |]
+        let resolveMarkPosition fallback target localOffset =
+            match target with
+            | Some id when id = world.Player.Id -> world.Player.Position + localOffset
+            | Some id ->
+                world.Soldiers
+                |> Array.tryFind (fun soldier -> soldier.Id = id)
+                |> Option.map (fun soldier ->
+                    let anchor = soldier.Position + localOffset
+                    match ragdolls.TryGet soldier.Id with
+                    | Some ragdoll ->
+                        let initial = Humanoid.worldSkeleton soldier |> skeletonPoints
+                        let current = skeletonPoints ragdoll
+                        let nearest = initial |> Array.mapi (fun index point -> index, Vector3.DistanceSquared(point, anchor)) |> Array.minBy snd |> fst
+                        current[nearest] + (anchor - initial[nearest])
+                    | None -> anchor)
+                |> Option.defaultValue fallback
+            | None -> fallback
+        let markMesh =
+            world.PersistentMarks
+            |> Array.map (function
+                | PaintSplat(position, normal, color, target, localOffset) ->
+                    Guns.splatMesh color
+                    |> oriented normal
+                    |> MeshGen.translate (resolveMarkPosition position target localOffset)
+                | StuckDart(position, normal, target, localOffset) ->
+                    Guns.dartMesh
+                    |> oriented normal
+                    |> MeshGen.translate (resolveMarkPosition position target localOffset + normal * 0.07f)
+                | WetPatch(position, normal, target, localOffset, remaining, saturation) ->
+                    let fade = MathEx.clamp01 (Units.raw remaining / Units.raw SpecialProjectiles.WetDuration)
+                    let size = 0.65f + saturation * 1.5f
+                    Guns.splatMesh WetDark
+                    |> MeshGen.scale (Vector3(size * fade, size * fade, 0.7f))
+                    |> oriented normal
+                    |> MeshGen.translate (resolveMarkPosition position target localOffset)
+                | StuckNail(position, normal, target, localOffset) ->
+                    Guns.nailMesh
+                    |> oriented normal
+                    |> MeshGen.translate (resolveMarkPosition position target localOffset + normal * 0.07f)
+                | EmbeddedHarpoon(tip, direction, _) ->
+                    Guns.harpoonMesh
+                    |> oriented -direction
+                    |> MeshGen.translate tip
+                | StuckArrow(position, direction, target, localOffset) ->
+                    Guns.arrowMesh
+                    |> oriented -direction
+                    |> MeshGen.translate (resolveMarkPosition position target localOffset))
+            |> MeshGen.union
         let ragdollOffset = uint32 soldierVertices.Length
         let grenadeOffset = ragdollOffset + uint32 ragdollMesh.Vertices.Length
-        let meshVertices = Array.concat [ soldierVertices; ragdollMesh.Vertices; grenadeMesh.Vertices ]
+        let projectileOffset = grenadeOffset + uint32 grenadeMesh.Vertices.Length
+        let markOffset = projectileOffset + uint32 projectileMesh.Vertices.Length
+        let meshVertices = Array.concat [ soldierVertices; ragdollMesh.Vertices; grenadeMesh.Vertices; projectileMesh.Vertices; markMesh.Vertices ]
         let meshIndices =
             Array.concat
                 [ soldierIndices
                   ragdollMesh.Indices |> Array.map ((+) ragdollOffset)
-                  grenadeMesh.Indices |> Array.map ((+) grenadeOffset) ]
+                  grenadeMesh.Indices |> Array.map ((+) grenadeOffset)
+                  projectileMesh.Indices |> Array.map ((+) projectileOffset)
+                  markMesh.Indices |> Array.map ((+) markOffset) ]
         soldierIndexCount <- uint32 meshIndices.Length
         if meshIndices.Length > 0 then
             let vertices = GlUtil.flattenVertices meshVertices
@@ -344,10 +533,43 @@ type Renderer(gl: GL) =
                 if hudInfo.GrenadeCooking && world.Player.IsAlive then
                     Grenades.predictPath world.Level (Tuning.TickRate * 2) world.Player
                 else [||])
+            // One-frame motion streaks make the physical rounds readable at
+            // their real simulation speeds without retaining cosmetic state.
+            for projectile in world.SpecialProjectiles do
+                let direction = MathEx.normalizedOrZero projectile.Velocity
+                let length, color =
+                    match projectile.Kind with
+                    | PaintBall PaintRed -> 0.42f, Vector4(1.0f, 0.08f, 0.10f, 0.85f)
+                    | PaintBall PaintBlue -> 0.42f, Vector4(0.08f, 0.35f, 1.0f, 0.85f)
+                    | PaintBall PaintGreen -> 0.42f, Vector4(0.10f, 1.0f, 0.28f, 0.85f)
+                    | PaintBall PaintYellow -> 0.42f, Vector4(1.0f, 0.85f, 0.08f, 0.85f)
+                    | PaintBall PaintPurple -> 0.42f, Vector4(0.75f, 0.10f, 1.0f, 0.85f)
+                    | PaintBall _ -> 0.42f, Vector4(1.0f, 0.34f, 0.05f, 0.85f)
+                    | NerfDart -> 0.32f, Vector4(1.0f, 0.36f, 0.04f, 0.82f)
+                    | BazookaRocket -> 1.05f, Vector4(0.70f, 0.68f, 0.62f, 0.62f)
+                    | WaterDroplet -> 0.24f, Vector4(0.08f, 0.62f, 1.0f, 0.72f)
+                    | NailRound -> 0.28f, Vector4(0.72f, 0.76f, 0.82f, 0.74f)
+                    | HarpoonRound _ -> 1.8f, Vector4(0.95f, 0.58f, 0.12f, 0.82f)
+                    | ArrowRound _ -> 0.95f, Vector4(0.68f, 0.45f, 0.20f, 0.82f)
+                particles.SubmitDebugLine(projectile.Position, projectile.Position - direction * length, color)
+                match projectile.Kind with
+                | HarpoonRound _ when projectile.Owner = world.Player.Id ->
+                    let spool = world.Player.Position + Vector3(0.24f, 1.20f, 0.0f)
+                    particles.SubmitDebugLine(spool, projectile.Position, Vector4(0.08f, 0.065f, 0.05f, 0.92f))
+                | _ -> ()
             particles.Render viewProjection
             let activeClass = world.Player.Slots[world.Player.Active].Class
+            let activeSlot = world.Player.Slots[world.Player.Active]
             let weaponName = activeClass.Name
-            if loadedGun <> weaponName then uploadGun weaponName
+            let localMarks = localPlayerMarks world
+            let paintKey = if weaponName = "Paintball Marker" then string world.PaintColor else ""
+            let harpoonPose = harpoonLoadPose activeSlot
+            let mechanismPose =
+                match activeSlot.State, activeClass.Mechanism with
+                | Drawing charge, Bow -> Tuning.drawPose charge
+                | _ -> harpoonPose
+            let meshKey = weaponMeshKey weaponName paintKey localMarks mechanismPose
+            if loadedGun <> meshKey then uploadGun weaponName world mechanismPose
             let lookingThroughScope = activeClass.Kind = SniperRifle && world.Player.Ads >= 0.72f
             if gunIndexCount > 0u && not lookingThroughScope && not deathWatching then
                 // Particle rendering binds its own shader. Rebind the level/
@@ -360,7 +582,6 @@ type Renderer(gl: GL) =
                 let phase = float32 world.Tick * 0.11f
                 let bob = min 1.0f (speed / 4.0f)
                 let ads = world.Player.Ads
-                let activeSlot = world.Player.Slots[world.Player.Active]
                 let reloadPose =
                     match activeSlot.State with
                     | Reloading remaining ->
@@ -387,8 +608,9 @@ type Renderer(gl: GL) =
                 lastView <- view
                 viewSway <- Vector2.Lerp(viewSway, Vector2(Math.Clamp(viewDelta.X * 2.5f, -0.06f, 0.06f), Math.Clamp(viewDelta.Y * 2.5f, -0.05f, 0.05f)), 0.22f)
                 let position =
+                    let bowAdsOffset = if activeClass.Mechanism = Bow then ads * 0.13f else 0.0f
                     Vector3(
-                        0.34f * (1.0f - ads) + MathF.Sin(phase) * 0.012f * bob - viewSway.X + sprintBlend * 0.10f,
+                        0.34f * (1.0f - ads) + bowAdsOffset + MathF.Sin(phase) * 0.012f * bob - viewSway.X + sprintBlend * 0.10f,
                         -0.31f + ads * 0.10f + MathF.Abs(MathF.Cos phase) * 0.012f * bob + viewSway.Y
                         - reloadPose * 0.20f - switchPose * 0.25f - boltPose * 0.045f - sprintBlend * 0.14f,
                         -0.68f - ads * 0.05f + recoil * 0.55f + boltPose * 0.07f)
@@ -426,6 +648,8 @@ type Renderer(gl: GL) =
                     Some { Expires = expires; Position = position; Push = direction * (if headshot then 6.5f else 4.5f); Radius = 0.0f }
                 | HeadGib(position, direction) ->
                     Some { Expires = expires; Position = position; Push = direction * 7.0f; Radius = 0.0f }
+                | HarpoonSkewer(position, direction, _) ->
+                    Some { Expires = expires; Position = position; Push = direction * 9.0f; Radius = 0.0f }
                 | Explosion(position, radius) ->
                     Some { Expires = expires; Position = position; Push = Vector3.Zero; Radius = radius }
                 | _ -> None)
@@ -434,6 +658,7 @@ type Renderer(gl: GL) =
             events
             |> List.choose (function
                 | Impact(position, _, _) -> Some(Vector4(position, 0.16f))
+                | HarpoonEmbedded(position, _) -> Some(Vector4(position, 0.24f))
                 | Explosion(position, _) -> Some(Vector4(position, 1.35f))
                 | _ -> None)
         // Only the first 16 are ever uploaded (see uImpacts in Render), so

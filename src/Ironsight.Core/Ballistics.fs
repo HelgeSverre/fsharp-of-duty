@@ -63,7 +63,9 @@ module Ballistics =
         | Metal -> 20.0f
         | UniformOlive | UniformFeldgrau | Skin -> 0.5f
         // Render-only; never in the collision mesh, kept for match totality.
-        | Water -> 0.0f
+        | Water
+        | PaintRed | PaintBlue | PaintGreen | PaintYellow | PaintPurple | PaintOrange
+        | FoamBlue | FoamOrange | ToolBlack | WaterBlue | WetDark -> 0.0f
 
     // Head/torso/legs capsule bounds, single source of truth: shared by the
     // authoritative player-shot trace (soldierHit below) and the AI's

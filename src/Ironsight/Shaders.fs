@@ -218,6 +218,17 @@ vec3 materialColor() {
         float ripple = noise(p * 2.2) * 0.5 + noise(p * 7.0) * 0.5;
         return mix(vec3(0.10,0.20,0.24), vec3(0.22,0.36,0.38), ripple);
     }
+    if (vMaterial == 11) return vec3(0.95,0.06,0.08);
+    if (vMaterial == 12) return vec3(0.04,0.30,0.98);
+    if (vMaterial == 13) return vec3(0.08,0.90,0.22);
+    if (vMaterial == 14) return vec3(1.00,0.82,0.04);
+    if (vMaterial == 15) return vec3(0.68,0.08,0.92);
+    if (vMaterial == 16) return vec3(1.00,0.28,0.03);
+    if (vMaterial == 17) return vec3(0.04,0.22,0.72);
+    if (vMaterial == 18) return vec3(1.00,0.32,0.02);
+    if (vMaterial == 19) return vec3(0.035,0.040,0.045);
+    if (vMaterial == 20) return vec3(0.05,0.52,0.88);
+    if (vMaterial == 21) return vec3(0.075,0.10,0.12);
     return vec3(0.24,0.26,0.25);
 }
 void main() {

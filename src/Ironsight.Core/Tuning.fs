@@ -52,6 +52,39 @@ module Tuning =
     let BodyPenetrationCost = 3.0f
     let BodyDamageRetention = 0.6f
 
+    [<Literal>]
+    let MinimumDrawPower = 0.35f
+
+    let FullDrawTime = Units.seconds 1.0f
+    let SteadyDrawTime = Units.seconds 0.6f
+    let DrawFatigueTime = Units.seconds 1.2f
+
+    /// Bow power rises to full over one second, holds briefly, then visibly
+    /// sags back to its minimum as the archer tires. The held state itself is
+    /// unbounded; only this output curve is clamped.
+    let drawPower (charge: float32<s>) =
+        let elapsed = max 0.0f (Units.raw charge)
+        let fullAt = Units.raw FullDrawTime
+        let steadyUntil = fullAt + Units.raw SteadyDrawTime
+        if elapsed < fullAt then MinimumDrawPower + (1.0f - MinimumDrawPower) * elapsed / fullAt
+        elif elapsed <= steadyUntil then 1.0f
+        else
+            let tired = MathEx.clamp01 ((elapsed - steadyUntil) / Units.raw DrawFatigueTime)
+            1.0f + (MinimumDrawPower - 1.0f) * tired
+
+    /// Visual string travel. Unlike launch power, it starts at zero so the
+    /// first frames ease off the brace position, and fatigue only relaxes the
+    /// archer's pull by a quarter rather than magically undrawing the bow.
+    let drawPose (charge: float32<s>) =
+        let elapsed = max 0.0f (Units.raw charge)
+        let fullAt = Units.raw FullDrawTime
+        let steadyUntil = fullAt + Units.raw SteadyDrawTime
+        if elapsed < fullAt then MathEx.clamp01 (elapsed / fullAt)
+        elif elapsed <= steadyUntil then 1.0f
+        else
+            let tired = MathEx.clamp01 ((elapsed - steadyUntil) / Units.raw DrawFatigueTime)
+            1.0f - 0.25f * tired
+
     /// Fraction of base damage retained at a hit `distance` metres from the
     /// muzzle, by weapon class (the CoD4/BF1 sidearm pattern): pistols, SMGs,
     /// and shotguns keep their full close-range punch and pay for it over
@@ -76,6 +109,7 @@ module Tuning =
         { Name = "Kar98k"
           Mode = BoltAction
           Kind = Rifle
+          Mechanism = Hitscan
           Damage = Units.health 85.0f
           RoundsPerMin = 45.0f
           MagSize = 5
@@ -93,6 +127,7 @@ module Tuning =
         { Name = "Kar98k Sniper"
           Mode = BoltAction
           Kind = SniperRifle
+          Mechanism = Hitscan
           Damage = Units.health 120.0f
           RoundsPerMin = 38.0f
           MagSize = 5
@@ -110,6 +145,7 @@ module Tuning =
         { Name = "Thompson"
           Mode = FullAuto
           Kind = Smg
+          Mechanism = Hitscan
           Damage = Units.health 28.0f
           RoundsPerMin = 700.0f
           MagSize = 30
@@ -127,6 +163,7 @@ module Tuning =
         { Name = "M1911"
           Mode = SemiAuto
           Kind = Pistol
+          Mechanism = Hitscan
           Damage = Units.health 42.0f
           RoundsPerMin = 360.0f
           MagSize = 7
@@ -147,6 +184,7 @@ module Tuning =
         { Name = "Luger P08"
           Mode = SemiAuto
           Kind = Pistol
+          Mechanism = Hitscan
           Damage = Units.health 34.0f
           RoundsPerMin = 480.0f
           MagSize = 8
@@ -164,6 +202,7 @@ module Tuning =
         { Name = "MG42"
           Mode = FullAuto
           Kind = MachineGun
+          Mechanism = Hitscan
           Damage = Units.health 30.0f
           RoundsPerMin = 900.0f
           MagSize = 50
@@ -181,6 +220,7 @@ module Tuning =
         { Name = "M1897 Trench Gun"
           Mode = BoltAction
           Kind = Shotgun
+          Mechanism = Hitscan
           Damage = Units.health 16.0f
           RoundsPerMin = 72.0f
           MagSize = 5
@@ -198,6 +238,7 @@ module Tuning =
         { Name = "M1 Garand"
           Mode = SemiAuto
           Kind = Rifle
+          Mechanism = Hitscan
           Damage = Units.health 58.0f
           RoundsPerMin = 300.0f
           MagSize = 8
@@ -215,6 +256,7 @@ module Tuning =
         { Name = "STG-44"
           Mode = FullAuto
           Kind = Rifle
+          Mechanism = Hitscan
           Damage = Units.health 40.0f
           RoundsPerMin = 550.0f
           MagSize = 30
@@ -232,6 +274,7 @@ module Tuning =
         { Name = "MP40"
           Mode = FullAuto
           Kind = Smg
+          Mechanism = Hitscan
           Damage = Units.health 25.0f
           RoundsPerMin = 520.0f
           MagSize = 32
@@ -249,6 +292,7 @@ module Tuning =
         { Name = "Lee-Enfield"
           Mode = BoltAction
           Kind = Rifle
+          Mechanism = Hitscan
           Damage = Units.health 80.0f
           RoundsPerMin = 60.0f
           MagSize = 10
@@ -268,6 +312,7 @@ module Tuning =
         { Name = "FG42"
           Mode = FullAuto
           Kind = SniperRifle
+          Mechanism = Hitscan
           Damage = Units.health 42.0f
           RoundsPerMin = 450.0f
           MagSize = 20
@@ -285,6 +330,7 @@ module Tuning =
         { Name = "BAR"
           Mode = FullAuto
           Kind = MachineGun
+          Mechanism = Hitscan
           Damage = Units.health 45.0f
           RoundsPerMin = 500.0f
           MagSize = 20
@@ -298,9 +344,158 @@ module Tuning =
           HeadshotMultiplier = 1.5f
           MuzzleDistance = 1.12f }
 
+    /// Special-weapon tuning. Their physical mechanisms stay offline; Bow is
+    /// the deliberate exception and resolves its released charge as hitscan
+    /// online until projectile replication is added.
+    let paintballMarker =
+        { Name = "Paintball Marker"
+          Mode = SemiAuto
+          Kind = Rifle
+          Mechanism = Paintball
+          Damage = Units.health 200.0f
+          RoundsPerMin = 300.0f
+          MagSize = 20
+          ReloadTime = Units.seconds 2.5f
+          Pellets = 1
+          AdsTime = Units.seconds 0.13f
+          HipSpread = 0.032f
+          AdsSpread = 0.005f
+          Recoil = [| Vector2(0.001f, 0.006f) |]
+          Penetration = 0.0f
+          HeadshotMultiplier = 1.0f
+          MuzzleDistance = 1.00f }
+
+    let nerfBlaster =
+        { Name = "Nerf Blaster"
+          Mode = SemiAuto
+          Kind = Rifle
+          Mechanism = FoamDart
+          Damage = Units.health 200.0f
+          RoundsPerMin = 240.0f
+          MagSize = 12
+          ReloadTime = Units.seconds 2.2f
+          Pellets = 1
+          AdsTime = Units.seconds 0.11f
+          HipSpread = 0.038f
+          AdsSpread = 0.007f
+          Recoil = [| Vector2(0.001f, 0.004f) |]
+          Penetration = 0.0f
+          HeadshotMultiplier = 1.0f
+          MuzzleDistance = 0.82f }
+
+    let bazooka =
+        { Name = "Bazooka"
+          Mode = BoltAction
+          Kind = MachineGun
+          Mechanism = Rocket
+          Damage = Units.health 250.0f
+          RoundsPerMin = 17.0f
+          MagSize = 1
+          ReloadTime = Units.seconds 3.5f
+          Pellets = 1
+          AdsTime = Units.seconds 0.30f
+          HipSpread = 0.020f
+          AdsSpread = 0.002f
+          Recoil = [| Vector2(0.0f, 0.065f) |]
+          Penetration = 0.0f
+          HeadshotMultiplier = 1.0f
+          MuzzleDistance = 1.28f }
+
+    let flamethrower =
+        { Name = "Flamethrower"
+          Mode = FullAuto
+          Kind = Rifle
+          Mechanism = FlameJet
+          Damage = Units.health 3.0f
+          RoundsPerMin = 600.0f
+          MagSize = 120
+          ReloadTime = Units.seconds 4.0f
+          Pellets = 1
+          AdsTime = Units.seconds 0.16f
+          HipSpread = 0.018f
+          AdsSpread = 0.006f
+          Recoil = [| Vector2(0.001f, 0.002f) |]
+          Penetration = 0.0f
+          HeadshotMultiplier = 1.0f
+          MuzzleDistance = 0.92f }
+
+    let superSoaker =
+        { Name = "Super Soaker"
+          Mode = FullAuto
+          Kind = Rifle
+          Mechanism = WaterJet
+          Damage = Units.health 0.75f
+          RoundsPerMin = 600.0f
+          MagSize = 300
+          ReloadTime = Units.seconds 4.0f
+          Pellets = 1
+          AdsTime = Units.seconds 0.12f
+          HipSpread = 0.025f
+          AdsSpread = 0.008f
+          Recoil = [| Vector2(0.0f, 0.001f) |]
+          Penetration = 0.0f
+          HeadshotMultiplier = 1.0f
+          MuzzleDistance = 0.88f }
+
+    let nailgun =
+        { Name = "Nailgun"
+          Mode = SemiAuto
+          Kind = Rifle
+          Mechanism = Nail
+          Damage = Units.health 66.0f
+          RoundsPerMin = 180.0f
+          MagSize = 30
+          ReloadTime = Units.seconds 2.7f
+          Pellets = 1
+          AdsTime = Units.seconds 0.14f
+          HipSpread = 0.026f
+          AdsSpread = 0.004f
+          Recoil = [| Vector2(0.001f, 0.009f) |]
+          Penetration = 0.0f
+          HeadshotMultiplier = 1.0f
+          MuzzleDistance = 0.78f }
+
+    let harpoonGun =
+        { Name = "Harpoon Gun"
+          Mode = BoltAction
+          Kind = MachineGun
+          Mechanism = Harpoon
+          Damage = Units.health 200.0f
+          RoundsPerMin = 45.0f
+          MagSize = 1
+          ReloadTime = Units.seconds 2.8f
+          Pellets = 1
+          AdsTime = Units.seconds 0.24f
+          HipSpread = 0.018f
+          AdsSpread = 0.002f
+          Recoil = [| Vector2(0.004f, 0.055f) |]
+          Penetration = 0.0f
+          HeadshotMultiplier = 1.0f
+          MuzzleDistance = 1.35f }
+
+    let bow =
+        { Name = "Bow"
+          Mode = SemiAuto
+          Kind = Rifle
+          Mechanism = Bow
+          Damage = Units.health 120.0f
+          RoundsPerMin = 150.0f
+          MagSize = 12
+          ReloadTime = Units.seconds 1.8f
+          Pellets = 1
+          AdsTime = Units.seconds 0.14f
+          HipSpread = 0.042f
+          AdsSpread = 0.003f
+          Recoil = [| Vector2(0.0f, 0.014f) |]
+          Penetration = 0.0f
+          HeadshotMultiplier = 1.5f
+          MuzzleDistance = 0.92f }
+
     // Appended in this order on purpose: existing indices are load-bearing for
     // the online loadout menu and its tests.
-    let onlineWeapons = [| kar98k; thompson; m1911; kar98kSniper; m1897; m1Garand; stg44; mp40; leeEnfield; fg42; bar; luger |]
+    let onlineWeapons = [| kar98k; thompson; m1911; kar98kSniper; m1897; m1Garand; stg44; mp40; leeEnfield; fg42; bar; luger; bow |]
+
+    let specialWeapons = [| paintballMarker; nerfBlaster; bazooka; flamethrower; superSoaker; nailgun; harpoonGun; bow |]
 
     let defaultWeapon = function Allies -> thompson | Axis -> kar98k
 
@@ -310,20 +505,23 @@ module Tuning =
 
     /// Which number key holds a weapon: 0 = key 1, 4 = key 5. Derived from the
     /// weapon's own stats rather than a table of inventory indices, so it works
-    /// for any loadout — the twelve-slot offline sandbox and the two-slot
+    /// for any loadout — the twenty-slot offline sandbox and the two-slot
     /// online kit alike.
     ///
     /// Arm order is load-bearing. The FG42 is a full-auto SniperRifle but
     /// belongs with the scoped guns, and the BAR is a full-auto MachineGun but
     /// belongs with the heavies, so Kind is matched before Mode.
     let categoryOf (weapon: WeaponClass) =
-        match weapon.Kind with
-        | Pistol -> 2
-        | SniperRifle -> 3
-        | Shotgun | MachineGun -> 4
-        | Smg -> 1
-        // The STG-44 is a rifle that fires like an SMG, and sits with them.
-        | Rifle -> if weapon.Mode = FullAuto then 1 else 0
+        match weapon.Mechanism with
+        | Paintball | FoamDart | Rocket | FlameJet | WaterJet | Nail | Harpoon | Bow -> 4
+        | Hitscan ->
+            match weapon.Kind with
+            | Pistol -> 2
+            | SniperRifle -> 3
+            | Shotgun | MachineGun -> 4
+            | Smg -> 1
+            // The STG-44 is a rifle that fires like an SMG, and sits with them.
+            | Rifle -> if weapon.Mode = FullAuto then 1 else 0
 
     /// Slot indices in `slots` that key `category` selects, in carry order.
     let categorySlots (slots: WeaponSlot array) category =

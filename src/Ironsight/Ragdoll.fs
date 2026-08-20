@@ -95,12 +95,13 @@ module Ragdoll =
             let stale = bodies.Keys |> Seq.filter (corpses.Contains >> not) |> Seq.toArray
             for id in stale do bodies.Remove id |> ignore
 
-        member _.Step(dt: float32, level: Level) =
+        member _.Step(dt: float32, level: Level, pins: Map<EntityId, Vector3>) =
             let dt = Math.Clamp(dt, 0.0f, 0.05f)
             if dt > 0.0f then
                 for pair in bodies do
                     let body = pair.Value
-                    if not body.Settled then
+                    let pin = Map.tryFind pair.Key pins
+                    if not body.Settled || pin.IsSome then
                         let joints = body.Joints
                         let previous = body.Previous
                         // Verlet integration: damped inertia plus gravity.
@@ -118,6 +119,10 @@ module Ragdoll =
                                     let correction = delta * ((distance - body.Lengths[boneIndex]) / distance * 0.5f)
                                     joints[a] <- joints[a] + correction
                                     joints[b] <- joints[b] - correction)
+                            pin
+                            |> Option.iter (fun anchor ->
+                                joints[1] <- anchor
+                                previous[1] <- anchor)
                         // Ground clamp with friction. The query point is lifted so
                         // a joint that sank into geometry this frame still finds
                         // the surface above its center.
@@ -134,16 +139,26 @@ module Ragdoll =
                                 let flat = Vector3(joint.X, previous[index].Y, joint.Z)
                                 previous[index] <- Vector3.Lerp(previous[index], flat, 0.5f)
                             | _ -> ()
+                        pin
+                        |> Option.iter (fun anchor ->
+                            joints[1] <- anchor
+                            previous[1] <- anchor)
                         // Sleep once nothing moved for a while; the skeleton
                         // stays frozen and free to render.
                         let mutable maxMove = 0.0f
                         for index in 0 .. jointCount - 1 do
                             maxMove <- max maxMove (Vector3.Distance(joints[index], previous[index]))
-                        if maxMove < 0.004f then
+                        if pin.IsSome then
+                            body.RestFrames <- 0
+                            body.Settled <- false
+                        elif maxMove < 0.004f then
                             body.RestFrames <- body.RestFrames + 1
                             if body.RestFrames >= 20 then body.Settled <- true
                         else
                             body.RestFrames <- 0
+
+        member this.Step(dt: float32, level: Level) =
+            this.Step(dt, level, Map.empty<EntityId, Vector3>)
 
         member _.TryGet id =
             match bodies.TryGetValue id with

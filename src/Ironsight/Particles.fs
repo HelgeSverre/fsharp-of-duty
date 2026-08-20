@@ -103,6 +103,29 @@ void main() {
     member _.Handle(events: GameEvent list) (blood: Vector3) =
         for event in events do
             match event with
+            | ShotFired(_, origin, direction, "Paintball Marker") ->
+                addPuff (origin + direction * 0.25f) (direction * 0.6f) (Vector4(0.72f, 0.78f, 0.82f, 0.42f)) 9.0f 0.16f 0.1f
+            | ShotFired(_, origin, direction, "Nerf Blaster") ->
+                addPuff (origin + direction * 0.20f) (direction * 0.35f) (Vector4(1.0f, 0.40f, 0.05f, 0.48f)) 8.0f 0.12f 0.0f
+            | ShotFired(_, origin, direction, "Bazooka") ->
+                for index in 0..8 do
+                    let angle = float32 index * 2.39996f
+                    let side = Vector3(MathF.Cos angle, MathF.Sin angle, 0.0f) * (0.25f + float32 (index % 3) * 0.10f)
+                    addGrowingPuff (origin + direction * 0.3f) (direction * (1.8f + float32 index * 0.10f) + side) (Vector4(0.62f, 0.60f, 0.54f, 0.58f)) 18.0f 0.8f 0.2f 34.0f
+            | ShotFired(_, origin, direction, "Flamethrower") ->
+                addPuff (origin + direction * 0.18f) (direction * 1.8f) (Vector4(1.0f, 0.74f, 0.18f, 0.92f)) 18.0f 0.16f 1.2f
+            | ShotFired(_, origin, direction, "Super Soaker") ->
+                addPuff (origin + direction * 0.16f) (direction * 1.1f) (Vector4(0.30f, 0.72f, 1.0f, 0.55f)) 9.0f 0.18f -1.5f
+            | ShotFired(_, origin, direction, "Nailgun") ->
+                addPuff (origin + direction * 0.12f) (direction * 0.35f) (Vector4(0.68f, 0.70f, 0.72f, 0.42f)) 8.0f 0.10f 0.0f
+            | ShotFired(_, origin, direction, "Harpoon Gun") ->
+                addLine origin (origin + direction * 1.4f) (Vector4(0.92f, 0.68f, 0.24f, 0.92f)) 0.18f
+                for index in 0..7 do
+                    let angle = float32 index * MathF.Tau / 8.0f
+                    let side = Vector3(MathF.Cos angle, MathF.Sin angle, 0.0f) * 0.32f
+                    addGrowingPuff (origin + direction * 0.18f) (direction * 1.6f + side) (Vector4(0.68f, 0.70f, 0.72f, 0.48f)) 15.0f 0.55f 0.0f 22.0f
+            | ShotFired(_, origin, direction, "Bow") ->
+                addLine origin (origin + direction * 2.2f) (Vector4(0.72f, 0.48f, 0.22f, 0.72f)) 0.10f
             | ShotFired(_, origin, direction, _) ->
                 addLine (origin + direction * 0.35f) (origin + direction * 32.0f) (Vector4(1.0f, 0.78f, 0.28f, 0.8f)) 0.08f
                 addPuff (origin + direction * 0.45f) (direction * 0.4f) (Vector4(1.0f, 0.55f, 0.10f, 0.9f)) 18.0f 0.12f 0.28f
@@ -116,6 +139,9 @@ void main() {
                     let angle = float32 index * MathF.Tau / 4.0f
                     let velocity = normal * (0.35f + float32 index * 0.08f) + tangent * MathF.Cos(angle) * 0.3f + bitangent * MathF.Sin(angle) * 0.3f
                     addPuff position velocity (Vector4(0.55f, 0.42f, 0.25f, 0.56f)) (10.0f + float32 index * 2.0f) 0.42f -1.8f
+            | ArrowImpact(position, normal, stuck) ->
+                let color = if stuck then Vector4(0.64f, 0.43f, 0.20f, 0.88f) else Vector4(0.78f, 0.72f, 0.60f, 0.72f)
+                addLine position (position + normal * 0.32f) color 0.20f
             | BloodImpact(position, direction, headshot) ->
                 let dark = Vector4(blood.X * 0.45f, blood.Y * 0.45f, blood.Z * 0.45f, 0.95f)
                 let light = Vector4(blood.X, blood.Y, blood.Z, 0.90f)
@@ -191,6 +217,104 @@ void main() {
                         (2.6f + float32 (index % 4) * 0.3f)
                         0.42f
                         26.0f
+            | PaintImpact(position, normal, color) ->
+                let rgb =
+                    match color with
+                    | PaintRed -> Vector3(1.0f, 0.06f, 0.08f)
+                    | PaintBlue -> Vector3(0.04f, 0.32f, 1.0f)
+                    | PaintGreen -> Vector3(0.08f, 0.96f, 0.22f)
+                    | PaintYellow -> Vector3(1.0f, 0.84f, 0.04f)
+                    | PaintPurple -> Vector3(0.72f, 0.08f, 0.98f)
+                    | _ -> Vector3(1.0f, 0.30f, 0.03f)
+                let tangent = Vector3.Cross(normal, if abs normal.Y < 0.8f then Vector3.UnitY else Vector3.UnitX) |> MathEx.normalizedOrZero
+                let bitangent = Vector3.Cross(normal, tangent) |> MathEx.normalizedOrZero
+                for index in 0..13 do
+                    let angle = float32 index * 2.39996f
+                    let radial = tangent * MathF.Cos angle + bitangent * MathF.Sin angle
+                    let velocity = normal * (0.4f + float32 (index % 4) * 0.22f) + radial * (0.45f + float32 (index % 3) * 0.18f)
+                    addPuff position velocity (Vector4(rgb, 0.92f)) (10.0f + float32 (index % 3) * 3.0f) 0.55f -8.0f
+            | DartImpact(position, normal, stuck) ->
+                let color = if stuck then Vector4(1.0f, 0.42f, 0.06f, 0.80f) else Vector4(0.20f, 0.42f, 1.0f, 0.72f)
+                addLine position (position + normal * (if stuck then 0.22f else 0.42f)) color 0.24f
+                for index in 0..3 do addPuff position (normal * (0.2f + float32 index * 0.1f)) color (7.0f + float32 index) 0.25f -2.0f
+            | RocketDud(position, normal) ->
+                addLine position (position + normal * 0.45f) (Vector4(1.0f, 0.48f, 0.10f, 0.82f)) 0.22f
+                for index in 0..9 do
+                    let shade = 0.24f + float32 (index % 3) * 0.06f
+                    addGrowingPuff position (normal * (0.3f + float32 index * 0.08f) + Vector3.UnitY * 0.2f) (Vector4(shade, shade, shade, 0.50f)) 18.0f 1.2f 0.25f 22.0f
+            | Backblast(position, direction) ->
+                for index in 0..15 do
+                    let angle = float32 index * 2.39996f
+                    let radial = Vector3(MathF.Cos angle, MathF.Sin angle, 0.0f) * (0.4f + float32 (index % 4) * 0.12f)
+                    addGrowingPuff position (direction * (2.2f + float32 (index % 5) * 0.5f) + radial) (Vector4(0.66f, 0.63f, 0.56f, 0.48f)) 22.0f 1.4f 0.3f 30.0f
+            | FlameStream(origin, endpoint) ->
+                let delta = endpoint - origin
+                let direction = MathEx.normalizedOrZero delta
+                let reference = if abs direction.Y < 0.9f then Vector3.UnitY else Vector3.UnitX
+                let tangent = Vector3.Cross(direction, reference) |> MathEx.normalizedOrZero
+                let bitangent = Vector3.Cross(direction, tangent) |> MathEx.normalizedOrZero
+                addLine (origin + direction * 0.12f) endpoint (Vector4(1.0f, 0.70f, 0.10f, 0.94f)) 0.14f
+                addLine (origin + direction * 0.18f + tangent * 0.025f) (endpoint + tangent * 0.08f) (Vector4(1.0f, 0.24f, 0.03f, 0.72f)) 0.16f
+                for index in 1..14 do
+                    let t = float32 index / 15.0f
+                    let angle = float32 index * 2.39996f
+                    let radial = tangent * MathF.Cos angle + bitangent * MathF.Sin angle
+                    let position = Vector3.Lerp(origin, endpoint, t) + radial * (0.03f + t * 0.20f)
+                    let color = if index % 3 = 0 then Vector4(1.0f, 0.82f, 0.20f, 0.86f) else Vector4(1.0f, 0.25f, 0.02f, 0.78f)
+                    addGrowingPuff position (direction * (1.2f + t * 2.0f) + Vector3.UnitY * (0.4f + t)) color (11.0f + t * 22.0f) 0.22f 1.8f 18.0f
+            | FlameImpact(position, normal) ->
+                let tangent = Vector3.Cross(normal, if abs normal.Y < 0.8f then Vector3.UnitY else Vector3.UnitX) |> MathEx.normalizedOrZero
+                let bitangent = Vector3.Cross(normal, tangent) |> MathEx.normalizedOrZero
+                for index in 0..11 do
+                    let angle = float32 index * 2.39996f
+                    let radial = tangent * MathF.Cos angle + bitangent * MathF.Sin angle
+                    let color = if index % 3 = 0 then Vector4(1.0f, 0.86f, 0.20f, 0.92f) else Vector4(1.0f, 0.22f, 0.015f, 0.82f)
+                    addGrowingPuff (position + radial * 0.05f) (normal * (0.35f + float32 (index % 4) * 0.16f) + radial * 0.42f + Vector3.UnitY * 0.55f) color (14.0f + float32 (index % 4) * 4.0f) 0.55f 1.5f 20.0f
+                for index in 0..3 do
+                    addGrowingPuff position (normal * 0.2f + Vector3.UnitY * (0.3f + float32 index * 0.12f)) (Vector4(0.22f, 0.20f, 0.18f, 0.32f)) 18.0f 0.9f 0.7f 28.0f
+            | WaterImpact(position, normal) ->
+                addPuff position (normal * 0.6f) (Vector4(0.18f, 0.62f, 1.0f, 0.65f)) 12.0f 0.25f -5.0f
+                let tangent = Vector3.Cross(normal, if abs normal.Y < 0.8f then Vector3.UnitY else Vector3.UnitX) |> MathEx.normalizedOrZero
+                for index in 0..5 do
+                    let angle = float32 index * MathF.Tau / 6.0f
+                    let radial = tangent * MathF.Cos angle + Vector3.Cross(normal, tangent) * MathF.Sin angle
+                    addLine position (position + normal * 0.08f + radial * 0.20f) (Vector4(0.15f, 0.58f, 1.0f, 0.72f)) 0.18f
+            | NailImpact(position, normal, stuck) ->
+                let color = if stuck then Vector4(0.82f, 0.84f, 0.88f, 0.85f) else Vector4(1.0f, 0.60f, 0.16f, 0.92f)
+                for index in 0..3 do
+                    let side = Vector3(MathF.Cos(float32 index * MathF.PI * 0.5f), 0.2f, MathF.Sin(float32 index * MathF.PI * 0.5f))
+                    addLine position (position + normal * 0.15f + side * 0.10f) color 0.14f
+            | HarpoonSkewer(position, direction, _) ->
+                let forward = MathEx.normalizedOrZero direction
+                let tangent = Vector3.Cross(forward, if abs forward.Y < 0.8f then Vector3.UnitY else Vector3.UnitX) |> MathEx.normalizedOrZero
+                let bitangent = Vector3.Cross(forward, tangent) |> MathEx.normalizedOrZero
+                let dark = Vector4(blood.X * 0.55f, blood.Y * 0.55f, blood.Z * 0.55f, 0.95f)
+                for index in 0..13 do
+                    let angle = float32 index * 2.39996f
+                    let radial = tangent * MathF.Cos angle + bitangent * MathF.Sin angle
+                    addPuff position (forward * (1.2f + float32 (index % 4) * 0.35f) + radial * 0.75f) dark (12.0f + float32 (index % 3) * 4.0f) 0.62f -8.0f
+                addLine position (position + forward * 0.85f) (Vector4(blood, 0.90f)) 0.22f
+            | HarpoonEmbedded(position, normal) ->
+                let tangent = Vector3.Cross(normal, if abs normal.Y < 0.8f then Vector3.UnitY else Vector3.UnitX) |> MathEx.normalizedOrZero
+                let bitangent = Vector3.Cross(normal, tangent) |> MathEx.normalizedOrZero
+                for index in 0..11 do
+                    let angle = float32 index * 2.39996f
+                    let radial = tangent * MathF.Cos angle + bitangent * MathF.Sin angle
+                    addLine position (position + normal * 0.18f + radial * (0.18f + float32 (index % 3) * 0.08f)) (Vector4(1.0f, 0.63f, 0.12f, 0.92f)) 0.20f
+                for index in 0..5 do
+                    addPuff position (normal * 0.35f + Vector3.UnitY * (0.18f + float32 index * 0.06f)) (Vector4(0.32f, 0.30f, 0.27f, 0.42f)) 12.0f 0.55f -0.8f
+            | Ignited(_, position) ->
+                for index in 0..10 do
+                    let angle = float32 index * 2.39996f
+                    let side = Vector3(MathF.Cos angle, 0.4f, MathF.Sin angle)
+                    addGrowingPuff position (side * 0.7f + Vector3.UnitY * 0.8f) (Vector4(1.0f, 0.36f, 0.04f, 0.86f)) 16.0f 0.45f 1.6f 16.0f
+            | Burning(_, position) ->
+                let phase = float32 puffs.Length * 2.39996f
+                let side = Vector3(MathF.Cos phase, 0.0f, MathF.Sin phase) * 0.18f
+                addGrowingPuff (position + side) (Vector3.UnitY * 1.2f) (Vector4(1.0f, 0.32f, 0.025f, 0.72f)) 14.0f 0.28f 1.4f 12.0f
+            | Extinguished(_, position) ->
+                for index in 0..7 do
+                    addGrowingPuff position (Vector3.UnitY * (0.4f + float32 index * 0.08f)) (Vector4(0.72f, 0.82f, 0.86f, 0.34f)) 16.0f 0.65f 0.5f 24.0f
             | _ -> ()
         // A synchronized firefight can emit hundreds of cosmetic events in one
         // tick. Keep presentation bounded; simulation and hit results are not

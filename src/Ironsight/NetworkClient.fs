@@ -39,6 +39,7 @@ type OnlinePlayer =
       /// Switch in flight; SwitchTo = -1 when idle.
       SwitchTo: int
       SwitchRemaining: float32
+      DrawCharge: float32
       Ammo: int
       Reserve: int
       WeaponName: string
@@ -147,6 +148,8 @@ module SnapshotWire =
                      | true, field when field.ValueKind = JsonValueKind.Number -> field.GetInt32()
                      | _ -> -1)
                   SwitchRemaining = getFloat "switchRemaining" value
+                  // Additive fallback: servers predating the bow omit it.
+                  DrawCharge = getFloat "drawCharge" value
                   Ammo = getInt "ammo" value
                   Reserve = getInt "reserve" value
                   WeaponName = getString "weapon" value
@@ -308,7 +311,8 @@ type OnlineClient(serverUri: Uri, playerName: string, requestedMode: GameMode, w
         { second with
             Position = Vector3.Lerp(first.Position, second.Position, amount)
             Yaw = MathEx.lerpAngle first.Yaw second.Yaw amount
-            Pitch = first.Pitch + (second.Pitch - first.Pitch) * amount }
+            Pitch = first.Pitch + (second.Pitch - first.Pitch) * amount
+            DrawCharge = first.DrawCharge + (second.DrawCharge - first.DrawCharge) * amount }
 
     member _.ServerUri = serverUri
     member _.PlayerId = playerId

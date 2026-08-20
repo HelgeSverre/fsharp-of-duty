@@ -57,6 +57,8 @@ type PlayerSnapshot =
       // active slot can ever be Switching. switchTo = -1 when idle.
       switchTo: int
       switchRemaining: float32
+      /// Seconds the active bow has been held. Zero for every other state.
+      drawCharge: float32
       // The active slot, duplicated flat. Costs four fields and keeps a client
       // built before kits showing the right gun instead of a team default.
       ammo: int
@@ -255,6 +257,7 @@ module Protocol =
                   active = player.Active
                   switchTo = (match player.Slots[player.Active].State with Switching(incoming, _) -> incoming | _ -> -1)
                   switchRemaining = (match player.Slots[player.Active].State with Switching(_, remaining) -> Units.raw remaining | _ -> 0.0f)
+                  drawCharge = (match player.Slots[player.Active].State with Drawing charge -> Units.raw charge | _ -> 0.0f)
                   ammo = player.Slots[player.Active].InMag
                   reserve = player.Slots[player.Active].Reserve
                   weapon = player.Slots[player.Active].Class.Name
@@ -287,6 +290,26 @@ module Protocol =
             | HeadGib(position, direction) -> make "head-gib" (EntityId 0) position direction 0.0f ""
             | PlayerHurt(direction, health) -> make "hurt" (EntityId 0) Vector3.Zero direction (Units.raw health) ""
             | Explosion(position, radius) -> make "explosion" (EntityId 0) position Vector3.Zero radius ""
+            // Physical special weapons are not selectable online. These cases
+            // keep the shared event serializer total for local/dev hosts
+            // without adding projectile replication. Bow resolves online
+            // through the ordinary hit/impact events.
+            | PaintImpact(position, normal, color) -> make "paint" (EntityId 0) position normal 0.0f (string color)
+            | DartImpact(position, normal, stuck) -> make "dart" (EntityId 0) position normal (if stuck then 1.0f else 0.0f) ""
+            | RocketDud(position, normal) -> make "rocket-dud" (EntityId 0) position normal 0.0f ""
+            | Backblast(position, direction) -> make "backblast" (EntityId 0) position direction 0.0f ""
+            | FlameStream(origin, endpoint) ->
+                let delta = endpoint - origin
+                make "flame-stream" (EntityId 0) origin (MathEx.normalizedOrZero delta) (delta.Length()) ""
+            | FlameImpact(position, normal) -> make "flame-impact" (EntityId 0) position normal 0.0f ""
+            | WaterImpact(position, normal) -> make "water-impact" (EntityId 0) position normal 0.0f ""
+            | NailImpact(position, normal, stuck) -> make "nail-impact" (EntityId 0) position normal (if stuck then 1.0f else 0.0f) ""
+            | HarpoonSkewer(position, direction, victim) -> make "harpoon-skewer" victim position direction 0.0f ""
+            | HarpoonEmbedded(position, normal) -> make "harpoon-embedded" (EntityId 0) position normal 0.0f ""
+            | ArrowImpact(position, normal, stuck) -> make "arrow-impact" (EntityId 0) position normal (if stuck then 1.0f else 0.0f) ""
+            | Ignited(victim, position) -> make "ignited" victim position Vector3.Zero 0.0f ""
+            | Extinguished(victim, position) -> make "extinguished" victim position Vector3.Zero 0.0f ""
+            | Burning(victim, position) -> make "burning" victim position Vector3.Zero 0.0f ""
             | FootStep(position, surface) -> make "footstep" (EntityId 0) position Vector3.Zero 0.0f (string surface)
             | Subtitle(speaker, line) -> make "subtitle" (EntityId 0) Vector3.Zero Vector3.Zero 0.0f $"{speaker}: {line}"
             | ObjectiveUpdated index -> make "objective" (EntityId index) Vector3.Zero Vector3.Zero 0.0f ""
@@ -368,6 +391,9 @@ module Protocol =
             weapons
             |> Array.map (fun weapon ->
                 let struct (falloffStart, falloffEnd, retained) = Tuning.falloffWindow weapon.Kind
+                let minimumDamage =
+                    let baseDamage = Units.raw weapon.Damage * retained
+                    if weapon.Mechanism = Bow then baseDamage * Tuning.MinimumDrawPower else baseDamage
                 { name = weapon.Name
                   kind = string weapon.Kind
                   fireMode = string weapon.Mode
@@ -383,5 +409,5 @@ module Protocol =
                   penetration = weapon.Penetration
                   falloffStartMetres = falloffStart
                   falloffEndMetres = falloffEnd
-                  minimumDamagePerProjectile = Units.raw weapon.Damage * retained
+                  minimumDamagePerProjectile = minimumDamage
                   availability = if Set.contains weapon.Name onlineNames then "Player loadout" else "Mounted weapon" }) }
