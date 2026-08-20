@@ -1082,3 +1082,62 @@ module ServerTests =
         Assert.True(run (fun host -> host.Snapshot().Tick - 11L))
         // Estimated tick = now: no rewind, the ally has left the line, miss.
         Assert.False(run (fun host -> host.Snapshot().Tick))
+
+    let private closeMeleeArena name =
+        LevelDsl.level name
+            [ LevelDsl.street 20.0f 10.0f Mud
+              LevelDsl.spawnSquad Allies 1 Vector3.Zero
+              LevelDsl.spawnSquad Axis 1 (Vector3(0.0f, 0.0f, -0.82f)) ]
+        |> LevelCompile.compile
+
+    [<Fact>]
+    let ``chainsaw keeps running across a packet stall and drains by server time`` () =
+        let host = MatchHost(TeamDeathmatch, closeMeleeArena "Saw stall")
+        let saw, _ = host.TryAddPlayer("Saw", weaponName = "Electric Chainsaw").Value
+        let target, _ = host.TryAddPlayer("Target").Value
+        TestKit.readyUp host [ saw; target ]
+        TestKit.applyCustom 1L 0.0f 0.0f (int InputButtons.Fire) host saw
+        host.AdvanceTick()
+        let afterPress = host.Snapshot().Players[saw].Slots[0].InMag
+        for _ in 1..35 do host.AdvanceTick()
+        let afterStall = host.Snapshot().Players[saw].Slots[0].InMag
+        Assert.True(afterStall < afterPress, "packet loss stopped a held saw")
+        Assert.InRange(afterPress - afterStall, 3, 7)
+
+    [<Fact>]
+    let ``queued input frames cannot double drain the chainsaw battery`` () =
+        let host = MatchHost(TeamDeathmatch, closeMeleeArena "Saw flood")
+        let saw, _ = host.TryAddPlayer("Saw", weaponName = "Electric Chainsaw").Value
+        let target, _ = host.TryAddPlayer("Target").Value
+        TestKit.readyUp host [ saw; target ]
+        let initial = host.Snapshot().Players[saw].Slots[0].InMag
+        let mutable sequence = 1L
+        for _ in 1..24 do
+            TestKit.applyCustom sequence 0.0f 0.0f (int InputButtons.Fire) host saw
+            TestKit.applyCustom (sequence + 1L) 0.0f 0.0f (int InputButtons.Fire) host saw
+            host.AdvanceTick()
+            sequence <- sequence + 2L
+        let drained = initial - host.Snapshot().Players[saw].Slots[0].InMag
+        Assert.InRange(drained, 3, 6)
+
+    [<Fact>]
+    let ``katana overhead death persists a cut descriptor on the wire`` () =
+        let host = MatchHost(TeamDeathmatch, closeMeleeArena "Katana cut")
+        let samurai, _ = host.TryAddPlayer("Samurai", weaponName = "Katana").Value
+        let target, _ = host.TryAddPlayer("Target").Value
+        TestKit.readyUp host [ samurai; target ]
+        let mutable sequence = 1L
+        for _ in 1..32 do
+            TestKit.applyCustom sequence 0.0f 0.0f (int InputButtons.Ads) host samurai
+            host.AdvanceTick()
+            sequence <- sequence + 1L
+        TestKit.applyCustom sequence 0.0f 0.0f (int (InputButtons.Fire ||| InputButtons.Ads)) host samurai
+        host.AdvanceTick()
+        let dead = host.Snapshot().Players[target]
+        Assert.False dead.Alive
+        Assert.True dead.Cut.IsSome
+        Assert.Equal(dead.LifeRevision, dead.Cut.Value.DeathRevision)
+        use document = System.Text.Json.JsonDocument.Parse(Protocol.serialize (Protocol.snapshot (host.Snapshot())))
+        let parsed = Ironsight.Shell.SnapshotWire.parseSnapshot document.RootElement
+        let wireTarget = parsed.Players |> Array.find (fun player -> player.Id = (let (EntityId id) = target in id))
+        Assert.Equal(Some dead.Cut.Value, wireTarget.Cut)

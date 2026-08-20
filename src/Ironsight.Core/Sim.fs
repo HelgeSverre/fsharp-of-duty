@@ -27,7 +27,9 @@ module Sim =
            Tuning.weaponSlot Tuning.nailgun 3
            Tuning.weaponSlot Tuning.harpoonGun 4
            Tuning.weaponSlot Tuning.bow 3
-           Tuning.weaponSlot Tuning.laserPointer 1 |]
+           Tuning.weaponSlot Tuning.laserPointer 1
+           Tuning.weaponSlot Tuning.electricChainsaw 1
+           Tuning.weaponSlot Tuning.katana 0 |]
 
     /// The paintball round loadout opens on the Thompson.
     let private thompsonSlot = 3
@@ -84,6 +86,7 @@ module Sim =
             SpecialProjectiles = [||]
             PersistentMarks = [||]
             ElementalStatus = Map.empty
+            Dismemberments = Map.empty
             PaintColor = paintColor
             Squads = Map.empty
             Script = { MissionTime = Units.seconds 0.0f; Ended = false; Rules = world.Level.MissionRules }
@@ -172,16 +175,18 @@ module Sim =
         let moved = Movement.step dt input level player
         let active = moved.Slots[moved.Active]
         let fireHeld = Input.hasButton InputButtons.Fire input.Buttons
+        let katanaSecondary = active.Class.Mechanism = Katana && Input.hasButton InputButtons.Ads input.Buttons
         // Once a bow is drawn, sprint suppression must not masquerade as a
         // trigger release and loose an accidental arrow. It may finish/release
         // a draw while sprinting, but cannot begin one there.
         let alreadyDrawing = match active.State with Drawing _ -> true | _ -> false
-        let fire = stepWeapon && canFire && fireHeld && (not moved.Sprinting || alreadyDrawing)
+        let fire = stepWeapon && canFire && (fireHeld || katanaSecondary) && (not moved.Sprinting || alreadyDrawing)
         let reload = Input.hasButton InputButtons.Reload input.Buttons
         let moveSpeed = MathEx.horizontalSpeed moved.Velocity
         let weapon, shots =
             if stepWeapon then
-                let struct (weapon, shots) = Weapons.step dt moveSpeed moved.Stance fire reload moved.Ads &rng active
+                let weaponAim = if katanaSecondary then 1.0f else moved.Ads
+                let struct (weapon, shots) = Weapons.step dt moveSpeed moved.Stance fire reload weaponAim &rng active
                 weapon, shots
             else active, []
         let grenadeHeld = canThrowGrenade && Input.hasButton InputButtons.Grenade input.Buttons && not moved.Sprinting
@@ -258,6 +263,7 @@ module Sim =
         let mutable soldiers = world.Soldiers
         let mutable projectilePlayer = armedPlayer
         let mutable elementalStatus = world.ElementalStatus
+        let mutable dismemberments = world.Dismemberments
         let spawnedProjectiles = ResizeArray<SpecialProjectile>()
         if not result.Shots.IsEmpty then
             // Tracer starts at the muzzle; the hit trace below leaves the eye.
@@ -305,6 +311,45 @@ module Sim =
                     | HitConfirmed(victim, true) ->
                         shotEvents.Add(Kill(Some armedPlayer.Id, victim, result.Weapon.Class.Name, false))
                     | _ -> ()
+            | Chainsaw | Katana ->
+                match shot.Melee with
+                | None -> ()
+                | Some attack ->
+                    let targets =
+                        soldiers
+                        |> Array.map (fun soldier ->
+                            { Id = soldier.Id; Position = soldier.Position; Yaw = soldier.Facing; Stance = soldier.Stance })
+                    let hits =
+                        Melee.resolve attack armedPlayer.Position armedPlayer.Yaw armedPlayer.Pitch
+                            (fun target ->
+                                soldiers
+                                |> Array.exists (fun soldier -> soldier.Id = target.Id && soldier.Team = Axis && soldier.IsAlive))
+                            world.Level targets
+                    let endpoint = Melee.traceEndpoint attack armedPlayer.Position armedPlayer.Yaw armedPlayer.Pitch
+                    shotEvents.Add(MeleeTrace(armedPlayer.Id, armedPlayer.Position + Vector3.UnitY * 1.15f, endpoint, attack))
+                    for hit in hits do
+                        match soldiers |> Array.tryFindIndex (fun soldier -> soldier.Id = hit.Victim) with
+                        | None -> ()
+                        | Some index ->
+                            let before = soldiers[index]
+                            if before.IsAlive then
+                                let health = max (Units.health 0.0f) (before.Health - shot.Damage)
+                                let lethal = health <= Units.health 0.0f
+                                let updated = Array.copy soldiers
+                                updated[index] <-
+                                    { before with
+                                        Health = health
+                                        Behavior = if lethal then Dying(Units.seconds 0.0f) else before.Behavior
+                                        Suppression = if lethal then before.Suppression else min 3.0f (before.Suppression + 0.5f) }
+                                soldiers <- updated
+                                let travel = Ballistics.directionFromAngles armedPlayer.Yaw armedPlayer.Pitch Vector2.Zero
+                                shotEvents.Add(BloodImpact(hit.Point, travel, hit.Part = BodyHead))
+                                shotEvents.Add(HitConfirmed(hit.Victim, lethal))
+                                if lethal then
+                                    let cut = Melee.makeCut world.Tick before.Position before.Facing attack (int (world.Tick ^^^ int64 index)) hit
+                                    dismemberments <- Map.add hit.Victim cut dismemberments
+                                    shotEvents.Add(Dismembered(hit.Victim, hit.Point, cut))
+                                    shotEvents.Add(Kill(Some armedPlayer.Id, hit.Victim, result.Weapon.Class.Name, hit.Part = BodyHead))
             | Hitscan ->
               let hitSoldiers, hitEvents =
                   Ballistics.applyShotFiltered (fun soldier -> soldier.Team = Axis) origin direction shot.Damage shot.Penetration shot.HeadshotMultiplier shot.Kind world.Level soldiers
@@ -386,6 +431,7 @@ module Sim =
                 SpecialProjectiles = activeSpecial
                 PersistentMarks = persistentMarks
                 ElementalStatus = nextElementalStatus
+                Dismemberments = dismemberments
                 Objectives = objectives
                 Squads = squads
                 Script = { world.Script with MissionTime = world.Script.MissionTime + Tuning.TickDuration } }
@@ -474,6 +520,7 @@ module Sim =
           SpecialProjectiles = [||]
           PersistentMarks = [||]
           ElementalStatus = Map.empty
+          Dismemberments = Map.empty
           PaintColor = paintColor
           Level = level
           Squads = Map.empty

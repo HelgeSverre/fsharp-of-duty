@@ -107,6 +107,7 @@ module TestKit =
           SwitchTo = -1
           SwitchRemaining = 0.0f
           DrawCharge = 0.0f
+          Cut = None
           Ammo = 30
           Reserve = 60
           WeaponName = "Thompson"

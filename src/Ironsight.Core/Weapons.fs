@@ -20,7 +20,7 @@ module Weapons =
             { slot with State = Switching(incoming, Units.seconds 0.0f) }
         | Switching(incoming, remaining) -> { slot with State = Switching(incoming, remaining - dt) }
 
-    let private requests damage spread (current: WeaponSlot) (rng: byref<Rng.State>) =
+    let private requests damage spread melee (current: WeaponSlot) (rng: byref<Rng.State>) =
         let shots = ResizeArray<ShotRequest>()
         for _ in 1..max 1 current.Class.Pellets do
             let angle = Rng.nextFloat32 &rng * MathF.Tau
@@ -30,7 +30,8 @@ module Weapons =
                   Damage = damage
                   Penetration = current.Class.Penetration
                   HeadshotMultiplier = current.Class.HeadshotMultiplier
-                  Kind = current.Class.Kind }
+                  Kind = current.Class.Kind
+                  Melee = melee }
         List.ofSeq shots
 
     let step (dt: float32<s>) moveSpeed stance trigger reload ads (rng: byref<Rng.State>) slot =
@@ -50,12 +51,16 @@ module Weapons =
             * stanceFactor
             * factor
 
-        let firedSlot () =
+        let firedSlot melee =
             let recoil = current.Class.Recoil
             let kick = if recoil.Length = 0 then 0.0f else MathF.Abs recoil[min current.BurstIx (recoil.Length - 1)].Y
             let nextBloom = min Tuning.BloomMax (bloom + kick * Tuning.BloomPerShot)
             let cooldown = Units.seconds (60.0f / current.Class.RoundsPerMin)
-            { current with State = Cooling cooldown; InMag = current.InMag - 1; BurstIx = current.BurstIx + 1; Bloom = nextBloom }
+            let ammo =
+                match melee with
+                | Some KatanaSweep | Some KatanaOverhead -> current.InMag
+                | _ -> current.InMag - 1
+            { current with State = Cooling cooldown; InMag = ammo; BurstIx = current.BurstIx + 1; Bloom = nextBloom; LastMelee = melee }
 
         if reload
            && (match current.State with Ready | Drawing _ -> true | _ -> false)
@@ -70,8 +75,8 @@ module Weapons =
                 let power = Tuning.drawPower charge
                 let damage = Units.health (Units.raw current.Class.Damage * power)
                 // A snap-shot is deliberately less accurate as well as weaker.
-                let shots = requests damage (spread (1.45f - power * 0.45f)) current &rng
-                struct (firedSlot (), shots)
+                let shots = requests damage (spread (1.45f - power * 0.45f)) None current &rng
+                struct (firedSlot None, shots)
             | Ready, true when current.InMag > 0 ->
                 struct ({ current with State = Drawing dt; BurstIx = 0; Bloom = bloom }, [])
             | _ ->
@@ -85,8 +90,15 @@ module Weapons =
             // Accuracy arrives by the time the scope/iron sight becomes visually
             // usable. This keeps fast ADS meaningful instead of punishing a shot
             // that was taken on the final few frames of the transition.
-            let shots = requests current.Class.Damage (spread 1.0f) current &rng
-            struct (firedSlot (), shots)
+            let melee =
+                match current.Class.Mechanism with
+                | Chainsaw -> Some ChainContact
+                | Katana when ads >= 0.5f -> Some KatanaOverhead
+                | Katana -> Some KatanaSweep
+                | _ -> None
+            let damage = if melee = Some KatanaOverhead then Units.health 110.0f else current.Class.Damage
+            let shots = requests damage (spread 1.0f) melee current &rng
+            struct (firedSlot melee, shots)
         else
             let burstIx = if trigger then current.BurstIx else 0
             struct ({ current with Bloom = bloom; BurstIx = burstIx }, [])

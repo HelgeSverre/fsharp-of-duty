@@ -94,6 +94,44 @@ module Humanoid =
            segment 0.075f Skin (s.RightHand - Vector3(0.0f, 0.0f, 0.04f)) (s.RightHand + Vector3(0.0f, 0.0f, 0.08f))
            segment 0.08f uniform s.Chest s.Neck |]
 
+    let private cutCap radius direction point =
+        MeshGen.cylinder 12 (radius * 1.04f) 0.024f PaintRed
+        |> MeshGen.transform (Matrix4x4.CreateFromQuaternion(MathEx.rotationFromZ direction) * Matrix4x4.CreateTranslation point)
+
+    /// Same authored body, except the contacted segment is replaced by two
+    /// independently moving halves and wet caps at their new endpoints.
+    let private bodyPartsCut uniform (descriptor: CutDescriptor) proximal distal (s: Skeleton) =
+        let split site radius material a b =
+            if descriptor.Site = site then
+                let direction = MathEx.normalizedOrZero (b - a)
+                [| segment radius material a proximal
+                   segment radius material distal b
+                   cutCap radius direction proximal
+                   cutCap radius -direction distal |]
+            else [| segment radius material a b |]
+        let torso =
+            if descriptor.Site = CutWaist then split CutWaist 0.22f uniform s.Pelvis s.Chest
+            else [| taperedBody uniform s.Pelvis s.Chest |]
+        let neckCut =
+            if descriptor.Site = CutNeck then split CutNeck 0.105f Skin s.Neck s.Head
+            else [||]
+        [| yield! torso
+           MeshGen.box (Vector3(0.34f, 0.20f, 0.25f)) uniform |> MeshGen.translate s.Pelvis
+           yield! split CutLeftUpperLeg 0.085f uniform s.LeftHip s.LeftKnee
+           yield! split CutLeftLowerLeg 0.078f uniform s.LeftKnee s.LeftAnkle
+           yield! split CutRightUpperLeg 0.085f uniform s.RightHip s.RightKnee
+           yield! split CutRightLowerLeg 0.078f uniform s.RightKnee s.RightAnkle
+           MeshGen.box (Vector3(0.18f, 0.10f, 0.34f)) uniform |> MeshGen.translate (s.LeftAnkle + Vector3(0.0f, -0.045f, -0.10f))
+           MeshGen.box (Vector3(0.18f, 0.10f, 0.34f)) uniform |> MeshGen.translate (s.RightAnkle + Vector3(0.0f, -0.045f, -0.10f))
+           yield! split CutLeftUpperArm 0.075f uniform s.LeftShoulder s.LeftElbow
+           yield! split CutLeftLowerArm 0.068f uniform s.LeftElbow s.LeftHand
+           yield! split CutRightUpperArm 0.075f uniform s.RightShoulder s.RightElbow
+           yield! split CutRightLowerArm 0.068f uniform s.RightElbow s.RightHand
+           segment 0.075f Skin (s.LeftHand - Vector3(0.0f, 0.0f, 0.04f)) (s.LeftHand + Vector3(0.0f, 0.0f, 0.08f))
+           segment 0.075f Skin (s.RightHand - Vector3(0.0f, 0.0f, 0.04f)) (s.RightHand + Vector3(0.0f, 0.0f, 0.08f))
+           segment 0.08f uniform s.Chest s.Neck
+           yield! neckCut |]
+
     let private assemble uniform headless (s: Skeleton) extras =
         let parts = Array.append (bodyParts uniform s) extras
         if headless then MeshGen.union parts
@@ -154,6 +192,12 @@ module Humanoid =
         let uniform = if soldier.Team = Allies then UniformOlive else UniformFeldgrau
         let headless = match soldier.Behavior with DyingHeadshot _ -> true | _ -> false
         assemble uniform headless skeleton [||]
+
+    let poseFromSkeletonCut (soldier: Soldier) (skeleton: Skeleton) descriptor proximal distal =
+        let uniform = if soldier.Team = Allies then UniformOlive else UniformFeldgrau
+        let pieces = bodyPartsCut uniform descriptor proximal distal skeleton
+        Array.append pieces [| head skeleton.Head; helmet uniform (skeleton.Head + Vector3(0.0f, 0.12f, 0.0f)) |]
+        |> MeshGen.union
 
     let mesh soldiers =
         let combined = soldiers |> Array.map pose |> MeshGen.union

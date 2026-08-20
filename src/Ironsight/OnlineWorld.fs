@@ -33,6 +33,40 @@ module OnlineWorld =
         | "backblast" -> Some(Backblast(event.Position, event.Direction))
         | "flame-stream" -> Some(FlameStream(event.Position, event.Position + event.Direction * event.Value))
         | "laser-beam" -> Some(LaserBeam(event.Position, event.Position + event.Direction * event.Value))
+        | "melee-trace" ->
+            let attack =
+                match event.Text with
+                | "ChainContact" -> ChainContact
+                | "KatanaOverhead" -> KatanaOverhead
+                | _ -> KatanaSweep
+            Some(MeleeTrace(EntityId event.EntityId, event.Position, event.Position + event.Direction * event.Value, attack))
+        | "dismember" ->
+            // The snapshot remains the durable source for corpse geometry;
+            // this compact reconstruction exists only so the one-shot blood
+            // spray arrives online at the same moment as it does offline.
+            let site =
+                match event.Text with
+                | "CutNeck" -> CutNeck
+                | "CutLeftUpperArm" -> CutLeftUpperArm
+                | "CutLeftLowerArm" -> CutLeftLowerArm
+                | "CutRightUpperArm" -> CutRightUpperArm
+                | "CutRightLowerArm" -> CutRightLowerArm
+                | "CutLeftUpperLeg" -> CutLeftUpperLeg
+                | "CutLeftLowerLeg" -> CutLeftLowerLeg
+                | "CutRightUpperLeg" -> CutRightUpperLeg
+                | "CutRightLowerLeg" -> CutRightLowerLeg
+                | _ -> CutWaist
+            Some(
+                Dismembered(
+                    EntityId event.EntityId,
+                    event.Position,
+                    { DeathRevision = 0L
+                      Site = site
+                      Fraction = event.Value
+                      LocalPoint = Vector3.Zero
+                      LocalNormal = Vector3.Zero
+                      Impulse = event.Direction
+                      CosmeticSeed = 0 }))
         | "flame-impact" -> Some(FlameImpact(event.Position, event.Direction))
         | "water-impact" -> Some(WaterImpact(event.Position, event.Direction))
         | "nail-impact" -> Some(NailImpact(event.Position, event.Direction, event.Value > 0.5f))
@@ -74,6 +108,7 @@ module OnlineWorld =
         { Tuning.weaponSlot weapon 0 with
             InMag = wire.Ammo
             Reserve = wire.Reserve
+            LastMelee = wire.LastMelee
             State = if wire.ReloadRemaining > 0.0f then Reloading(Units.seconds wire.ReloadRemaining) else Ready }
 
     /// The carried kit, and which slot is in hand. A server built before kits
@@ -88,7 +123,8 @@ module OnlineWorld =
                        { WeaponName = player.WeaponName
                          Ammo = player.Ammo
                          Reserve = player.Reserve
-                         ReloadRemaining = player.ReloadRemaining } |]
+                         ReloadRemaining = player.ReloadRemaining
+                         LastMelee = None } |]
         let active = if player.Active >= 0 && player.Active < slots.Length then player.Active else 0
         // A switch in flight lives on the outgoing slot and carries its
         // destination, so the viewmodel plays the raise instead of popping.
@@ -165,6 +201,10 @@ module OnlineWorld =
                 |> Array.filter (fun player -> player.Id <> localId)
                 |> Array.map remoteSoldier
             let grenades = snapshot.Grenades |> Array.map toGrenade
+            let dismemberments =
+                snapshot.Players
+                |> Array.choose (fun player -> player.Cut |> Option.map (fun cut -> EntityId player.Id, cut))
+                |> Map.ofArray
             { world with
                 Tick = snapshot.Tick
                 Player = predicted
@@ -173,6 +213,7 @@ module OnlineWorld =
                 SpecialProjectiles = [||]
                 PersistentMarks = [||]
                 ElementalStatus = Map.empty
+                Dismemberments = dismemberments
                 Squads = Map.empty }, pending
 
     let applyPrediction level input (world: World) =

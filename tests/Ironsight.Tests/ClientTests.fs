@@ -62,6 +62,7 @@ module ClientTests =
         let sniper = Guns.forWeapon "Kar98k Sniper"
         let shotgun = Guns.forWeapon "M1897 Trench Gun"
         let shot = AudioSynth.gunshot true
+        let katanaSwing = AudioSynth.katanaSwing ()
         Assert.True(rifle.Vertices.Length > 100)
         Assert.True(rifle.Indices.Length > 100)
         Assert.True(sniper.Vertices.Length > rifle.Vertices.Length)
@@ -79,6 +80,8 @@ module ClientTests =
         Assert.Equal(AudioSynth.SampleRate, shot.SampleRate)
         Assert.True(shot.Samples.Length > 10000)
         Assert.Contains(shot.Samples, fun sample -> abs (int sample) > 1000)
+        Assert.InRange(katanaSwing.Samples.Length, 7900, 8000)
+        Assert.Contains(katanaSwing.Samples, fun sample -> abs (int sample) > 1000)
 
     [<Fact>]
     let ``every weapon mesh is one connected lump`` () =
@@ -509,8 +512,8 @@ module ClientTests =
     let ``bow charge snapshots rebuild Drawing for local and remote players`` () =
         let world = Sim.createTrainingWorld 904UL
         let bowKit =
-            [| { WeaponName = "Bow"; Ammo = 11; Reserve = 24; ReloadRemaining = 0.0f }
-               { WeaponName = "M1911"; Ammo = 7; Reserve = 21; ReloadRemaining = 0.0f } |]
+            [| { WeaponName = "Bow"; Ammo = 11; Reserve = 24; ReloadRemaining = 0.0f; LastMelee = None }
+               { WeaponName = "M1911"; Ammo = 7; Reserve = 21; ReloadRemaining = 0.0f; LastMelee = None } |]
         let drawing id name team position charge =
             { TestKit.onlinePlayer id name team position with
                 Slots = bowKit
@@ -544,8 +547,8 @@ module ClientTests =
         // snapshot, so no multi-slot state could survive reconciliation.
         let world = Sim.createTrainingWorld 901UL
         let kit =
-            [| { WeaponName = "Kar98k"; Ammo = 3; Reserve = 15; ReloadRemaining = 0.0f }
-               { WeaponName = "M1911"; Ammo = 7; Reserve = 14; ReloadRemaining = 0.0f } |]
+            [| { WeaponName = "Kar98k"; Ammo = 3; Reserve = 15; ReloadRemaining = 0.0f; LastMelee = None }
+               { WeaponName = "M1911"; Ammo = 7; Reserve = 14; ReloadRemaining = 0.0f; LastMelee = None } |]
         let withKit active switchTo switchRemaining =
             { TestKit.onlinePlayer 1 "Local" Allies world.Player.Position with
                 Slots = kit
@@ -698,3 +701,26 @@ module ClientTests =
             ragdolls.Step(1.0f / 60.0f, world.Level)
         let released = (ragdolls.TryGet soldier.Id).Value
         Assert.True(released.Chest.Y < anchor.Y - 0.5f)
+
+    [<Fact>]
+    let ``dismembered ragdoll creates two independently simulated cut anchors`` () =
+        let world = Sim.createPaintballWorld 191UL
+        let soldier = { world.Soldiers[0] with Behavior = Dying(Units.seconds 0.0f) }
+        let cut =
+            { DeathRevision = 4L
+              Site = CutLeftUpperArm
+              Fraction = 0.47f
+              LocalPoint = Vector3.Zero
+              LocalNormal = Vector3.UnitX
+              Impulse = Vector3(-7.0f, 2.0f, 0.0f)
+              CosmeticSeed = 44 }
+        let ragdolls = Ragdoll.System()
+        ragdolls.Spawn(soldier.Id, Humanoid.worldSkeleton soldier, Vector3.Zero, cut = cut)
+        for _ in 1..45 do ragdolls.Step(1.0f / 60.0f, world.Level)
+        let descriptor, proximal, distal = (ragdolls.TryGetCut soldier.Id).Value
+        Assert.Equal(cut, descriptor)
+        Assert.True(Vector3.Distance(proximal, distal) > 0.12f)
+        let skeleton = (ragdolls.TryGet soldier.Id).Value
+        let mesh = Humanoid.poseFromSkeletonCut soldier skeleton descriptor proximal distal
+        Assert.NotEmpty mesh.Vertices
+        Assert.NotEmpty mesh.Indices

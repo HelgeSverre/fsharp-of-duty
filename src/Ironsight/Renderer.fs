@@ -229,7 +229,7 @@ type Renderer(gl: GL) =
                         // A touch of lift makes the body get thrown rather than
                         // just shoved: knocked off its feet before it crumples.
                         candidate + Vector3.UnitY * (candidate.Length() * 0.25f)
-                ragdolls.Spawn(soldier.Id, Humanoid.worldSkeleton soldier, impulse)
+                ragdolls.Spawn(soldier.Id, Humanoid.worldSkeleton soldier, impulse, ?cut = Map.tryFind soldier.Id world.Dismemberments)
             | _ -> ()
         let dt = float32 (Stopwatch.GetElapsedTime ragdollClock).TotalSeconds
         ragdollClock <- now
@@ -267,7 +267,11 @@ type Renderer(gl: GL) =
             visibleSoldiers
             |> Array.choose (fun soldier ->
                 if hasRagdoll soldier then
-                    ragdolls.TryGet soldier.Id |> Option.map (Humanoid.poseFromSkeleton soldier)
+                    ragdolls.TryGet soldier.Id
+                    |> Option.map (fun skeleton ->
+                        match ragdolls.TryGetCut soldier.Id with
+                        | Some(descriptor, proximal, distal) -> Humanoid.poseFromSkeletonCut soldier skeleton descriptor proximal distal
+                        | None -> Humanoid.poseFromSkeleton soldier skeleton)
                 else None)
             |> MeshGen.union
         let grenadeMesh =
@@ -567,6 +571,7 @@ type Renderer(gl: GL) =
             let mechanismPose =
                 match activeSlot.State, activeClass.Mechanism with
                 | Drawing charge, Bow -> Tuning.drawPose charge
+                | Cooling _, Chainsaw -> float32 world.Tick * 0.37f
                 | _ -> harpoonPose
             let meshKey = weaponMeshKey weaponName paintKey localMarks mechanismPose
             if loadedGun <> meshKey then uploadGun weaponName world mechanismPose
@@ -601,6 +606,42 @@ type Renderer(gl: GL) =
                         let progress = 1.0f - Units.raw remaining / max 0.01f total
                         MathF.Sin(MathF.PI * MathEx.clamp01 ((progress - 0.12f) / 0.62f))
                     | _ -> 0.0f
+                let katanaProgress =
+                    match activeSlot.State, activeClass.Mechanism with
+                    | Cooling remaining, Katana ->
+                        let total = 60.0f / activeClass.RoundsPerMin
+                        Some(1.0f - Units.raw remaining / max 0.01f total |> MathEx.clamp01)
+                    | _ -> None
+                let ease value =
+                    let value = MathEx.clamp01 value
+                    value * value * (3.0f - 2.0f * value)
+                let lerpScalar a b amount = a + (b - a) * amount
+                let katanaSweepYaw =
+                    match katanaProgress, activeSlot.LastMelee with
+                    | Some progress, Some KatanaSweep when progress < 0.08f ->
+                        lerpScalar 0.0f -1.35f (ease (progress / 0.08f))
+                    | Some progress, Some KatanaSweep when progress < 0.76f ->
+                        // Travel from the opposite side from the old animation,
+                        // through a single broad 155-degree cutting stroke.
+                        lerpScalar -1.35f 1.35f (ease ((progress - 0.08f) / 0.68f))
+                    | Some progress, Some KatanaSweep ->
+                        lerpScalar 1.35f 0.0f (ease ((progress - 0.76f) / 0.24f))
+                    | _ -> 0.0f
+                let katanaOverheadPitch =
+                    match katanaProgress, activeSlot.LastMelee with
+                    | Some progress, Some KatanaOverhead when progress < 0.10f ->
+                        lerpScalar 0.0f 1.15f (ease (progress / 0.10f))
+                    | Some progress, Some KatanaOverhead when progress < 0.72f ->
+                        // Raised blade travels downward past neutral instead of
+                        // performing the previous upward/backward swing.
+                        lerpScalar 1.15f -0.65f (ease ((progress - 0.10f) / 0.62f))
+                    | Some progress, Some KatanaOverhead ->
+                        lerpScalar -0.65f 0.0f (ease ((progress - 0.72f) / 0.28f))
+                    | _ -> 0.0f
+                let sawVibration =
+                    match activeSlot.State, activeClass.Mechanism with
+                    | Cooling _, Chainsaw -> MathF.Sin(float32 world.Tick * 2.7f) * 0.010f
+                    | _ -> 0.0f
                 // Sprinting lowers the weapon across the chest.
                 sprintBlend <- sprintBlend + ((if world.Player.Sprinting then 1.0f else 0.0f) - sprintBlend) * 0.18f
                 let view = Vector2(world.Player.Yaw, world.Player.Pitch)
@@ -613,11 +654,11 @@ type Renderer(gl: GL) =
                         0.34f * (1.0f - ads) + bowAdsOffset + MathF.Sin(phase) * 0.012f * bob - viewSway.X + sprintBlend * 0.10f,
                         -0.31f + ads * 0.10f + MathF.Abs(MathF.Cos phase) * 0.012f * bob + viewSway.Y
                         - reloadPose * 0.20f - switchPose * 0.25f - boltPose * 0.045f - sprintBlend * 0.14f,
-                        -0.68f - ads * 0.05f + recoil * 0.55f + boltPose * 0.07f)
+                        -0.68f - ads * 0.05f + recoil * 0.55f + boltPose * 0.07f + sawVibration)
                 let model =
-                    Matrix4x4.CreateRotationX(-recoil * 0.75f + sprintBlend * 0.42f)
-                    * Matrix4x4.CreateRotationY(-sprintBlend * 0.38f)
-                    * Matrix4x4.CreateRotationZ(-0.035f * (1.0f - ads) + reloadPose * 0.32f + boltPose * 0.22f)
+                    Matrix4x4.CreateRotationX(-recoil * 0.75f + sprintBlend * 0.42f + katanaOverheadPitch)
+                    * Matrix4x4.CreateRotationY(-sprintBlend * 0.38f + katanaSweepYaw)
+                    * Matrix4x4.CreateRotationZ(-0.035f * (1.0f - ads) + reloadPose * 0.32f + boltPose * 0.22f + sawVibration)
                     * Matrix4x4.CreateTranslation position
                 let projection = Matrix4x4.CreatePerspectiveFieldOfView(55.0f * MathF.PI / 180.0f, float32 width / float32 (max 1 height), 0.03f, 8.0f)
                 let gunMatrix = model * projection

@@ -13,9 +13,9 @@ type FireMode = SemiAuto | FullAuto | BoltAction
 
 type WeaponKind = Rifle | SniperRifle | Smg | Pistol | Shotgun | MachineGun
 
-/// How a trigger pull is resolved. Most physical projectile cases are an
-/// offline toybox; Bow deliberately becomes hitscan only at the online match
-/// boundary so its charge/release state can still be shared by both modes.
+/// How weapon input is resolved. Most physical projectile cases are an
+/// offline toybox. Bow and melee have authoritative online resolvers so their
+/// charge, held-contact and sweep state can be shared by both modes.
 type WeaponMechanism =
     | Hitscan
     | Paintball
@@ -27,6 +27,55 @@ type WeaponMechanism =
     | Harpoon
     | Bow
     | Laser
+    | Chainsaw
+    | Katana
+
+/// Melee is resolved as a swept volume, never as a zero-range bullet. The
+/// attack variant is carried with the server request so secondary fire can
+/// select the katana's top-down cut without trusting a client-reported hit.
+type MeleeAttack =
+    | ChainContact
+    | KatanaSweep
+    | KatanaOverhead
+
+/// Anatomical regions are deliberately finer than the old head/torso/legs
+/// ballistics capsules. They are stable network identifiers as well as the
+/// authored boundaries used to split a ragdoll.
+type BodyPart =
+    | BodyHead
+    | BodyTorso
+    | BodyLeftUpperArm
+    | BodyLeftLowerArm
+    | BodyRightUpperArm
+    | BodyRightLowerArm
+    | BodyLeftUpperLeg
+    | BodyLeftLowerLeg
+    | BodyRightUpperLeg
+    | BodyRightLowerLeg
+
+type CutSite =
+    | CutNeck
+    | CutWaist
+    | CutLeftUpperArm
+    | CutLeftLowerArm
+    | CutRightUpperArm
+    | CutRightLowerArm
+    | CutLeftUpperLeg
+    | CutLeftLowerLeg
+    | CutRightUpperLeg
+    | CutRightLowerLeg
+
+/// Immutable server/offline result of a lethal melee contact. LocalPoint is
+/// relative to the victim's feet; Fraction is along the named anatomical
+/// segment and lets presentation split between joints instead of only at them.
+type CutDescriptor =
+    { DeathRevision: int64
+      Site: CutSite
+      Fraction: float32
+      LocalPoint: Vector3
+      LocalNormal: Vector3
+      Impulse: Vector3
+      CosmeticSeed: int }
 
 type WeaponClass =
     { Name: string
@@ -59,7 +108,8 @@ type WeaponSlot =
       InMag: int
       Reserve: int
       BurstIx: int
-      Bloom: float32 }
+      Bloom: float32
+      LastMelee: MeleeAttack option }
 
 type Stance = Standing | Crouched | Prone
 
@@ -275,6 +325,9 @@ type World =
       SpecialProjectiles: SpecialProjectile array
       PersistentMarks: PersistentMark array
       ElementalStatus: Map<EntityId, ElementalStatus>
+      /// Persistent while a corpse exists. Events are transient, so this map
+      /// is also what makes an online late join reconstruct the same cut.
+      Dismemberments: Map<EntityId, CutDescriptor>
       PaintColor: Material
       Level: Level
       Squads: Map<int, SquadBlackboard>
@@ -296,6 +349,8 @@ type GameEvent =
     | Backblast of position: Vector3 * direction: Vector3
     | FlameStream of origin: Vector3 * endpoint: Vector3
     | LaserBeam of origin: Vector3 * endpoint: Vector3
+    | MeleeTrace of attacker: EntityId * origin: Vector3 * endpoint: Vector3 * attack: MeleeAttack
+    | Dismembered of victim: EntityId * position: Vector3 * cut: CutDescriptor
     | FlameImpact of position: Vector3 * normal: Vector3
     | WaterImpact of position: Vector3 * normal: Vector3
     | NailImpact of position: Vector3 * normal: Vector3 * stuck: bool
@@ -353,4 +408,5 @@ type ShotRequest =
       Damage: float32<hp>
       Penetration: float32
       HeadshotMultiplier: float32
-      Kind: WeaponKind }
+      Kind: WeaponKind
+      Melee: MeleeAttack option }

@@ -92,7 +92,7 @@ module SpecialProjectiles =
         | Rocket -> make BazookaRocket RocketSpeed 8.0f
         | Nail -> make NailRound NailSpeed 4.0f
         | Harpoon -> make (HarpoonRound []) HarpoonSpeed 8.0f
-        | Hitscan | FlameJet | WaterJet | Bow | Laser -> None
+        | Hitscan | FlameJet | WaterJet | Bow | Laser | Chainsaw | Katana -> None
 
     let spawnArrow owner damage power position direction =
         { Owner = owner

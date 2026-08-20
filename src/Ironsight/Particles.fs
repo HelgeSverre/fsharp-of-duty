@@ -128,6 +128,7 @@ void main() {
                 addLine origin (origin + direction * 2.2f) (Vector4(0.72f, 0.48f, 0.22f, 0.72f)) 0.10f
             | ShotFired(_, origin, direction, "Laser Pointer") ->
                 addPuff (origin + direction * 0.03f) Vector3.Zero (Vector4(1.0f, 0.04f, 0.02f, 0.92f)) 8.0f 0.12f 0.0f
+            | ShotFired(_, _, _, weapon) when weapon = "Electric Chainsaw" || weapon = "Katana" -> ()
             | ShotFired(_, origin, direction, _) ->
                 addLine (origin + direction * 0.35f) (origin + direction * 32.0f) (Vector4(1.0f, 0.78f, 0.28f, 0.8f)) 0.08f
                 addPuff (origin + direction * 0.45f) (direction * 0.4f) (Vector4(1.0f, 0.55f, 0.10f, 0.9f)) 18.0f 0.12f 0.28f
@@ -278,6 +279,22 @@ void main() {
                 // The saturated core is the authoritative ray and starts at
                 // the exact centre of the emitter; glow lines bloom around it.
                 addLine origin endpoint (Vector4(1.0f, 0.01f, 0.005f, 1.0f)) 0.22f
+            | MeleeTrace(_, origin, endpoint, attack) ->
+                let color, life =
+                    match attack with
+                    | ChainContact -> Vector4(1.0f, 0.72f, 0.18f, 0.42f), 0.07f
+                    | KatanaSweep | KatanaOverhead -> Vector4(0.78f, 0.90f, 1.0f, 0.72f), 0.12f
+                addLine origin endpoint color life
+                if attack = ChainContact then
+                    for index in 0..3 do
+                        let angle = float32 index * MathF.PI * 0.5f
+                        let spark = Vector3(MathF.Cos angle, 0.35f, MathF.Sin angle)
+                        addLine endpoint (endpoint + spark * 0.13f) (Vector4(1.0f, 0.48f, 0.08f, 0.80f)) 0.07f
+            | Dismembered(_, position, cut) ->
+                for index in 0..15 do
+                    let angle = float32 index * 2.39996f
+                    let spray = MathEx.normalizedOrZero (cut.Impulse + Vector3(MathF.Cos angle, 0.4f + float32 (index % 3) * 0.2f, MathF.Sin angle))
+                    addPuff position (spray * (1.3f + float32 (index % 4) * 0.45f)) (Vector4(blood, 0.92f)) (14.0f + float32 (index % 4) * 4.0f) 0.72f -8.0f
             | FlameImpact(position, normal) ->
                 let tangent = Vector3.Cross(normal, if abs normal.Y < 0.8f then Vector3.UnitY else Vector3.UnitX) |> MathEx.normalizedOrZero
                 let bitangent = Vector3.Cross(normal, tangent) |> MathEx.normalizedOrZero

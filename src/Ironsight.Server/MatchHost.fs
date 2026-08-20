@@ -53,7 +53,10 @@ type MatchHost(mode: GameMode, ?matchLevel: Level, ?disconnectGrace: TimeSpan, ?
     // client can never average more than one input per server tick; credits
     // banked during a network stall let a late burst catch up briefly.
     let mutable inputCredits: Map<EntityId, int> = Map.empty
-    let mutable positionHistory: Map<int64, Map<EntityId, Vector3>> = Map.empty
+    // Rewindable anatomical pose, not just feet. Revision rejects a sample
+    // from the same id's previous life after a respawn.
+    let mutable positionHistory: Map<int64, Map<EntityId, struct (Vector3 * float32 * Stance * int64)>> = Map.empty
+    let mutable heldButtons: Map<EntityId, InputButtons> = Map.empty
     // Session tokens are a convenience for reconnecting after a disconnect, not
     // a security boundary: the server does no authentication and a token simply
     // resumes whichever player slot it was minted for.
@@ -166,7 +169,9 @@ type MatchHost(mode: GameMode, ?matchLevel: Level, ?disconnectGrace: TimeSpan, ?
             Grenade = GrenadeIdle 3
             Alive = true
             RespawnIn = Units.seconds 0.0f
-            SpawnProtection = Units.seconds 2.0f }
+            SpawnProtection = Units.seconds 2.0f
+            LifeRevision = player.LifeRevision + 1L
+            Cut = None }
 
     /// The between-rounds reset: fresh spawns, cleared scores, back to Warmup.
     /// A /map request lands here, the only point where changing the level is
@@ -261,6 +266,8 @@ type MatchHost(mode: GameMode, ?matchLevel: Level, ?disconnectGrace: TimeSpan, ?
                       Deaths = 0
                       Streak = 0
                       BestStreak = 0
+                      LifeRevision = 1L
+                      Cut = None
                       LastInputSequence = -1L }
                 let token = Convert.ToHexString(Guid.NewGuid().ToByteArray())
                 setPlayer id player
@@ -276,6 +283,7 @@ type MatchHost(mode: GameMode, ?matchLevel: Level, ?disconnectGrace: TimeSpan, ?
                 disconnectedSince <- Map.add id DateTimeOffset.UtcNow disconnectedSince
                 pendingInputs <- Map.remove id pendingInputs
                 inputCredits <- Map.remove id inputCredits
+                heldButtons <- Map.remove id heldButtons
                 ops <- Set.remove id ops
                 kicked <- Set.remove id kicked
                 // Announced on disconnect, not on grace expiry, so the feed
@@ -365,6 +373,7 @@ type MatchHost(mode: GameMode, ?matchLevel: Level, ?disconnectGrace: TimeSpan, ?
                 disconnectedSince <- Map.remove id disconnectedSince
                 pendingInputs <- Map.remove id pendingInputs
                 inputCredits <- Map.remove id inputCredits
+                heldButtons <- Map.remove id heldButtons
                 // Not in RemovePlayer: the slot is still resumable during the
                 // grace, and clearing there would let a flooder reset his chat
                 // and op-guess throttles with a leave/rejoin round trip.
@@ -400,8 +409,9 @@ type MatchHost(mode: GameMode, ?matchLevel: Level, ?disconnectGrace: TimeSpan, ?
             if lifecycleState.Phase <> state.Phase then
                 emit (PhaseChanged(string lifecycleState.Phase))
             let mutable rng = state.Rng
-            let shots = ResizeArray<EntityId * Vector3 * Vector3 * float32<hp> * float32 * float32 * WeaponKind * int64>()
+            let shots = ResizeArray<EntityId * Vector3 * Vector3 * float32<hp> * float32 * float32 * WeaponKind * MeleeAttack option * Vector3 * float32 * float32 * string * int64>()
             let thrownGrenades = ResizeArray<Grenade>()
+            let mutable sawStepped = Set.empty<EntityId>
             let respawnedPlayers =
                 lifecycleState.Players
                 |> Map.map (fun id player ->
@@ -416,13 +426,17 @@ type MatchHost(mode: GameMode, ?matchLevel: Level, ?disconnectGrace: TimeSpan, ?
                         if remaining <= Units.seconds 0.0f then freshSpawn lifecycleState.Tick id player
                         else { player with RespawnIn = remaining })
             let stepFrame id (player: NetworkPlayer) (input: InputFrame) (estimatedTick: int64) acknowledge =
+                if acknowledge then heldButtons <- Map.add id input.Buttons heldButtons
                 let canEngage = lifecycleState.Phase = Playing
                 // Same selection rules as the campaign: the number keys start a
                 // switch, and a switch in flight freezes the weapon clock.
                 let switched, weaponLocked = Sim.stepWeaponSwitch input (toPlayer player)
                 // Shared with Sim.step's campaign/round-bot tick: movement,
                 // weapon cycling, grenade hand, footstep material, shot rays.
-                let result = Sim.stepLocomotion Tuning.TickDuration level lifecycleState.Tick input (not weaponLocked) canEngage canEngage switched &rng
+                let activeMechanism = switched.Slots[switched.Active].Class.Mechanism
+                let stepWeapon = not weaponLocked && not (activeMechanism = Chainsaw && Set.contains id sawStepped)
+                let result = Sim.stepLocomotion Tuning.TickDuration level lifecycleState.Tick input stepWeapon canEngage canEngage switched &rng
+                if activeMechanism = Chainsaw then sawStepped <- Set.add id sawStepped
                 result.Thrown |> Option.iter thrownGrenades.Add
                 result.FootStep |> Option.iter emit
                 if not result.Shots.IsEmpty then
@@ -432,7 +446,10 @@ type MatchHost(mode: GameMode, ?matchLevel: Level, ?disconnectGrace: TimeSpan, ?
                     let muzzle = Ballistics.playerMuzzleOrigin result.Player result.Weapon.Class
                     emit (ShotFired(Some id, muzzle, Ballistics.directionFromAngles result.Player.Yaw result.Player.Pitch Vector2.Zero, result.Weapon.Class.Name))
                     for struct (origin, direction, request) in result.Shots do
-                        shots.Add(id, origin, direction, request.Damage, request.Penetration, request.HeadshotMultiplier, request.Kind, estimatedTick)
+                        request.Melee
+                        |> Option.iter (fun attack ->
+                            emit (MeleeTrace(id, result.Player.Position + Vector3.UnitY * 1.15f, Melee.traceEndpoint attack result.Player.Position result.Player.Yaw result.Player.Pitch, attack)))
+                        shots.Add(id, origin, direction, request.Damage, request.Penetration, request.HeadshotMultiplier, request.Kind, request.Melee, result.Player.Position, result.Player.Yaw, result.Player.Pitch, result.Weapon.Class.Name, estimatedTick)
                 let handPlayer = result.Player
                 // stepLocomotion returns only the active slot; writing back the
                 // whole array with Active is what lets a switch survive the
@@ -486,7 +503,11 @@ type MatchHost(mode: GameMode, ?matchLevel: Level, ?disconnectGrace: TimeSpan, ?
                                 match current.Slots[current.Active].State with
                                 | Drawing _ -> InputButtons.Fire
                                 | _ -> InputButtons.None
-                            let idleButtons = grenadeButton ||| bowButton
+                            let chainButton =
+                                match current.Slots[current.Active].Class.Mechanism, Map.tryFind id heldButtons with
+                                | Chainsaw, Some buttons when Input.hasButton InputButtons.Fire buttons -> InputButtons.Fire
+                                | _ -> InputButtons.None
+                            let idleButtons = grenadeButton ||| bowButton ||| chainButton
                             let idle = { Sequence = current.LastInputSequence; Move = Vector2.Zero; Look = Vector2.Zero; Buttons = idleButtons }
                             current <- stepFrame id current idle lifecycleState.Tick false
                         if not (List.isEmpty remaining) then leftoverInputs <- Map.add id remaining leftoverInputs
@@ -496,7 +517,7 @@ type MatchHost(mode: GameMode, ?matchLevel: Level, ?disconnectGrace: TimeSpan, ?
             inputCredits <- nextCredits
             let mutable combatState = { lifecycleState with Players = movedPlayers; Rng = rng }
             let authoritativeShots = if lifecycleState.Phase = Playing then shots :> seq<_> else Seq.empty
-            for shooterId, origin, direction, damage, penetration, headshotMultiplier, kind, estimatedTick in authoritativeShots do
+            for shooterId, origin, direction, damage, penetration, headshotMultiplier, kind, melee, attackPosition, attackYaw, attackPitch, weaponName, estimatedTick in authoritativeShots do
                 match Map.tryFind shooterId combatState.Players with
                 | Some shooter when shooter.Alive ->
                     let targets = combatState.Players |> Map.toArray
@@ -506,8 +527,9 @@ type MatchHost(mode: GameMode, ?matchLevel: Level, ?disconnectGrace: TimeSpan, ?
                         |> Array.map (fun (id, player) ->
                             let soldier = asSoldier player
                             match Map.tryFind id historical with
-                            | Some position -> { soldier with Position = position }
-                            | None -> soldier)
+                            | Some struct (position, yaw, stance, revision) when revision = player.LifeRevision ->
+                                { soldier with Position = position; Facing = yaw; Stance = stance }
+                            | _ -> soldier)
                     let canHit (candidate: Soldier) =
                         match Map.tryFind candidate.Id combatState.Players with
                         | Some target ->
@@ -517,25 +539,57 @@ type MatchHost(mode: GameMode, ?matchLevel: Level, ?disconnectGrace: TimeSpan, ?
                             target.Connected && target.Alive && target.SpawnProtection <= Units.seconds 0.0f
                             && Multiplayer.areHostile combatState.Mode shooter target
                         | None -> false
-                    let hitSoldiers, hitEvents = Ballistics.applyShotFiltered canHit origin direction damage penetration headshotMultiplier kind level soldiers
-                    for event in hitEvents do
-                        match event with
-                        | HitConfirmed _ -> emitOnly shooterId event
-                        | _ -> emit event
-                    for index in 0..targets.Length - 1 do
-                        let targetId, before = targets[index]
-                        let after = hitSoldiers[index]
-                        if after.Health < before.Health then
-                            let damaged = { before with Health = after.Health; RegenIn = Tuning.RegenDelay }
-                            combatState <- { combatState with Players = Map.add targetId damaged combatState.Players }
-                            // The victim's damage-direction indicator; the
-                            // shot's travel direction points at the victim.
-                            emitOnly targetId (PlayerHurt(direction, damaged.Health))
-                            if after.IsDead then
-                                combatState <- Multiplayer.recordKill shooterId targetId combatState
-                                // Ballistics already stamped the lethal region
-                                // on this victim, per target of a penetrating round.
-                                emit (Kill(Some shooterId, targetId, shooter.Slots[shooter.Active].Class.Name, (match after.Behavior with DyingHeadshot _ -> true | _ -> false)))
+                    match melee with
+                    | Some attack ->
+                        let meleeTargets =
+                            targets
+                            |> Array.map (fun (id, player) ->
+                                match Map.tryFind id historical with
+                                | Some struct (position, yaw, stance, revision) when revision = player.LifeRevision ->
+                                    { Id = id; Position = position; Yaw = yaw; Stance = stance }
+                                | _ -> { Id = id; Position = player.Position; Yaw = player.Yaw; Stance = player.Stance })
+                        let meleeCanHit (candidate: MeleeTarget) =
+                            match Map.tryFind candidate.Id combatState.Players with
+                            | Some target ->
+                                target.Connected && target.Alive && target.SpawnProtection <= Units.seconds 0.0f
+                                && Multiplayer.areHostile combatState.Mode shooter target
+                            | None -> false
+                        for hit in Melee.resolve attack attackPosition attackYaw attackPitch meleeCanHit level meleeTargets do
+                            match Map.tryFind hit.Victim combatState.Players with
+                            | Some before when before.Alive ->
+                                let health = max (Units.health 0.0f) (before.Health - damage)
+                                let lethal = health <= Units.health 0.0f
+                                let damaged = { before with Health = health; RegenIn = Tuning.RegenDelay }
+                                combatState <- { combatState with Players = Map.add hit.Victim damaged combatState.Players }
+                                emit (BloodImpact(hit.Point, direction, hit.Part = BodyHead))
+                                emitOnly shooterId (HitConfirmed(hit.Victim, lethal))
+                                emitOnly hit.Victim (PlayerHurt(direction, health))
+                                if lethal then
+                                    let victimPose = meleeTargets |> Array.find (fun target -> target.Id = hit.Victim)
+                                    let cut = Melee.makeCut before.LifeRevision victimPose.Position victimPose.Yaw attack (int (lifecycleState.Tick ^^^ int64 before.Deaths)) hit
+                                    combatState <- Multiplayer.recordKill shooterId hit.Victim combatState
+                                    match Map.tryFind hit.Victim combatState.Players with
+                                    | Some dead -> combatState <- { combatState with Players = Map.add hit.Victim { dead with Cut = Some cut } combatState.Players }
+                                    | None -> ()
+                                    emit (Dismembered(hit.Victim, hit.Point, cut))
+                                    emit (Kill(Some shooterId, hit.Victim, weaponName, hit.Part = BodyHead))
+                            | _ -> ()
+                    | None ->
+                        let hitSoldiers, hitEvents = Ballistics.applyShotFiltered canHit origin direction damage penetration headshotMultiplier kind level soldiers
+                        for event in hitEvents do
+                            match event with
+                            | HitConfirmed _ -> emitOnly shooterId event
+                            | _ -> emit event
+                        for index in 0..targets.Length - 1 do
+                            let targetId, before = targets[index]
+                            let after = hitSoldiers[index]
+                            if after.Health < before.Health then
+                                let damaged = { before with Health = after.Health; RegenIn = Tuning.RegenDelay }
+                                combatState <- { combatState with Players = Map.add targetId damaged combatState.Players }
+                                emitOnly targetId (PlayerHurt(direction, damaged.Health))
+                                if after.IsDead then
+                                    combatState <- Multiplayer.recordKill shooterId targetId combatState
+                                    emit (Kill(Some shooterId, targetId, weaponName, (match after.Behavior with DyingHeadshot _ -> true | _ -> false)))
                 | _ -> ()
             let grenadeSet = Array.append lifecycleState.Grenades (thrownGrenades.ToArray())
             let activeGrenades, explosions =
@@ -586,7 +640,9 @@ type MatchHost(mode: GameMode, ?matchLevel: Level, ?disconnectGrace: TimeSpan, ?
                     Rng = rng
                     Events = retained @ newEvents
                     NextEventId = finalState.NextEventId + int64 newEvents.Length }
-            let positions = state.Players |> Map.map (fun _ player -> player.Position)
+            let positions =
+                state.Players
+                |> Map.map (fun _ player -> struct (player.Position, player.Yaw, player.Stance, player.LifeRevision))
             positionHistory <-
                 positionHistory
                 |> Map.add nextTick positions

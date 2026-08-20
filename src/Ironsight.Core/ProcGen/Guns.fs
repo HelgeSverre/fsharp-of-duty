@@ -597,6 +597,81 @@ module Guns =
                hoopYZ 18 0.099f 0.006f Metal (ringCentre + Vector3(0.008f, 0.0f, 0.0f)) |]
         |> MeshGen.scale (Vector3(0.82f, 0.82f, 0.82f))
 
+    /// Compact cordless power-tool chainsaw. The chain is real geometry: the
+    /// teeth advance around the guide bar as `phase` changes, so firing moves
+    /// more than the whole viewmodel.
+    let chainsawForPhase phase =
+        let phase = phase - MathF.Floor phase
+        let guide =
+            MeshGen.union
+                [| MeshGen.box (Vector3(0.075f, 0.28f, 1.12f)) Metal |> placed (Vector3(0.0f, 0.02f, -0.82f))
+                   MeshGen.cylinder 16 0.14f 0.075f Metal
+                   |> MeshGen.rotateY (MathF.PI * 0.5f)
+                   |> placed (Vector3(0.0f, 0.02f, -1.38f)) |]
+        let chainTeeth =
+            [| for index in 0..23 do
+                   let cursor = (float32 index / 24.0f + phase) % 1.0f
+                   // Keep the moving teeth on the exposed guide bar. Teeth
+                   // hidden inside the motor housing waste geometry and form
+                   // a detached interior shell in the connectivity check.
+                   let z = -0.34f - cursor * 1.02f
+                   let top = index % 2 = 0
+                   yield
+                       MeshGen.box (Vector3(0.105f, 0.045f, 0.055f)) ToolBlack
+                       |> placed (Vector3(0.0f, (if top then 0.17f else -0.13f), z)) |]
+            |> MeshGen.union
+        MeshGen.union
+            [| guide
+               chainTeeth
+               // Yellow motor housing, black rubber overmould and vent slits.
+               MeshGen.box (Vector3(0.42f, 0.46f, 0.62f)) PaintYellow |> placed (Vector3(0.0f, -0.02f, 0.04f))
+               MeshGen.box (Vector3(0.30f, 0.26f, 0.26f)) ToolBlack |> placed (Vector3(0.0f, -0.30f, 0.18f))
+               // Slide-on battery under the rear of the tool.
+               MeshGen.box (Vector3(0.34f, 0.24f, 0.30f)) ToolBlack |> placed (Vector3(0.0f, -0.46f, 0.28f))
+               MeshGen.box (Vector3(0.28f, 0.06f, 0.24f)) PaintYellow |> placed (Vector3(0.0f, -0.58f, 0.28f))
+               // Top and rear loop handles make the two-hand silhouette read.
+               limb 0.045f ToolBlack (Vector3(-0.18f, 0.19f, 0.12f)) (Vector3(-0.18f, 0.52f, 0.12f))
+               limb 0.045f ToolBlack (Vector3(-0.18f, 0.52f, 0.12f)) (Vector3(0.18f, 0.52f, 0.12f))
+               limb 0.045f ToolBlack (Vector3(0.18f, 0.52f, 0.12f)) (Vector3(0.18f, 0.19f, 0.12f))
+               limb 0.050f ToolBlack (Vector3(0.0f, 0.18f, 0.30f)) (Vector3(0.0f, 0.10f, 0.70f))
+               // Hand guard between motor and the dangerous business end.
+               MeshGen.box (Vector3(0.50f, 0.34f, 0.055f)) ToolBlack |> MeshGen.rotateX -0.20f |> placed (Vector3(0.0f, 0.13f, -0.32f))
+               for offset in [| -0.12f; -0.04f; 0.04f; 0.12f |] do
+                   MeshGen.box (Vector3(0.025f, 0.18f, 0.025f)) ToolBlack |> placed (Vector3(offset, 0.05f, -0.255f)) |]
+        |> MeshGen.scale (Vector3(0.76f, 0.76f, 0.76f))
+
+    let private chainsaw = chainsawForPhase 0.0f
+
+    /// A visibly curved shinogi-zukuri blade, small tsuba and circular wrapped
+    /// tsuka. The point remains local -Z like every firearm muzzle, so the
+    /// ordinary preview and viewmodel transforms keep working.
+    let private katana =
+        let bladeSegments =
+            [| for index in 0..7 do
+                   let t0 = float32 index / 8.0f
+                   let t1 = float32 (index + 1) / 8.0f
+                   // Start inside the tsuba and carry the blade shoulder all
+                   // the way to it; the earlier decorative gap made the sword
+                   // read as two unrelated procedural meshes.
+                   let point t = Vector3(0.10f * t * t, 0.035f * t, -0.20f - 1.48f * t)
+                   let a, b = point t0, point t1
+                   let delta = b - a
+                   yield
+                       MeshGen.box (Vector3(0.060f - t0 * 0.018f, 0.020f, delta.Length() + 0.015f)) Metal
+                       |> MeshGen.transform (Matrix4x4.CreateFromQuaternion(MathEx.rotationFromZ delta) * Matrix4x4.CreateTranslation((a + b) * 0.5f)) |]
+        MeshGen.union
+            [| yield! bladeSegments
+               // Bright cutting edge and wedge-like kissaki.
+               limb 0.010f Plaster (Vector3(-0.040f, -0.005f, -0.20f)) (Vector3(0.055f, 0.025f, -1.64f))
+               MeshGen.wedge (Vector3(0.075f, 0.025f, 0.18f)) Metal |> placed (Vector3(0.10f, 0.04f, -1.72f))
+               MeshGen.cylinder 18 0.13f 0.025f Metal |> placed (Vector3(0.0f, 0.0f, -0.20f))
+               // Circular ray-skin grip with alternating wrap bands.
+               MeshGen.cylinder 14 0.060f 0.54f ToolBlack |> placed (Vector3(0.0f, 0.0f, 0.09f))
+               for index in 0..7 do
+                   MeshGen.cylinder 10 0.066f 0.026f (if index % 2 = 0 then Plaster else ToolBlack)
+                   |> placed (Vector3(0.0f, 0.0f, -0.14f + float32 index * 0.065f))
+               MeshGen.cylinder 14 0.075f 0.045f Metal |> placed (Vector3(0.0f, 0.0f, 0.38f)) |]
+
     /// Small world meshes reused by the renderer for physical special ammo.
     let paintballMesh color =
         MeshGen.lathe 10
@@ -660,7 +735,7 @@ module Guns =
     let names =
         [| "Thompson"; "M1911"; "Luger P08"; "M1897 Trench Gun"; "Kar98k"; "Kar98k Sniper"
            "M1 Garand"; "STG-44"; "MP40"; "Lee-Enfield"; "FG42"; "BAR"
-           "Paintball Marker"; "Nerf Blaster"; "Bazooka"; "Flamethrower"; "Super Soaker"; "Nailgun"; "Harpoon Gun"; "Bow"; "Laser Pointer" |]
+           "Paintball Marker"; "Nerf Blaster"; "Bazooka"; "Flamethrower"; "Super Soaker"; "Nailgun"; "Harpoon Gun"; "Bow"; "Laser Pointer"; "Electric Chainsaw"; "Katana" |]
 
     /// The gun alone, without the arms holding it — what the geometry preview
     /// in tools/GunPreview.fsx inspects.
@@ -686,6 +761,8 @@ module Guns =
         | "Harpoon Gun" -> harpoonGun
         | "Bow" -> bow
         | "Laser Pointer" -> laserPointer
+        | "Electric Chainsaw" -> chainsaw
+        | "Katana" -> katana
         | _ -> kar98k
 
     /// Gun-only pose variant used by previews and geometry inspection.
@@ -693,6 +770,7 @@ module Guns =
         match name with
         | "Harpoon Gun" -> harpoonGunForLoad pose
         | "Bow" -> bowForDraw pose
+        | "Electric Chainsaw" -> chainsawForPhase pose
         | _ -> meshFor name
 
     let forWeapon name =

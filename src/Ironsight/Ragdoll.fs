@@ -44,7 +44,8 @@ module Ragdoll =
     type private Body =
         { Joints: Vector3[]
           Previous: Vector3[]
-          Lengths: float32[]
+          Constraints: struct (int * int * float32)[]
+          Cut: CutDescriptor option
           mutable RestFrames: int
           mutable Settled: bool
           Order: int }
@@ -60,7 +61,7 @@ module Ragdoll =
 
         /// Start a ragdoll from the soldier's last standing pose. `impulse` is
         /// a world-space velocity kick (m/s) from the killing blow.
-        member _.Spawn(id, skeleton: Skeleton, impulse: Vector3) =
+        member _.Spawn(id, skeleton: Skeleton, impulse: Vector3, ?cut: CutDescriptor) =
             if not (bodies.ContainsKey id) then
                 if bodies.Count >= MaxBodies then
                     // Drop the oldest settled corpse; if none settled yet, the oldest outright.
@@ -69,15 +70,55 @@ module Ragdoll =
                         |> Seq.sortBy (fun pair -> (not pair.Value.Settled), pair.Value.Order)
                         |> Seq.head
                     bodies.Remove victim.Key |> ignore
-                let joints = fromSkeleton skeleton
+                let baseJoints = fromSkeleton skeleton
                 let assumedStep = 1.0f / 60.0f
+                let cutRelation, distal =
+                    match cut |> Option.map _.Site with
+                    | Some CutNeck -> Some(2, 3), set [ 3 ]
+                    | Some CutWaist -> Some(0, 1), set [ 1; 2; 3; 10; 11; 12; 13; 14; 15 ]
+                    | Some CutLeftUpperArm -> Some(10, 12), set [ 12; 14 ]
+                    | Some CutLeftLowerArm -> Some(12, 14), set [ 14 ]
+                    | Some CutRightUpperArm -> Some(11, 13), set [ 13; 15 ]
+                    | Some CutRightLowerArm -> Some(13, 15), set [ 15 ]
+                    | Some CutLeftUpperLeg -> Some(4, 6), set [ 6; 8 ]
+                    | Some CutLeftLowerLeg -> Some(6, 8), set [ 8 ]
+                    | Some CutRightUpperLeg -> Some(5, 7), set [ 7; 9 ]
+                    | Some CutRightLowerLeg -> Some(7, 9), set [ 9 ]
+                    | None -> None, Set.empty
+                let cutPoint =
+                    match cutRelation, cut with
+                    | Some(a, b), Some descriptor -> Vector3.Lerp(baseJoints[a], baseJoints[b], descriptor.Fraction)
+                    | _ -> Vector3.Zero
+                let joints =
+                    if cutRelation.IsSome then Array.append baseJoints [| cutPoint; cutPoint |]
+                    else baseJoints
                 let previous =
-                    joints |> Array.mapi (fun index joint -> joint - impulse * impulseWeight[index] * assumedStep)
-                let lengths = bones |> Array.map (fun (a, b) -> Vector3.Distance(joints[a], joints[b]))
+                    joints
+                    |> Array.mapi (fun index joint ->
+                        let weight = if index < impulseWeight.Length then impulseWeight[index] else 0.72f
+                        let sever =
+                            match cut with
+                            | Some descriptor when Set.contains index distal || index = 17 -> descriptor.Impulse
+                            | _ -> Vector3.Zero
+                        joint - (impulse * weight + sever) * assumedStep)
+                let crossesCut a b = Set.contains a distal <> Set.contains b distal
+                let ordinary =
+                    bones
+                    |> Array.choose (fun (a, b) ->
+                        if cutRelation.IsSome && crossesCut a b then None
+                        else Some(struct (a, b, Vector3.Distance(joints[a], joints[b]))))
+                let constraints =
+                    match cutRelation with
+                    | Some(a, b) ->
+                        Array.append ordinary
+                            [| struct (a, 16, Vector3.Distance(joints[a], joints[16]))
+                               struct (17, b, Vector3.Distance(joints[17], joints[b])) |]
+                    | None -> ordinary
                 bodies[id] <-
                     { Joints = joints
                       Previous = previous
-                      Lengths = lengths
+                      Constraints = constraints
+                      Cut = cut
                       RestFrames = 0
                       Settled = false
                       Order = nextOrder }
@@ -105,18 +146,18 @@ module Ragdoll =
                         let joints = body.Joints
                         let previous = body.Previous
                         // Verlet integration: damped inertia plus gravity.
-                        for index in 0 .. jointCount - 1 do
+                        for index in 0 .. joints.Length - 1 do
                             let current = joints[index]
                             joints[index] <- current + (current - previous[index]) * 0.96f + Vector3(0.0f, -9.81f, 0.0f) * dt * dt
                             previous[index] <- current
                         // Fixed-length bone constraints, a few relaxation passes.
                         for _ in 1..3 do
-                            bones
-                            |> Array.iteri (fun boneIndex (a, b) ->
+                            body.Constraints
+                            |> Array.iter (fun struct (a, b, length) ->
                                 let delta = joints[b] - joints[a]
                                 let distance = delta.Length()
                                 if distance > 0.0001f then
-                                    let correction = delta * ((distance - body.Lengths[boneIndex]) / distance * 0.5f)
+                                    let correction = delta * ((distance - length) / distance * 0.5f)
                                     joints[a] <- joints[a] + correction
                                     joints[b] <- joints[b] - correction)
                             pin
@@ -128,7 +169,7 @@ module Ragdoll =
                         // the surface above its center.
                         // ponytail: per-joint surface probes, ~16 per corpse per
                         // frame; share one probe per body if profiling ever cares.
-                        for index in 0 .. jointCount - 1 do
+                        for index in 0 .. joints.Length - 1 do
                             let joint = joints[index]
                             let radius = jointRadius index
                             match Movement.surfaceUnder level (joint + Vector3(0.0f, 0.15f, 0.0f)) with
@@ -146,7 +187,7 @@ module Ragdoll =
                         // Sleep once nothing moved for a while; the skeleton
                         // stays frozen and free to render.
                         let mutable maxMove = 0.0f
-                        for index in 0 .. jointCount - 1 do
+                        for index in 0 .. joints.Length - 1 do
                             maxMove <- max maxMove (Vector3.Distance(joints[index], previous[index]))
                         if pin.IsSome then
                             body.RestFrames <- 0
@@ -163,4 +204,12 @@ module Ragdoll =
         member _.TryGet id =
             match bodies.TryGetValue id with
             | true, body -> Some(toSkeleton body.Joints)
+            | _ -> None
+
+        /// Exact duplicate cut anchors, one constrained to each new body.
+        /// They start coincident and diverge under local physics.
+        member _.TryGetCut id =
+            match bodies.TryGetValue id with
+            | true, body when body.Cut.IsSome && body.Joints.Length >= 18 ->
+                Some(body.Cut.Value, body.Joints[16], body.Joints[17])
             | _ -> None
