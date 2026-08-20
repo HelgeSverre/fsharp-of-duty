@@ -17,6 +17,25 @@ module InputTuning =
         let amount = System.Math.Clamp(ads, 0.0f, 1.0f)
         1.0f + (GamepadAdsMultiplier - 1.0f) * amount
 
+    /// Whole wheel detents in a raw scroll delta.
+    ///
+    /// A mouse wheel reports one whole unit per click. GLFW scales macOS
+    /// trackpad deltas to tenths when the surface reports precise deltas, so a
+    /// fractional value is a continuous surface being dragged rather than a
+    /// detent being clicked — and a palm resting on a trackpad emits a burst of
+    /// them. Nothing in Silk or GLFW says which device a scroll came from; the
+    /// magnitude is the only signal there is, and it is enough.
+    let wheelDetents (delta: float32) =
+        if System.MathF.Abs delta < 1.0f then 0 else int (System.MathF.Truncate delta)
+
+    /// Whole rows a scrolling surface has travelled, and the residue to carry
+    /// into the next event. Lists scroll by accumulation so a trackpad moves a
+    /// row at a time instead of a row per hardware event.
+    let scrollRows (residue: float32) (delta: float32) =
+        let total = residue + delta
+        let rows = int (System.MathF.Truncate total)
+        rows, total - float32 rows
+
 type InputSampler(context: IInputContext) =
     /// Plain held-key bindings. Fire/ADS/crouch/reload are handled separately
     /// because they latch or toggle.
@@ -73,6 +92,9 @@ type InputSampler(context: IInputContext) =
     // the mouse callback and drained one per sampled frame, so a fast flick
     // walks the inventory instead of collapsing into a single step.
     let mutable scrollPending = 0
+    // Fraction of a row left over from the last menu scroll event.
+    let mutable menuScrollResidue = 0.0f
+    let mutable scrollSwitchesWeapons = true
     let mutable adsToggleEnabled = false
     let mutable adsLatched = false
     let mutable adsPrevHeld = false
@@ -179,15 +201,17 @@ type InputSampler(context: IInputContext) =
             device.add_Scroll(fun _ wheel ->
                 if menuActive then
                     // Menus read the wheel to scroll a long list; drained by
-                    // ConsumeMenuInput like every other pending menu input.
-                    let notches = int (round wheel.Y)
-                    let step = if notches <> 0 then notches elif wheel.Y > 0.0f then 1 elif wheel.Y < 0.0f then -1 else 0
-                    pending <- { pending with Scroll = pending.Scroll - step }
-                else
-                    let notches = int (round wheel.Y)
-                    // A trackpad reports fractional deltas; anything non-zero
-                    // still counts as one notch so it is not silently lost.
-                    let step = if notches <> 0 then notches elif wheel.Y > 0.0f then 1 elif wheel.Y < 0.0f then -1 else 0
+                    // ConsumeMenuInput like every other pending menu input. A
+                    // trackpad's tenths accumulate into rows rather than moving
+                    // one per hardware event, which sent the list flying.
+                    let rows, residue = InputTuning.scrollRows menuScrollResidue wheel.Y
+                    menuScrollResidue <- residue
+                    pending <- { pending with Scroll = pending.Scroll - rows }
+                elif scrollSwitchesWeapons then
+                    // Only whole detents cycle a weapon. A trackpad brushed
+                    // while aiming reports fractions, and every one of those
+                    // used to be a weapon switch mid-fight.
+                    let step = InputTuning.wheelDetents wheel.Y
                     scrollPending <- System.Math.Clamp(scrollPending + step, -8, 8))
             device.add_MouseMove(fun _ position ->
                 mousePosition <- position
@@ -302,6 +326,7 @@ type InputSampler(context: IInputContext) =
         chatLatched <- false
         // Notches spun while a menu was open must not fire on resume.
         scrollPending <- 0
+        menuScrollResidue <- 0.0f
         pending <- { MenuInput.empty with TextInput = pending.TextInput }
         if value then
             suppressedPadButtons <- Set.empty
@@ -329,6 +354,7 @@ type InputSampler(context: IInputContext) =
         gamepadSensitivity <- value.GamepadSensitivity
         adsToggleEnabled <- value.AdsToggle
         crouchToggleEnabled <- value.CrouchToggle
+        scrollSwitchesWeapons <- not value.ScrollWeaponSwitchOff
         adsLatched <- false
         adsPrevHeld <- false
         crouchLatched <- false

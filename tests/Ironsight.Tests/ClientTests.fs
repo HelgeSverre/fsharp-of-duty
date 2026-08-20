@@ -18,6 +18,40 @@ module ClientTests =
         Assert.Equal(expected, InputTuning.gamepadAdsScale ads)
 
     [<Fact>]
+    let ``only a whole wheel detent cycles a weapon`` () =
+        // A mouse wheel clicks in whole units. A macOS trackpad reports tenths,
+        // and every one of those used to be a weapon switch — brush the pad
+        // while aiming and the gun changed in your hands.
+        Assert.Equal(1, InputTuning.wheelDetents 1.0f)
+        Assert.Equal(-1, InputTuning.wheelDetents -1.0f)
+        // A fast flick is several clicks at once and must not be lost.
+        Assert.Equal(3, InputTuning.wheelDetents 3.0f)
+        Assert.Equal(-2, InputTuning.wheelDetents -2.0f)
+        Assert.Equal(1, InputTuning.wheelDetents 1.5f)
+        for precise in [ 0.03f; -0.03f; 0.4f; -0.4f; 0.999f; -0.999f; 0.0f ] do
+            Assert.Equal(0, InputTuning.wheelDetents precise)
+
+    [<Fact>]
+    let ``a scrolling surface accumulates into whole rows`` () =
+        // Lists still scroll on a trackpad, but by distance travelled rather
+        // than one row per hardware event, which sent the picker flying.
+        let mutable residue = 0.0f
+        let mutable rows = 0
+        for _ in 1..30 do
+            let stepped, next = InputTuning.scrollRows residue 0.03f
+            residue <- next
+            rows <- rows + stepped
+        // Thirty tenths of a row is nine tenths of a row, not thirty rows.
+        Assert.Equal(0, rows)
+        let crossed, afterCrossing = InputTuning.scrollRows residue 0.2f
+        Assert.Equal(1, crossed)
+        Assert.InRange(afterCrossing, -1.0f, 1.0f)
+        // A wheel click is exactly one row and leaves nothing behind.
+        let click, leftover = InputTuning.scrollRows 0.0f -1.0f
+        Assert.Equal(-1, click)
+        Assert.Equal(0.0f, leftover)
+
+    [<Fact>]
     let ``katana viewmodel travels left to right and up to down`` () =
         let tip = -Vector3.UnitZ
         let primaryStart = Vector3.Transform(tip, Matrix4x4.CreateRotationY(ViewmodelAnimation.katanaYaw true (Some 0.0f) (Some KatanaSweep)))

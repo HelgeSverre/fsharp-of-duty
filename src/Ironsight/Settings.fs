@@ -16,6 +16,11 @@ type GameSettings =
       GamepadSensitivity: float32
       AdsToggle: bool
       CrouchToggle: bool
+      /// Stored as the negative on purpose. A bool missing from an older
+      /// settings.json deserialises to false, so a positively-named field
+      /// defaulting to true would arrive switched off for everyone who already
+      /// has a settings file. The menu presents it the right way round.
+      ScrollWeaponSwitchOff: bool
       BloodColor: BloodColor
       Fullscreen: bool
       WindowWidth: int
@@ -31,6 +36,7 @@ module Settings =
           AdsToggle = false
           // Hold-to-crouch by default; toggle is opt-in like ADS toggle.
           CrouchToggle = false
+          ScrollWeaponSwitchOff = false
           BloodColor = Crimson
           Fullscreen = false
           WindowWidth = 1280

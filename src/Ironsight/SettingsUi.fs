@@ -68,6 +68,11 @@ module SettingsUi =
                { c with GamepadSensitivity = v })
            toggle "ADS TOGGLE" (fun c -> c.AdsToggle) (fun v c -> { c with AdsToggle = v })
            toggle "CROUCH TOGGLE" (fun c -> c.CrouchToggle) (fun v c -> { c with CrouchToggle = v })
+           // Inverted through the lambdas: the field is stored as the negative
+           // so it survives an upgrade (see GameSettings), but nobody wants to
+           // read a double negative in a menu.
+           toggle "SCROLL SWITCHES WEAPONS" (fun c -> not c.ScrollWeaponSwitchOff) (fun v c ->
+               { c with ScrollWeaponSwitchOff = not v })
            header "EFFECTS"
            { Label = "BLOOD COLOR"
              Kind = Cycle

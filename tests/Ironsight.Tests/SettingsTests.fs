@@ -21,6 +21,7 @@ module SettingsTests =
               GamepadSensitivity = 2.2f
               AdsToggle = true
               CrouchToggle = true
+              ScrollWeaponSwitchOff = true
               BloodColor = Green
               Fullscreen = true
               WindowWidth = 2560
@@ -32,10 +33,25 @@ module SettingsTests =
         Assert.Equal(2.2f, restored.GamepadSensitivity)
         Assert.True(restored.AdsToggle)
         Assert.True(restored.CrouchToggle)
+        Assert.True(restored.ScrollWeaponSwitchOff)
         Assert.Equal(Green, restored.BloodColor)
         Assert.True(restored.Fullscreen)
         Assert.Equal(2560, restored.WindowWidth)
         Assert.Equal(1440, restored.WindowHeight)
+
+    [<Fact>]
+    let ``a settings file written before scroll switching existed keeps it on`` () =
+        // A bool missing from the JSON deserialises to false, so the field is
+        // stored as the negative: absent means "not off", which is on. Name it
+        // the other way round and every existing player silently loses scroll
+        // weapon switching on upgrade.
+        let old =
+            """{"fov":75,"contrast":1.1,"mouseSensitivity":1.2,"gamepadSensitivity":1,
+                 "adsToggle":false,"crouchToggle":false,"bloodColor":"Crimson",
+                 "fullscreen":false,"windowWidth":1280,"windowHeight":720}"""
+        let restored = Settings.deserialize old
+        Assert.False(restored.ScrollWeaponSwitchOff)
+        Assert.Equal(75.0f, restored.Fov)
 
     [<Fact>]
     let ``settings are clamped to supported ranges after load`` () =
@@ -46,6 +62,7 @@ module SettingsTests =
               GamepadSensitivity = 99.0f
               AdsToggle = true
               CrouchToggle = false
+              ScrollWeaponSwitchOff = false
               BloodColor = Black
               Fullscreen = false
               WindowWidth = 16
