@@ -155,6 +155,11 @@ type Hud(gl: GL) =
         /// One data row: optional inset-centered selection bar, then cells as
         /// (xOffset, scale, text) — offsets shared with tableHeader, every
         /// scale centered on the slot midline.
+        /// Faint fill marking the row under the pointer, drawn under the
+        /// selection bar so a hovered-and-selected row reads as one, not two.
+        let hoverRow (rows: Rect) (rowHeight: float32) slotIndex =
+            let slot = Rect.inset 0.0f (rowHeight / 9.0f) (Rect.slot rowHeight slotIndex rows)
+            solid slot.X slot.Y slot.W slot.H (Vector4(1.0f, 0.92f, 0.66f, 0.13f))
         let tableRow (rows: Rect) (rowHeight: float32) slotIndex selected (color: Vector4) (cells: (float32 * float32 * string) list) =
             let slot = Rect.slot rowHeight slotIndex rows
             if selected then
@@ -440,6 +445,7 @@ type Hud(gl: GL) =
                     addText (rows.X + rowTextPad) y 0.95f accent $"{category + 1}  {Tuning.categoryName category}"
                 | LoadoutMenu.Weapon weaponIndex ->
                     let weaponClass = Tuning.onlineWeapons[weaponIndex]
+                    if picker.Hovered = Some index then hoverRow rows rowHeight slot
                     let isSelected = index = picker.Selected
                     let isCurrent = weaponClass.Name = weapon.Class.Name
                     let color =

@@ -258,6 +258,54 @@ module ClientTests =
                 Assert.Equal(start.Selected, jumped.Selected)
 
     [<Fact>]
+    let ``the wheel scrolls the picker without dragging the cursor`` () =
+        // A mouse user must be able to reach rows the keyboard cursor has not
+        // walked to; scrolling the window is not the same as moving selection.
+        let idle = TestKit.idleMenuInput
+        let start = LoadoutMenu.create ()
+        let struct (scrolled, _) = LoadoutMenu.update 1280 720 { idle with Scroll = 3 } start
+        Assert.Equal(start.Selected, scrolled.Selected)
+        if LoadoutMenu.rows.Length > LoadoutMenu.MaxVisibleRows then
+            Assert.True(scrolled.FirstVisible > start.FirstVisible, "the wheel did not scroll the window")
+        // It stops at both ends rather than running off the list.
+        let mutable state = start
+        for _ in 1 .. LoadoutMenu.rows.Length + 5 do
+            let struct (next, _) = LoadoutMenu.update 1280 720 { idle with Scroll = 1 } state
+            state <- next
+        Assert.True(state.FirstVisible <= max 0 (LoadoutMenu.rows.Length - LoadoutMenu.MaxVisibleRows))
+        for _ in 1 .. LoadoutMenu.rows.Length + 5 do
+            let struct (next, _) = LoadoutMenu.update 1280 720 { idle with Scroll = -1 } state
+            state <- next
+        Assert.Equal(0, state.FirstVisible)
+        // Moving the keyboard cursor still pulls the window back to it.
+        let struct (stepped, _) = LoadoutMenu.update 1280 720 { idle with Down = true } scrolled
+        Assert.True((LoadoutMenu.weaponAt stepped.Selected).IsSome)
+
+    [<Fact>]
+    let ``the picker tracks which row the pointer is over`` () =
+        let idle = TestKit.idleMenuInput
+        let rows = LoadoutMenu.rowsRect (LoadoutMenu.panelRect 1280 720)
+        let start = LoadoutMenu.create ()
+        Assert.True(start.Hovered.IsNone)
+        // A pointer on a weapon row reports that row.
+        let _, visible = LoadoutMenu.visibleRows start
+        let weaponSlot =
+            visible |> List.findIndex (fun (_, row) -> match row with LoadoutMenu.Weapon _ -> true | _ -> false)
+        let struct (hovering, _) =
+            LoadoutMenu.update 1280 720 { idle with Pointer = Some(TestKit.rowMiddle LoadoutMenu.RowHeight weaponSlot rows) } start
+        Assert.Equal(Some(fst visible[weaponSlot]), hovering.Hovered)
+        // A pointer on a heading reports nothing, so no highlight is drawn on it.
+        match visible |> List.tryFindIndex (fun (_, row) -> match row with LoadoutMenu.Header _ -> true | _ -> false) with
+        | Some headingSlot ->
+            let struct (onHeading, _) =
+                LoadoutMenu.update 1280 720 { idle with Pointer = Some(TestKit.rowMiddle LoadoutMenu.RowHeight headingSlot rows) } start
+            Assert.True(onHeading.Hovered.IsNone)
+        | None -> ()
+        // A pointer off the panel clears it.
+        let struct (away, _) = LoadoutMenu.update 1280 720 { idle with Pointer = Some(Vector2(5.0f, 5.0f)) } hovering
+        Assert.True(away.Hovered.IsNone)
+
+    [<Fact>]
     let ``picker hover still matches the drawn row after scrolling`` () =
         // The off-by-one this pattern invites: hover is computed from the drawn
         // window, so it has to be offset by the scroll position.

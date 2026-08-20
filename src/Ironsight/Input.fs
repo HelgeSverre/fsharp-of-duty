@@ -164,7 +164,13 @@ type InputSampler(context: IInputContext) =
                 if button = MouseButton.Left then
                     if menuActive then pending <- { pending with Clicked = true } else fireLatched <- true)
             device.add_Scroll(fun _ wheel ->
-                if not menuActive then
+                if menuActive then
+                    // Menus read the wheel to scroll a long list; drained by
+                    // ConsumeMenuInput like every other pending menu input.
+                    let notches = int (round wheel.Y)
+                    let step = if notches <> 0 then notches elif wheel.Y > 0.0f then 1 elif wheel.Y < 0.0f then -1 else 0
+                    pending <- { pending with Scroll = pending.Scroll - step }
+                else
                     let notches = int (round wheel.Y)
                     // A trackpad reports fractional deltas; anything non-zero
                     // still counts as one notch so it is not silently lost.

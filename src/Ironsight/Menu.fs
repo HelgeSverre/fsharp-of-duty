@@ -52,6 +52,9 @@ type MenuInput =
       Backspace: bool
       TextInput: string
       Pointer: Vector2 option
+      /// Wheel notches this frame: positive scrolls the list down. Only long
+      /// lists read it; the rest of the menus ignore it.
+      Scroll: int
       Clicked: bool }
 
 [<RequireQualifiedAccess>]
@@ -66,6 +69,7 @@ module MenuInput =
           Backspace = false
           TextInput = ""
           Pointer = None
+          Scroll = 0
           Clicked = false }
 
 /// Row-list navigation shared by the start menu, loadout picker, and settings.
@@ -117,7 +121,13 @@ module LoadoutMenu =
         | Header of category: int
         | Weapon of index: int
 
-    type State = { Selected: int; FirstVisible: int }
+    type State =
+        { Selected: int
+          FirstVisible: int
+          /// Row under the pointer. Distinct from Selected so a parked cursor
+          /// reads as "this is what a click takes" even while the window is
+          /// scrolled away from the keyboard cursor.
+          Hovered: int option }
 
     let RowHeight = 30.0f
     let FirstRowTop = 82.0f
@@ -158,7 +168,7 @@ module LoadoutMenu =
         $"{Tuning.categoryOf weapon + 1}  {weapon.Name}".ToUpperInvariant()
 
     let create () =
-        { Selected = selectableIndexes[0]; FirstVisible = 0 }
+        { Selected = selectableIndexes[0]; FirstVisible = 0; Hovered = None }
 
     /// The weapon a row index names, if it names one.
     let weaponAt index =
@@ -187,7 +197,12 @@ module LoadoutMenu =
             else None)
 
     let update (width: int) (height: int) (input: MenuInput) (state: State) =
-        let first = MenuNav.scrollWindow rows.Length MaxVisibleRows state.Selected state.FirstVisible
+        // The wheel scrolls the window without moving the cursor, so a mouse
+        // can reach rows the keyboard selection has not walked to.
+        let scrolled =
+            if input.Scroll = 0 then state.FirstVisible
+            else Math.Clamp(state.FirstVisible + input.Scroll, 0, max 0 (rows.Length - MaxVisibleRows))
+        let first = MenuNav.scrollWindow rows.Length MaxVisibleRows state.Selected scrolled
         // Hover hits the same rect the HUD draws, offset by the scroll position;
         // headings are skipped so the cursor cannot land on one.
         let hovered =
@@ -201,7 +216,10 @@ module LoadoutMenu =
         // arrived in the same frame.
         let activateIndex = if input.Clicked && hovered.IsSome then hovered.Value else selected
         let activate = input.Activate || (input.Clicked && hovered.IsSome)
-        let next = { Selected = selected; FirstVisible = MenuNav.scrollWindow rows.Length MaxVisibleRows selected first }
+        // Wheel scrolling alone must not drag the selection with it: keep the
+        // scrolled window unless the selection itself moved out of view.
+        let window = MenuNav.scrollWindow rows.Length MaxVisibleRows selected (if selected = state.Selected then scrolled else first)
+        let next = { Selected = selected; FirstVisible = window; Hovered = hovered }
         if input.Back then struct (next, Closed)
         else
             match (if activate then weaponAt activateIndex else None) with
