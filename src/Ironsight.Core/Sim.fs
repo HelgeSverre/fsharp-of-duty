@@ -6,22 +6,17 @@ open Ironsight.ProcGen
 
 [<RequireQualifiedAccess>]
 module Sim =
+    /// Offline is a sandbox: the whole arsenal, carried at once. Derived from
+    /// `onlineWeapons` rather than hand-listed, so a weapon added to the game
+    /// is carryable — and pickable in the loadout menu — the day it lands.
     let private playerSlots () =
-        [| Tuning.weaponSlot Tuning.kar98k 6
-           Tuning.weaponSlot Tuning.m1Garand 5
-           Tuning.weaponSlot Tuning.leeEnfield 5
-           Tuning.weaponSlot Tuning.thompson 4
-           Tuning.weaponSlot Tuning.stg44 4
-           Tuning.weaponSlot Tuning.mp40 4
-           Tuning.weaponSlot Tuning.m1911 5
-           Tuning.weaponSlot Tuning.kar98kSniper 5
-           Tuning.weaponSlot Tuning.fg42 4
-           Tuning.weaponSlot Tuning.m1897 5
-           Tuning.weaponSlot Tuning.bar 5
-           Tuning.weaponSlot Tuning.luger 5 |]
+        Tuning.onlineWeapons
+        // A belt-fed gun carries fewer spare belts than a rifle carries clips.
+        |> Array.map (fun weapon -> Tuning.weaponSlot weapon (if weapon.MagSize >= 100 then 2 else 5))
 
     /// The paintball round loadout opens on the Thompson.
-    let private thompsonSlot = 3
+    let private thompsonSlot =
+        Tuning.onlineWeapons |> Array.findIndex (fun weapon -> weapon.Name = Tuning.thompson.Name)
 
     /// Staggered post-respawn cooldown for round-mode bots, so a whole squad
     /// doesn't open fire on the exact same tick. Distinct from the MG-crew and

@@ -141,14 +141,15 @@ module CoreTests =
             Sim.createTrainingWorld 17UL
             |> TestKit.advance 1L 1L InputButtons.Weapon2
             |> TestKit.advance 2L 24L InputButtons.None
-        Assert.Equal(3, world.Player.Active)
+        // Assert the weapon, not its inventory index: the offline sandbox is
+        // derived from the arsenal, so slot numbers move when a weapon is added.
         Assert.Equal("Thompson", world.Player.Slots[world.Player.Active].Class.Name)
 
     [<Fact>]
     let ``pressing the same weapon key cycles within its category`` () =
         // Category 1 holds Kar98k -> Garand -> Lee-Enfield -> wraps to Kar98k.
         let mutable world = Sim.createTrainingWorld 29UL
-        Assert.Equal(0, world.Player.Active)
+        Assert.Equal("Kar98k", world.Player.Slots[world.Player.Active].Class.Name)
         let mutable sequence = 1L
         let press () =
             world <-
@@ -175,7 +176,6 @@ module CoreTests =
             |> TestKit.advance 1L 1L InputButtons.Weapon4
             |> TestKit.advance 2L 24L InputButtons.None
         let sniper = world.Player.Slots[world.Player.Active].Class
-        Assert.Equal(7, world.Player.Active)
         Assert.Equal("Kar98k Sniper", sniper.Name)
         Assert.True(sniper.Damage > Tuning.kar98k.Damage)
 
@@ -192,7 +192,6 @@ module CoreTests =
             |> List.filter (function ShotFired(Some(EntityId 1), _, _, "M1897 Trench Gun") -> true | _ -> false)
         let mutable rng = Rng.create 91UL
         let struct (_, pellets) = Weapons.step Tuning.TickDuration 0.0f Standing true false 0.0f &rng (Tuning.weaponSlot Tuning.m1897 5)
-        Assert.Equal(9, world.Player.Active)
         Assert.Equal("M1897 Trench Gun", world.Player.Slots[world.Player.Active].Class.Name)
         Assert.Equal(1, shots.Length)
         Assert.Equal(8, pellets.Length)

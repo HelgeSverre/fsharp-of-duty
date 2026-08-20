@@ -165,6 +165,15 @@ module CombatTests =
         Assert.Contains(events, function HitConfirmed(EntityId 44, _) -> true | _ -> false)
 
     [<Fact>]
+    let ``the offline sandbox carries every weapon the picker offers`` () =
+        // The loadout menu equips by matching a name against the carried slots,
+        // so a weapon missing here is one the picker silently refuses to select.
+        let world = Sim.createTrainingWorld 3UL
+        let carried = world.Player.Slots |> Array.map (fun slot -> slot.Class.Name) |> Set.ofArray
+        for weapon in Tuning.onlineWeapons do
+            Assert.True(carried.Contains weapon.Name, $"{weapon.Name} is in the picker but not carried offline")
+
+    [<Fact>]
     let ``standing muzzle origin sits at torso height`` () =
         let world = Sim.createTrainingWorld 3UL
         let standing = { world.Player with Stance = Standing; Ads = 0.0f }
