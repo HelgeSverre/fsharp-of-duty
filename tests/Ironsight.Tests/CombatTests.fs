@@ -52,6 +52,18 @@ module CombatTests =
         Assert.All(bankSpawns, fun struct (_, position) -> Assert.True(position.Y > 1.0f))
 
     [<Fact>]
+    let ``every map on the offline menu actually loads that map`` () =
+        // createOfflineWorld used to keep its own alias table beside the level
+        // registry's, so a map added to the menu loaded the paintball arena
+        // instead — silently, because the fallback is a real map.
+        for alias in Levels.offlineAliases do
+            let expected = (Levels.byAlias alias).Value
+            let world = Sim.createOfflineWorld alias 7UL
+            Assert.Equal(expected.Name, world.Level.Name)
+            Assert.NotEmpty(world.Soldiers |> Array.filter (fun soldier -> soldier.Team = Axis))
+            Assert.True(world.Round.IsSome, $"{alias} has no round")
+
+    [<Fact>]
     let ``rust compiles with a standing derrick and reachable high ground`` () =
         let level = Levels.rust
         Assert.NotEmpty level.Nav

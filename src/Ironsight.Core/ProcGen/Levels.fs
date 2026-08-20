@@ -36,3 +36,7 @@ module Levels =
     let all = [| paintballArena; scrapDepot; canalYard; trainingYard; omahaDraw; rust |]
 
     let byName name = all |> Array.tryFind (fun level -> level.Name = name)
+
+    /// The compiled level behind a menu/argv alias. Goes through specByAlias so
+    /// there is exactly one alias table in the codebase.
+    let byAlias alias = specByAlias alias |> Option.bind (fun spec -> byName spec.Name)

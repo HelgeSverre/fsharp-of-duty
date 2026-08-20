@@ -449,9 +449,15 @@ module Sim =
     /// unknown aliases fall back to the paintball arena.
     let createOfflineWorld (alias: string) seed =
         match alias with
+        // Only the two maps that set their own bot count are named here. Every
+        // other alias resolves through the level registry and takes one bot per
+        // Axis spawn, so a map added to the menu needs no entry in this file —
+        // a second alias table here is how Rust silently loaded the paintball
+        // arena instead.
         | "training" -> createTrainingWorld seed
-        | "depot" -> createScrapDepotWorld seed
-        | "canal" -> createCanalYardWorld seed
-        | "omaha" -> createOmahaWorld seed
-        | _ -> createPaintballWorld seed
+        | "paintball" -> createPaintballWorld seed
+        | alias ->
+            Levels.byAlias alias
+            |> Option.map (fun level -> createRoundWorldFor level seed)
+            |> Option.defaultWith (fun () -> createPaintballWorld seed)
 
