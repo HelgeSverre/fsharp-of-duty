@@ -344,7 +344,15 @@ module CombatTests =
             |> Array.filter (fun weapon -> weapon.Mechanism <> Bow && weapon.Mechanism <> Katana),
             fun weapon -> Assert.Equal(Hitscan, weapon.Mechanism))
         Assert.Equal(Bow, Tuning.bow.Mechanism)
-        Assert.All(Tuning.specialWeapons, fun weapon -> Assert.Equal(4, Tuning.categoryOf weapon))
+        // The sandbox toys sit with the heavies, but the two that were promoted
+        // to the online arsenal get keys that mean something: a bow is a
+        // precision weapon and a blade is what you swap to.
+        let online = Tuning.onlineWeapons |> Array.map _.Name |> Set.ofArray
+        Assert.All(
+            Tuning.specialWeapons |> Array.filter (fun weapon -> not (online.Contains weapon.Name)),
+            fun weapon -> Assert.Equal(4, Tuning.categoryOf weapon))
+        Assert.Equal(3, Tuning.categoryOf Tuning.bow)
+        Assert.Equal(2, Tuning.categoryOf Tuning.katana)
 
     [<Fact>]
     let ``bow draw power rises holds and fatigues back to minimum`` () =

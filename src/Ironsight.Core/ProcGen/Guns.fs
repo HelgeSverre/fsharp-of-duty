@@ -783,6 +783,17 @@ module Guns =
             let measured = (meshFor name).Vertices |> Array.map (fun vertex -> vertex.Position.Y) |> Array.max
             let height =
                 match name with
+                // The measured rule assumes the topmost part of a gun is its
+                // rear sight. That holds for rifles and fails for anything
+                // carrying a tank, a hopper or a limb above the bore — the bow
+                // measured 0.857 (its upper limb tip) and the paintball marker
+                // 0.530 (the top of its hopper), which would have aimed both of
+                // them most of a metre off.
+                | "Bow" | "Katana" -> 0.0f
+                | "Paintball Marker" | "Nerf Blaster" -> 0.16f
+                | "Bazooka" -> 0.10f
+                | "Flamethrower" -> 0.12f
+                | "Super Soaker" | "Nailgun" -> 0.14f
                 // The topmost part is the elevation turret; the eye looks down
                 // the tube below it. (The scope overlay hides this anyway.)
                 | "Kar98k Sniper" -> 0.20f

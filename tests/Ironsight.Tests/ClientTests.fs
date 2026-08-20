@@ -130,8 +130,10 @@ module ClientTests =
             let ys = (Guns.meshFor name).Vertices |> Array.map (fun vertex -> vertex.Position.Y)
             let sight = Guns.sightHeight name
             Assert.InRange(sight, Array.min ys, Array.max ys)
-            // And above the bore, never under it: sights sit on top of a gun.
-            Assert.True(sight > 0.0f, $"{name} aims from below its own origin")
+            // Never below the bore, and never far above it. "Somewhere on the
+            // model" is too weak a claim: it accepted the bow aiming from its
+            // upper limb tip, 0.86 above the arrow it fires.
+            Assert.InRange(sight, 0.0f, 0.35f)
 
     [<Fact>]
     let ``every weapon mesh is one connected lump`` () =

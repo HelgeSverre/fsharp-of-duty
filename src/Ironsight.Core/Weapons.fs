@@ -20,10 +20,13 @@ module Weapons =
             { slot with State = Switching(incoming, Units.seconds 0.0f) }
         | Switching(incoming, remaining) -> { slot with State = Switching(incoming, remaining - dt) }
 
-    /// Belt-fed guns run hot. Nothing else in the arsenal carries enough rounds
-    /// to matter, so the rule is derived from the belt rather than a per-weapon
-    /// flag that would have to be set on every gun that will never use it.
-    let overheats (weapon: WeaponClass) = weapon.MagSize >= 100
+    /// Belt-fed guns run hot. Derived from the belt rather than a per-weapon
+    /// flag that would have to be set on every gun that will never use it —
+    /// but a belt, not merely a big number: the magazine test alone caught the
+    /// flamethrower, the super soaker and the laser pointer, none of which has
+    /// a barrel to cook.
+    let overheats (weapon: WeaponClass) =
+        weapon.Mechanism = Hitscan && weapon.MagSize >= 100
 
     /// Extra ticks of dwell heat adds between rounds. Cold the gun cycles at
     /// its rated rate; glowing it crawls. It is never taken out of the player's

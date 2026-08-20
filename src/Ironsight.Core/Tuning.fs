@@ -604,7 +604,12 @@ module Tuning =
     /// belongs with the heavies, so Kind is matched before Mode.
     let categoryOf (weapon: WeaponClass) =
         match weapon.Mechanism with
-        | Paintball | FoamDart | Rocket | FlameJet | WaterJet | Nail | Harpoon | Bow | Laser | Katana -> 4
+        // A bow is a precision weapon with no optic, which is what PRECISION
+        // was named for; a blade is what you swap to, like a sidearm. The rest
+        // are offline-sandbox toys and sit with the heavies.
+        | Bow -> 3
+        | Katana -> 2
+        | Paintball | FoamDart | Rocket | FlameJet | WaterJet | Nail | Harpoon | Laser -> 4
         | Hitscan ->
             match weapon.Kind with
             | Pistol -> 2
