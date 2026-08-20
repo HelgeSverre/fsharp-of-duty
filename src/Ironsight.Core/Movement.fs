@@ -62,6 +62,19 @@ module Movement =
                     | ValueNone -> ()
         if Single.IsNegativeInfinity bestHeight then ValueNone else ValueSome(struct (bestHeight, bestNormal))
 
+    /// The ladder volume the player is standing in, if any. Measured at the
+    /// feet: a ladder is authored to end a little above the lip it serves, so
+    /// climbing continues until you are standing level with the platform.
+    let ladderAt (level: Level) (position: Vector3) =
+        level.Ladders
+        |> Array.tryFind (fun volume ->
+            position.X >= volume.Min.X - Tuning.PlayerRadius && position.X <= volume.Max.X + Tuning.PlayerRadius
+            && position.Z >= volume.Min.Z - Tuning.PlayerRadius && position.Z <= volume.Max.Z + Tuning.PlayerRadius
+            && position.Y >= volume.Min.Y - 0.3f && position.Y <= volume.Max.Y)
+        |> ValueOption.ofOption
+
+    let onLadder (level: Level) (position: Vector3) = (ladderAt level position).IsSome
+
     /// Whether a surface is shallow enough to stand on rather than slide down.
     let walkableNormal (normal: Vector3) = normal.Y >= Tuning.MaxSlopeCosine
 
@@ -139,7 +152,23 @@ module Movement =
             Tuning.WalkSpeed
             * (if wantsSprint then Tuning.SprintMultiplier else 1.0f)
             * (if wading then Tuning.WadeSpeedMultiplier else 1.0f)
-        let wishDirection = MathEx.normalizedOrZero (MathEx.yawRight yaw * move.X + MathEx.yawForward yaw * move.Y)
+        // Holding jump lets go of a ladder, which is also what stops you
+        // re-attaching to the one you just pushed off.
+        let ladder =
+            if Input.hasButton InputButtons.Jump input.Buttons || player.IsDead then ValueNone
+            else ladderAt level player.Position
+        let climbing = ladder.IsSome
+        // Near the top, forward goes back to meaning forward, so leaving a
+        // ladder is walking off it rather than a jump taken blind.
+        let dismounting =
+            match ladder with
+            | ValueSome volume -> player.Position.Y >= volume.Max.Y - 0.6f
+            | ValueNone -> false
+        // On a ladder forward is up, so it must not also walk you off the
+        // rungs: only strafe steers, until the dismount at the top.
+        let wishDirection =
+            if climbing && not dismounting then MathEx.normalizedOrZero (MathEx.yawRight yaw * move.X)
+            else MathEx.normalizedOrZero (MathEx.yawRight yaw * move.X + MathEx.yawForward yaw * move.Y)
         let targetVelocity = wishDirection * targetSpeed
         let onGround = grounded level player.Position
         // Air crouch-jump, Source-style: crouching mid-air tucks the legs up
@@ -157,11 +186,17 @@ module Movement =
                     if collides level Standing lowered then player.Position, Crouched
                     else lowered, Standing
                 | _ -> player.Position, stance
-        let acceleration = if onGround then Tuning.GroundAcceleration else Tuning.AirAcceleration
+        // A climber steers as if on the ground: at the top of a ladder you walk
+        // forward onto the platform rather than having to jump for it.
+        let acceleration = if onGround || climbing then Tuning.GroundAcceleration else Tuning.AirAcceleration
         let blend = 1.0f - MathF.Exp(-acceleration * seconds)
         let horizontalVelocity = Vector3.Lerp(MathEx.horizontal player.Velocity, targetVelocity, blend)
         let verticalVelocity =
-            if onGround && Input.hasButton InputButtons.Jump input.Buttons && stance = Standing then 7.0f
+            // On a ladder the stick drives height directly: no gravity, no
+            // momentum, and forward is up whichever way you are looking, so a
+            // climb does not become an exercise in aiming.
+            if climbing then move.Y * Tuning.ClimbSpeed
+            elif onGround && Input.hasButton InputButtons.Jump input.Buttons && stance = Standing then 7.0f
             elif onGround && player.Velocity.Y <= 0.0f then 0.0f
             else player.Velocity.Y - Tuning.Gravity * seconds
         let velocity = Vector3(horizontalVelocity.X, verticalVelocity, horizontalVelocity.Z)

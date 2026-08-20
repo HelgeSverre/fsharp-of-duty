@@ -23,6 +23,9 @@ module Tuning =
     /// Speed factor while standing below the water line. Wading is slow and
     /// loud on purpose: the shallows trade speed for a lower silhouette.
     let WadeSpeedMultiplier = 0.55f
+    /// Climb rate on a ladder. Slower than a walk — a ladder is a commitment,
+    /// and being caught halfway up one should be a real risk.
+    let ClimbSpeed = 3.4f
     let StandingHeight = 1.8f
     let CrouchedHeight = 1.3f
     let ProneHeight = 0.6f

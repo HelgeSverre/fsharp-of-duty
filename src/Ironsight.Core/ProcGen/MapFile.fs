@@ -229,6 +229,11 @@ module MapFile =
         | WaterPlane height ->
             writer.Write 13uy
             writer.Write height
+        | Ladder(foot, height, facing) ->
+            writer.Write 14uy
+            writeVector3 writer foot
+            writer.Write height
+            writer.Write facing
 
     let private readItem (reader: BinaryReader) =
         match reader.ReadByte() with
@@ -285,6 +290,10 @@ module MapFile =
             let samples = Array.init ((cells + 1) * (cells + 1)) (fun _ -> reader.ReadSingle())
             Heightfield(center, size, cells, heightLookup center size cells samples, material)
         | 13uy -> WaterPlane(reader.ReadSingle())
+        | 14uy ->
+            let foot = readVector3 reader
+            let height = reader.ReadSingle()
+            Ladder(foot, height, reader.ReadSingle())
         | tag -> failwith $"unknown map item tag {tag} (map made by a newer game version?)"
 
     /// Whether a spec can be written to the on-disk format at all. A map with

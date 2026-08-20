@@ -25,6 +25,10 @@ type LevelItem =
     /// A genuinely sloped surface between two heights, solid down to the ground
     /// beneath it. Walkable if the grade is inside the slope limit.
     | Ramp of startPoint: Vector3 * endPoint: Vector3 * width: float32 * material: Material
+    /// A climbable ladder rising from `foot`, facing `facing` (the yaw you look
+    /// along to stand at its base). Its rails and rungs are drawn but not solid:
+    /// a ladder you collide with is a ladder you cannot stand inside.
+    | Ladder of foot: Vector3 * height: float32 * facing: float32
     /// Organic terrain sampled from a height function over an XZ rectangle.
     /// `cells` is the sample count per side; the surface is closed by a skirt so
     /// it behaves as a solid for penetration.
@@ -52,6 +56,7 @@ module LevelDsl =
     let block center size material = Block(center, size, material)
     let prop mesh position yaw = Prop(mesh, position, yaw)
     let ramp startPoint endPoint width material = Ramp(startPoint, endPoint, width, material)
+    let ladder foot height facing = Ladder(foot, height, facing)
     let heightfield center size cells height material = Heightfield(center, size, cells, height, material)
     let water height = WaterPlane height
     let spawnSquad team count center = SpawnSquad(team, count, center)

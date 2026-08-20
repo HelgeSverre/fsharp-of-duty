@@ -440,7 +440,7 @@ module LevelCompile =
             let extraIndices = Array.init (triangles.Length * 3) (fun index -> baseIndex + uint32 index)
             Array.append vertices extraVertices, Array.append indices extraIndices
 
-    let private compileNav (bounds: Aabb) (brushes: Brush array) (brushGrid: BrushGrid) (collision: CollisionMesh) =
+    let private compileNav (bounds: Aabb) (brushes: Brush array) (brushGrid: BrushGrid) (ladders: Aabb array) (collision: CollisionMesh) =
         let spacing = 2.0f
         let minX, maxX = int (MathF.Ceiling(bounds.Min.X / spacing)), int (MathF.Floor(bounds.Max.X / spacing))
         let minZ, maxZ = int (MathF.Ceiling(bounds.Min.Z / spacing)), int (MathF.Floor(bounds.Max.Z / spacing))
@@ -525,6 +525,38 @@ module LevelCompile =
                                    abs (midHeight - (position.Y + other.Y) * 0.5f) <= 0.35f)))
             { Position = positions[index]; Neighbours = neighbours })
         |> Seq.toArray
+        |> fun nodes ->
+            // A ladder is a link no rise rule would ever allow, so stitch its
+            // ends together explicitly. Without this the platform a ladder
+            // serves is a dead end that only a human can reach.
+            if Array.isEmpty ladders || Array.isEmpty nodes then nodes
+            else
+                let extra = Dictionary<int, ResizeArray<int>>()
+                let join a b =
+                    for struct (from, target) in [ struct (a, b); struct (b, a) ] do
+                        match extra.TryGetValue from with
+                        | true, existing -> existing.Add target
+                        | _ ->
+                            let fresh = ResizeArray<int>()
+                            fresh.Add target
+                            extra[from] <- fresh
+                for volume in ladders do
+                    let centre = (volume.Min + volume.Max) * 0.5f
+                    let nearest (height: float32) =
+                        let target = Vector3(centre.X, height, centre.Z)
+                        nodes
+                        |> Array.mapi (fun index node -> index, Vector3.DistanceSquared(node.Position, target))
+                        |> Array.minBy snd
+                    let bottom, bottomDistance = nearest volume.Min.Y
+                    let top, topDistance = nearest volume.Max.Y
+                    // Both ends must actually be near the ladder, or a lone
+                    // ladder in open ground would rope two unrelated nodes.
+                    if bottom <> top && bottomDistance < 9.0f && topDistance < 9.0f then join bottom top
+                nodes
+                |> Array.mapi (fun index node ->
+                    match extra.TryGetValue index with
+                    | true, added -> { node with Neighbours = Array.append node.Neighbours (added.ToArray()) |> Array.distinct }
+                    | _ -> node)
 
     /// Distance from (x, z) to the horizontal segment startPoint-endPoint, used
     /// by both the ground cut and the trench-notch tests below so the two stay
@@ -542,9 +574,36 @@ module LevelCompile =
     /// (if present) a water surface layered on top of the render mesh only.
     /// Shared by a fresh compile and a brush-only rebuild so the two pipelines
     /// cannot drift apart.
-    let private buildGeometry (brushes: Brush array) (sloped: Tri array) (waterLevel: float32 option) (waterBounds: Aabb) =
+    /// A ladder's rails and rungs, drawn from its climb volume. Render-only, so
+    /// it never appears in the collision mesh: a ladder you collide with is a
+    /// ladder you cannot stand inside. Rails run along whichever horizontal
+    /// axis is wider, which is the one across the ladder's face.
+    let private ladderTriangles (bounds: Aabb) =
+        let size = bounds.Max - bounds.Min
+        let centre = (bounds.Min + bounds.Max) * 0.5f
+        let acrossX = size.X >= size.Z
+        let half = (if acrossX then size.X else size.Z) * 0.5f - 0.06f
+        let across offset = if acrossX then Vector3(offset, 0.0f, 0.0f) else Vector3(0.0f, 0.0f, offset)
+        // Against the back face of the volume, leaving the climb space clear.
+        let back =
+            if acrossX then Vector3(0.0f, 0.0f, bounds.Min.Z + 0.06f - centre.Z)
+            else Vector3(bounds.Min.X + 0.06f - centre.X, 0.0f, 0.0f)
+        let bar (a: Vector3) (b: Vector3) = orientedBoxTriangles a b 0.045f 0.09f RustedMetal
+        [| for side in [ -half; half ] do
+             yield! bar
+                        (Vector3(centre.X, bounds.Min.Y, centre.Z) + back + across side)
+                        (Vector3(centre.X, bounds.Max.Y, centre.Z) + back + across side)
+           let rungs = max 1 (int ((bounds.Max.Y - bounds.Min.Y) / 0.32f))
+           for rung in 1 .. rungs - 1 do
+             let y = bounds.Min.Y + (bounds.Max.Y - bounds.Min.Y) * float32 rung / float32 rungs
+             yield! bar
+                        (Vector3(centre.X, y, centre.Z) + back + across -half)
+                        (Vector3(centre.X, y, centre.Z) + back + across half) |]
+
+    let private buildGeometry (brushes: Brush array) (sloped: Tri array) (ladders: Aabb array) (waterLevel: float32 option) (waterBounds: Aabb) =
         let boxVertices, boxIndices = compileMesh brushes
         let vertices, indices = appendTriangleMesh boxVertices boxIndices sloped
+        let vertices, indices = appendTriangleMesh vertices indices (ladders |> Array.collect ladderTriangles)
         let vertices, indices =
             match waterLevel with
             | Some height -> appendTriangleMesh vertices indices (waterTriangles waterBounds height)
@@ -569,6 +628,7 @@ module LevelCompile =
         // Geometry that is not a box lives here and is merged into both the
         // collision mesh and the render mesh once the item loop is done.
         let sloped = ResizeArray<Tri>()
+        let ladders = ResizeArray<Aabb>()
         // The ground is a grid rather than one slab so terrain can cut into it.
         // A single solid slab meant nothing could ever sit below y = 0, which is
         // why trenches used to be two parapets standing on flat ground.
@@ -639,6 +699,21 @@ module LevelCompile =
                         covers.Add { Pos = Vector3(center.X, 0.0f, center.Z) + reach; PeekDir = facing; Crouch = true; Owner = None }
             | Ramp(startPoint, endPoint, width, material) -> sloped.AddRange(rampTriangles startPoint endPoint width material)
             | Prop(mesh, position, yaw) -> sloped.AddRange(propTriangles mesh position yaw)
+            | Ladder(foot, height, facing) ->
+                // The climb space: a body's width across the ladder's face and
+                // deep enough to stand in, from the foot to a little above the
+                // lip so stepping off the top is walking forward, not a jump.
+                let outward = MathEx.yawForward facing
+                let side = MathEx.yawRight facing
+                let corners =
+                    [| for reach in [ 0.05f; 0.62f ] do
+                         for offset in [ -0.42f; 0.42f ] do
+                           for lift in [ 0.0f; height ] do
+                             yield foot + outward * reach + side * offset + Vector3.UnitY * lift |]
+                let axis (pick: Vector3 -> float32) = corners |> Array.map pick
+                ladders.Add
+                    { Min = Vector3(Array.min (axis _.X), foot.Y, Array.min (axis _.Z))
+                      Max = Vector3(Array.max (axis _.X), foot.Y + height, Array.max (axis _.Z)) }
             | Heightfield(center, size, cells, height, material) ->
                 // Terrain is notched wherever a trench crosses it, so a trench
                 // network works on a hilltop and not only on flat ground. The
@@ -743,6 +818,7 @@ module LevelCompile =
         let brushArray = brushes.ToArray()
         let brushGrid = compileBrushGrid brushArray
         let slopedArray = sloped.ToArray()
+        let ladderArray = ladders.ToArray()
         let waterLevel = spec.Items |> List.tryPick (function WaterPlane height -> Some height | _ -> None)
         // The vertical extent follows the content rather than a fixed 8 m lid,
         // so a bluff or a below-sea-level beach is expressible. Headroom above
@@ -756,7 +832,7 @@ module LevelCompile =
                 |> Array.fold (fun acc t -> max acc (max t.A.Y (max t.B.Y t.C.Y))) (brushArray |> Array.fold (fun acc item -> max acc item.Bounds.Max.Y) 0.0f)
             { Min = Vector3(bounds.Min.X, lowest, bounds.Min.Z)
               Max = Vector3(bounds.Max.X, max bounds.Max.Y (highest + 4.0f), bounds.Max.Z) }
-        let vertices, indices, collision = buildGeometry brushArray slopedArray waterLevel worldBounds
+        let vertices, indices, collision = buildGeometry brushArray slopedArray ladderArray waterLevel worldBounds
         { Name = spec.Name
           Revision = 0
           Bounds = worldBounds
@@ -779,7 +855,8 @@ module LevelCompile =
             spec.Items
             |> List.choose (function MissionRule(condition, action) -> Some { Condition = condition; Action = action; Fired = false } | _ -> None)
             |> List.toArray
-          Nav = compileNav bounds brushArray brushGrid collision
+          Ladders = ladderArray
+          Nav = compileNav bounds brushArray brushGrid ladderArray collision
           WaterLevel = waterLevel
           Vertices = vertices
           Indices = indices }
@@ -788,13 +865,13 @@ module LevelCompile =
         let brushGrid = compileBrushGrid brushes
         // Sloped geometry survives a rebuild; deriving collision from brushes
         // alone would delete every ramp and terrain patch in the level.
-        let vertices, indices, rebuiltCollision = buildGeometry brushes level.Sloped level.WaterLevel level.Bounds
+        let vertices, indices, rebuiltCollision = buildGeometry brushes level.Sloped level.Ladders level.WaterLevel level.Bounds
         // Bump the revision so renderers holding cached geometry re-upload.
         { level with
             Revision = level.Revision + 1
             Brushes = brushes
             BrushGrid = brushGrid
             Collision = rebuiltCollision
-            Nav = compileNav level.Bounds brushes brushGrid rebuiltCollision
+            Nav = compileNav level.Bounds brushes brushGrid level.Ladders rebuiltCollision
             Vertices = vertices
             Indices = indices }

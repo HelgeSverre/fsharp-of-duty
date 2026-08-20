@@ -184,6 +184,10 @@ type Level =
       MountedGuns: MountedGun array
       MissionRules: ScriptRule array
       Nav: NavNode array
+      /// Volumes a player can climb. Axis-aligned because everything that
+      /// consumes them is: a ladder set at a diagonal gets a slightly generous
+      /// box, which is the forgiving direction to be wrong in.
+      Ladders: Aabb array
       /// Sea/flood height. Render-only surface; the sim reads it to slow
       /// anyone wading below it.
       WaterLevel: float32 option

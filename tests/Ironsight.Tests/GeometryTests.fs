@@ -228,6 +228,57 @@ module GeometryTests =
         Assert.True(finish.Y > 2.0f, $"expected to gain height, ended at y={finish.Y}")
 
     [<Fact>]
+    let ``a ladder is climbed with forward, let go with jump, and is not solid`` () =
+        // A 5 m platform with a ladder up its near face, ending a little above
+        // the lip so the top of the climb is level with the floor it serves.
+        let items solid =
+            [ yield LevelDsl.street 30.0f 10.0f Concrete
+              yield LevelDsl.block (Vector3(0.0f, 2.5f, 4.0f)) (Vector3(10.0f, 5.0f, 6.0f)) Concrete
+              if solid then yield LevelDsl.ladder (Vector3(0.0f, 0.0f, 0.9f)) 5.4f 0.0f ]
+        let level = LevelDsl.level "Ladder" (items true) |> LevelCompile.compile
+        Assert.Single level.Ladders |> ignore
+        let foot = Vector3(0.0f, 0.0f, 0.6f)
+        Assert.True(Movement.onLadder level foot)
+        let climb buttons ticks =
+            // Facing the ladder: forward is into the platform it serves.
+            let world = Sim.createTrainingWorld 3UL
+            let input = { Sequence = 0L; Move = Vector2(0.0f, 1.0f); Look = Vector2.Zero; Buttons = buttons }
+            let mutable player = { world.Player with Position = foot; Velocity = Vector3.Zero; Yaw = MathF.PI }
+            for _ in 1..ticks do
+                player <- Movement.step Tuning.TickDuration input level player
+            player.Position
+        // Two seconds of forward puts you on top of the platform.
+        let arrived = climb InputButtons.None 120
+        Assert.True(arrived.Y > 4.9f, $"climb ended at y={arrived.Y}")
+        Assert.True(arrived.Z > 1.0f, $"climb never stepped off the ladder, z={arrived.Z}")
+        // Jump lets go, and holding it stops you re-attaching.
+        let released = climb InputButtons.Jump 120
+        Assert.True(released.Y < 1.0f, $"jump did not release the ladder, y={released.Y}")
+        // Standing on one without asking to climb does not levitate you.
+        let world = Sim.createTrainingWorld 3UL
+        let idle = { Sequence = 0L; Move = Vector2.Zero; Look = Vector2.Zero; Buttons = InputButtons.None }
+        let mutable parked = { world.Player with Position = foot; Velocity = Vector3.Zero }
+        for _ in 1..120 do
+            parked <- Movement.step Tuning.TickDuration idle level parked
+        Assert.Equal(foot.Y, parked.Position.Y)
+        // The rungs are drawn but not solid — a ladder you collide with is one
+        // you cannot stand inside.
+        let bare = LevelDsl.level "Ladder" (items false) |> LevelCompile.compile
+        Assert.True(level.Vertices.Length > bare.Vertices.Length, "the ladder drew nothing")
+        Assert.Equal(bare.Collision.Triangles.Length, level.Collision.Triangles.Length)
+        // Bots get up it too: no rise rule would ever link a 5 m step, so the
+        // ladder's two ends are stitched together explicitly.
+        let nearest (level: Level) (target: Vector3) =
+            level.Nav |> Array.mapi (fun index node -> index, Vector3.DistanceSquared(node.Position, target)) |> Array.minBy snd |> fst
+        let bottomNode = nearest level (Vector3(0.0f, 0.0f, 0.6f))
+        let topNode = nearest level (Vector3(0.0f, 5.0f, 2.0f))
+        Assert.NotEqual(bottomNode, topNode)
+        Assert.Contains(topNode, level.Nav[bottomNode].Neighbours)
+        Assert.Contains(bottomNode, level.Nav[topNode].Neighbours)
+        // And the same platform without a ladder stays unreachable.
+        Assert.DoesNotContain(nearest bare (Vector3(0.0f, 5.0f, 2.0f)), bare.Nav[nearest bare (Vector3(0.0f, 0.0f, 0.6f))].Neighbours)
+
+    [<Fact>]
     let ``you can jump while pressed against a wall, but not through a ceiling`` () =
         // The vertical resolve refused any upward move whenever the capsule was
         // touching geometry — and pressed against a face it always is, so a jump

@@ -2,6 +2,7 @@ namespace Ironsight.Tests
 
 open System
 open System.IO
+open System.Numerics
 open System.Net.Http
 open Ironsight
 open Ironsight.ProcGen
@@ -33,6 +34,23 @@ module MapFileTests =
                 Assert.Equal(original.Indices.Length, rebuilt.Indices.Length)
                 Assert.Equal(original.Nav.Length, rebuilt.Nav.Length)
                 Assert.Equal(original.Spawns.Length, rebuilt.Spawns.Length)
+
+    [<Fact>]
+    let ``a ladder survives the map format`` () =
+        // Ladders are a handful of numbers, unlike props, so custom maps keep
+        // working — but only if both ends of the format agree about them.
+        let spec =
+            LevelDsl.level "Ladder map"
+                [ LevelDsl.street 30.0f 10.0f Concrete
+                  LevelDsl.block (Vector3(0.0f, 2.5f, 4.0f)) (Vector3(10.0f, 5.0f, 6.0f)) Concrete
+                  LevelDsl.ladder (Vector3(0.0f, 0.0f, 0.9f)) 5.4f 0.0f ]
+        Assert.True(MapFile.encodable spec)
+        match MapFile.decode (MapFile.encode spec) with
+        | Error message -> Assert.Fail message
+        | Ok decoded ->
+            Assert.Equal(spec.Items.Length, decoded.Items.Length)
+            let climbable (level: Level) = level.Ladders
+            Assert.Equal<Aabb array>(climbable (LevelCompile.compile spec), climbable (LevelCompile.compile decoded))
 
     [<Fact>]
     let ``map hashes are stable and unique per map`` () =
