@@ -27,13 +27,26 @@ module Program =
     [<RequireQualifiedAccess>]
     module Prediction =
         /// How far a sprinting player could legitimately have travelled since
-        /// the last authoritative update, plus a margin for stance and slope.
-        /// Clamped because the tick delta is meaningless before the first
-        /// snapshot of a session, and because a long stall must not buy an
-        /// unbounded budget that would smooth away a real teleport.
+        /// the last authoritative update, with generous leeway and rounded up
+        /// to a whole metre.
+        ///
+        /// Deliberately lax. This is not an anti-cheat check — it runs on the
+        /// client and only decides whether a visual offset eases out or is
+        /// dropped. The server is authoritative and bounds movement with the
+        /// input-credit system, so the only cost of being generous here is that
+        /// a genuine teleport eases out over a few frames instead of snapping.
+        /// Being stingy costs a visible yank on every network hiccup, which is
+        /// far worse.
+        ///
+        /// Clamped because the tick delta is meaningless before a session's
+        /// first snapshot, and so a long stall cannot buy an unbounded budget.
         let teleportBudget (ticksSinceAuthoritative: int64) =
             let clamped = Math.Clamp(ticksSinceAuthoritative, 1L, int64 Tuning.TickRate / 2L)
-            Tuning.WalkSpeed * Tuning.SprintMultiplier * (float32 clamped / float32 Tuning.TickRate) + 0.5f
+            let travelled = Tuning.WalkSpeed * Tuning.SprintMultiplier * (float32 clamped / float32 Tuning.TickRate)
+            // Half again for stance changes, slopes and a jump's arc, then two
+            // metres of slack, then up to the next whole metre so the number is
+            // something you can reason about when reading a log.
+            ceil (travelled * 1.5f + 2.0f)
 
         /// Error to carry into the render offset: kept and eased out over the
         /// following frames, or dropped when the server plainly teleported the

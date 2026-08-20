@@ -250,6 +250,18 @@ module ClientTests =
         Assert.Equal(Program.Prediction.teleportBudget (ticks 0.5f), Program.Prediction.teleportBudget (ticks 30.0f))
         // Before the first snapshot of a session the tick delta is meaningless.
         Assert.True(Program.Prediction.teleportBudget -1L > 0.0f)
+        // Whole metres, so the number reads sensibly in a log.
+        for gap in [ 0.0f; 0.016f; 0.05f; 0.125f; 0.391f; 0.5f; 5.0f ] do
+            let budget = Program.Prediction.teleportBudget (ticks gap)
+            Assert.Equal(budget, floor budget)
+        // Laxer than the sprint distance it is derived from, at every gap.
+        for gap in [ 0.016f; 0.05f; 0.125f; 0.391f; 0.5f ] do
+            Assert.True(
+                Program.Prediction.teleportBudget (ticks gap) > sprint * gap,
+                $"budget must exceed bare sprint distance at {gap}s")
+        // The whole measured range of deployed snapshot gaps stays generous:
+        // even the 391ms worst case leaves metres of headroom.
+        Assert.True(Program.Prediction.teleportBudget (ticks 0.391f) >= 6.0f)
 
     [<Fact>]
     let ``kill feed keeps the newest rows and expires them`` () =
