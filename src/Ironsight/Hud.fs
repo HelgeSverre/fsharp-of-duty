@@ -371,9 +371,14 @@ type Hud(gl: GL) =
         // here stays above height-124.
         let drawChat () =
             let draftY = float32 height - 142.0f
+            // Each row carries its own backing plate, the way Counter-Strike's
+            // does: bare text over a sunlit wall or a muzzle flash is
+            // unreadable exactly when someone is calling a position.
             info.Chat
             |> List.iteri (fun index (text, system) ->
-                addText 20.0f (draftY - 20.0f * float32 (index + 1)) 1.0f (if system then accent else white) text)
+                let y = draftY - 20.0f * float32 (index + 1)
+                solid 14.0f (y - 4.0f) (max 240.0f (textWidth 1.0f text + 14.0f)) 20.0f (Vector4(0.0f, 0.0f, 0.0f, 0.45f))
+                addText 20.0f y 1.0f (if system then accent else white) text)
             info.ChatDraft
             |> Option.iter (fun draft ->
                 let line = $"SAY: {draft}_"

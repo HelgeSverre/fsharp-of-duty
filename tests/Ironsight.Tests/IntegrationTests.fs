@@ -30,6 +30,40 @@ module IntegrationTests =
 
     [<Fact>]
     [<Trait("Category", Integration)>]
+    let ``a lone player sees their own chat line come back`` () =
+        // The solo case on purpose: one player never reaches Warmup, so this
+        // also pins that chat does not depend on the match having started.
+        // Every layer passes in isolation; only a real socket covers the seam
+        // between SendChat's queue, the server dispatch and the snapshot pump.
+        let app, uri = startServer ()
+        try
+            MatchScript.run uri TeamDeathmatch [
+                Join "Alpha"
+                WaitUntil("the player appears in a snapshot", 10.0, alive "Alpha")
+                Talk("Alpha", "hello")
+                WaitUntil("the sender's own line comes back", 10.0, fun snapshot ->
+                    snapshot.Events
+                    |> Array.exists (fun event -> event.Kind = "chat" && event.Text.Contains "hello"))
+                // Drive the client-side pipeline the game actually runs on the
+                // received snapshot, in two steps so a failure names the stage.
+                Expect("the wire event decodes to a Chat", fun snapshot ->
+                    snapshot.Events
+                    |> Array.choose OnlineWorld.eventToGameEvent
+                    |> Array.exists (function Chat(_, _, line) -> line = "hello" | _ -> false))
+                Expect("the decoded Chat becomes a HUD row", fun snapshot ->
+                    let decoded =
+                        snapshot.Events
+                        |> Array.filter (fun event -> event.RecipientId = 0)
+                        |> Array.choose OnlineWorld.eventToGameEvent
+                        |> Array.toList
+                    Program.Feedback.applyFeed (fun _ -> "Alpha") decoded Program.Feedback.empty
+                    |> fun state -> state.Chat |> List.exists (fun item -> item.Text.Contains "hello"))
+            ]
+        finally
+            app.StopAsync().GetAwaiter().GetResult()
+
+    [<Fact>]
+    [<Trait("Category", Integration)>]
     let ``two players connect, warm up, and trade fire`` () =
         let app, uri = startServer ()
         try
