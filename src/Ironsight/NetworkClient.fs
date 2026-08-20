@@ -16,7 +16,8 @@ type OnlineWeapon =
     { WeaponName: string
       Ammo: int
       Reserve: int
-      ReloadRemaining: float32 }
+      ReloadRemaining: float32
+      Heat: float32 }
 
 [<Struct>]
 type OnlinePlayer =
@@ -138,7 +139,8 @@ module SnapshotWire =
                              { WeaponName = getString "weapon" slot
                                Ammo = getInt "ammo" slot
                                Reserve = getInt "reserve" slot
-                               ReloadRemaining = getFloat "reloadRemaining" slot })
+                               ReloadRemaining = getFloat "reloadRemaining" slot
+                               Heat = getFloat "heat" slot })
                          |> Seq.toArray
                      | _ -> [||])
                   Active = getInt "active" value

@@ -22,6 +22,7 @@ type AudioSystem() =
 
     let rifle = upload (AudioSynth.gunshot true)
     let smg = upload (AudioSynth.gunshot false)
+    let minigun = upload (AudioSynth.minigunShot ())
     let blast = upload (AudioSynth.explosion ())
     let step = upload (AudioSynth.footstep ())
     let reload = upload (AudioSynth.reloadClick ())
@@ -29,12 +30,18 @@ type AudioSystem() =
     let heartbeat = upload (AudioSynth.heartbeat ())
     let radio = upload (AudioSynth.radio ())
     let wind = upload (AudioSynth.wind ())
-    let buffers = [| rifle; smg; blast; step; reload; ping; heartbeat; radio; wind |]
+    let buffers = [| rifle; smg; minigun; blast; step; reload; ping; heartbeat; radio; wind |]
+
+    // Sixty rounds a second is above the rate an ear resolves as separate
+    // events, so playing every one of them is both a hum and a source hog.
+    // Every third round is percussive and still tracks the gun bogging down.
+    let mutable minigunRound = 0
 
     // Two synthesized shot samples cover the arsenal; per-weapon pitch keeps
     // the guns within each bucket from sounding identical.
     let shotSample weapon =
         match weapon with
+        | "M134 Minigun" -> minigun
         | "Thompson" | "MG42" | "MP40" | "STG-44" | "FG42" | "BAR" -> smg
         | _ -> rifle
 
@@ -48,6 +55,7 @@ type AudioSystem() =
         | "FG42" -> 0.86f
         | "BAR" -> 0.80f
         | "MG42" -> 0.78f
+        | "M134 Minigun" -> 0.72f
         | "M1 Garand" -> 1.06f
         | "Lee-Enfield" -> 0.96f
         | "M1897 Trench Gun" -> 0.84f
@@ -85,6 +93,10 @@ type AudioSystem() =
     member _.Handle(events: GameEvent list) =
         for event in events do
             match event with
+            | ShotFired(_, position, _, weapon) when weapon = "M134 Minigun" ->
+                minigunRound <- minigunRound + 1
+                if minigunRound % 3 = 0 then
+                    play minigun position 0.95f (shotPitch weapon * (0.97f + float32 sourceIndex * 0.004f))
             | ShotFired(_, position, _, weapon) ->
                 play (shotSample weapon) position 0.88f (shotPitch weapon * (0.97f + float32 sourceIndex * 0.004f))
             | Explosion(position, _) ->

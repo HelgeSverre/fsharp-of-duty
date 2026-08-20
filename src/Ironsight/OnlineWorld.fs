@@ -55,6 +55,7 @@ module OnlineWorld =
         { Tuning.weaponSlot weapon 0 with
             InMag = wire.Ammo
             Reserve = wire.Reserve
+            Heat = wire.Heat
             State = if wire.ReloadRemaining > 0.0f then Reloading(Units.seconds wire.ReloadRemaining) else Ready }
 
     /// The carried kit, and which slot is in hand. A server built before kits
@@ -69,7 +70,8 @@ module OnlineWorld =
                        { WeaponName = player.WeaponName
                          Ammo = player.Ammo
                          Reserve = player.Reserve
-                         ReloadRemaining = player.ReloadRemaining } |]
+                         ReloadRemaining = player.ReloadRemaining
+                         Heat = 0.0f } |]
         let active = if player.Active >= 0 && player.Active < slots.Length then player.Active else 0
         // A switch in flight lives on the outgoing slot and carries its
         // destination, so the viewmodel plays the raise instead of popping.

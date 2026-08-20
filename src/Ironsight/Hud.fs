@@ -265,7 +265,17 @@ type Hud(gl: GL) =
                 meter { X = barLeft; Y = barTop; W = barWidth; H = 8.0f } progress
                     (Vector4(0.16f, 0.18f, 0.16f, 0.92f)) (Vector4(0.92f, 0.55f, 0.14f, 1.0f))
                 addTextRight (barLeft - 14.0f) (barTop - 3.0f) 1.0f white reloadText
-            | _ -> ()
+            | _ ->
+                // Belt-fed guns run hot, and the rate of fire drops with it.
+                // Shares the reload bar's slot: a gun cannot be doing both.
+                if Weapons.overheats weapon.Class && weapon.Heat > 0.01f then
+                    let barTop = weaponPanelY - 16.0f
+                    let hot = weapon.Heat
+                    solid (weaponPanelX - 2.0f) (barTop - 2.0f) (weaponPanelWidth + 4.0f) 12.0f (Vector4(0.0f, 0.0f, 0.0f, 0.72f))
+                    meter { X = weaponPanelX; Y = barTop; W = weaponPanelWidth; H = 8.0f } hot
+                        (Vector4(0.16f, 0.18f, 0.16f, 0.92f))
+                        (Vector4(0.55f + 0.45f * hot, 0.42f - 0.30f * hot, 0.10f, 1.0f))
+                    addTextRight (weaponPanelX - 14.0f) (barTop - 3.0f) 1.0f white (sprintf "HEAT %d%%" (int (hot * 100.0f)))
         // ---- Bottom-left health panel with a color-shifting bar ----
         let drawHealthPanel () =
             let healthPanelWidth, healthPanelHeight = 196.0f, 48.0f

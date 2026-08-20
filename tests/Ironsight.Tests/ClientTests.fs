@@ -690,8 +690,8 @@ module ClientTests =
         // snapshot, so no multi-slot state could survive reconciliation.
         let world = Sim.createTrainingWorld 901UL
         let kit =
-            [| { WeaponName = "Kar98k"; Ammo = 3; Reserve = 15; ReloadRemaining = 0.0f }
-               { WeaponName = "M1911"; Ammo = 7; Reserve = 14; ReloadRemaining = 0.0f } |]
+            [| { WeaponName = "Kar98k"; Ammo = 3; Reserve = 15; ReloadRemaining = 0.0f; Heat = 0.0f }
+               { WeaponName = "M1911"; Ammo = 7; Reserve = 14; ReloadRemaining = 0.0f; Heat = 0.0f } |]
         let withKit active switchTo switchRemaining =
             { TestKit.onlinePlayer 1 "Local" Allies world.Player.Position with
                 Slots = kit

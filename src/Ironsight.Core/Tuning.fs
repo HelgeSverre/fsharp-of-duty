@@ -45,6 +45,17 @@ module Tuning =
     let BloomDecayPerSecond = 3.0f
     let BloomMax = 0.045f
     let BloomPerShot = 0.32f
+
+    /// Rounds a belt-fed gun puts out to go from cold to glowing.
+    let OverheatShots = 100.0f
+    /// Fraction of full heat shed per second while not firing.
+    let HeatCoolPerSecond = 0.08f
+    /// Ticks of extra dwell between rounds at full heat. The weapon clock runs
+    /// at the tick rate, so a hot gun can only be slowed in whole ticks — the
+    /// minigun's rated cooldown is already one tick, and anything less than a
+    /// whole tick of stretch would round straight back to its rated rate.
+    /// Nineteen puts a glowing gun at three rounds a second.
+    let MaxHeatExtraTicks = 19.0f
     let MovementSpreadMultiplier = 1.6f
     // Stance accuracy bonus applies to the whole cone (base spread + bloom).
     let CrouchSpreadMultiplier = 0.75f
@@ -380,7 +391,8 @@ module Tuning =
           InMag = weapon.MagSize
           Reserve = weapon.MagSize * magazines
           BurstIx = 0
-          Bloom = 0.0f }
+          Bloom = 0.0f
+          Heat = 0.0f }
 
 /// Everything derivable about a weapon from its stats, in one place. The
 /// website's arsenal endpoint and the in-game loadout picker both render this,

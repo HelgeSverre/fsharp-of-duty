@@ -179,6 +179,7 @@ float noise(vec2 p) {
     vec2 i = floor(p), f = fract(p); f = f*f*(3.0-2.0*f);
     return mix(mix(hash(i), hash(i+vec2(1,0)), f.x), mix(hash(i+vec2(0,1)), hash(i+vec2(1,1)), f.x), f.y);
 }
+uniform float uHeatGlow;
 vec3 materialColor() {
     // Project the procedural pattern along the dominant face axis. Using xz
     // everywhere made vertical walls collapse into single-colour stripes.
@@ -239,6 +240,13 @@ void main() {
         shadow = mix(0.34, 1.0, visibility / 9.0);
     }
     vec3 color = materialColor() * (ambient + diffuse * (1.0 - ambient) * shadow);
+    // Barrel heat. Viewmodel metal only, and only forward of the receiver, so
+    // the grips and the feed box stay cold while the barrels run orange.
+    if (uViewmodel == 1 && uHeatGlow > 0.0 && vMaterial == 6) {
+        float front = smoothstep(-0.45, -0.85, vWorld.z);
+        float glow = uHeatGlow * uHeatGlow * front;
+        color = mix(color, vec3(1.0, 0.28, 0.05), clamp(glow, 0.0, 0.92));
+    }
     if (uViewmodel == 0) {
         float mark = 0.0;
         for (int i = 0; i < uImpactCount; ++i) {

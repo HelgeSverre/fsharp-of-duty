@@ -42,7 +42,12 @@ type WeaponSlot =
       InMag: int
       Reserve: int
       BurstIx: int
-      Bloom: float32 }
+      Bloom: float32
+      /// Barrel heat, 0 to 1. Only belt-fed guns build it; on those it stretches
+      /// the gap between rounds, so sustained fire bogs the gun down instead of
+      /// running forever. Replicated, because the server is the authority on
+      /// how fast a gun is currently firing.
+      Heat: float32 }
 
 type Stance = Standing | Crouched | Prone
 

@@ -29,6 +29,17 @@ module AudioSynth =
             let body = MathF.Sin(MathF.Tau * (if deep then 72.0f else 96.0f) * time) * MathF.Exp(-time * 13.0f)
             MathF.Tanh((transient * 1.35f + body * 0.58f) * 1.5f) * 0.72f)
 
+    /// The minigun's individual round: darker and shorter than a rifle's, with
+    /// a hard mechanical knock in front of a low body that is gone before the
+    /// next round leaves. A long, soft sample stacked sixty deep a second is
+    /// what turns a minigun into a bee swarm; this stays a series of thumps.
+    let minigunShot () =
+        render 0.12f 5501 (fun time white ->
+            let knock = white * MathF.Exp(-time * 120.0f)
+            let body = MathF.Sin(MathF.Tau * 54.0f * time) * MathF.Exp(-time * 34.0f)
+            let rotor = MathF.Sin(MathF.Tau * 128.0f * time) * MathF.Exp(-time * 60.0f)
+            MathF.Tanh((knock * 1.6f + body * 0.9f + rotor * 0.35f) * 1.7f) * 0.8f)
+
     /// The M1 Garand's en-bloc clip ejecting: a bright metallic ring of
     /// inharmonic partials over a short noise transient.
     let garandPing () =

@@ -300,33 +300,38 @@ module Guns =
                // Rear sight ladder.
                MeshGen.box (Vector3(0.06f, 0.06f, 0.03f)) Metal |> placed (Vector3(0.0f, 0.155f, -0.24f)) |]
 
-    let private minigun =
-        // Six barrels on a ring around the spin axis, a slab receiver, a
-        // feed chute to the hip box, and spade grips at the back.
+    // The barrel cluster is kept apart from the rest so the viewmodel can spin
+    // it. Everything else about the gun is static.
+    let private minigunBarrels =
         let barrel index =
             let angle = float32 index * MathF.Tau / 6.0f
             MeshGen.cylinder 8 0.026f 0.86f Metal
             |> placed (Vector3(MathF.Cos angle * 0.075f, 0.06f + MathF.Sin angle * 0.075f, -0.92f))
+        MeshGen.union [| for index in 0..5 -> barrel index |]
+
+    let private minigunBody =
+        // A slab receiver, a feed chute to the hip box, and spade grips at the
+        // back. The clamp rings ride the static body, not the spinning cluster.
         MeshGen.union
-            [| yield! [ for index in 0..5 -> barrel index ]
-               // Barrel clamp rings, fore and aft of the cluster.
-               yield MeshGen.lathe 12 [| Vector2(0.088f, -0.04f); Vector2(0.105f, 0.0f); Vector2(0.088f, 0.04f) |] Metal
-                     |> placed (Vector3(0.0f, 0.06f, -1.28f))
-               yield MeshGen.lathe 12 [| Vector2(0.086f, -0.04f); Vector2(0.100f, 0.0f); Vector2(0.086f, 0.04f) |] Metal
-                     |> placed (Vector3(0.0f, 0.06f, -0.62f))
+            [| MeshGen.lathe 12 [| Vector2(0.088f, -0.04f); Vector2(0.105f, 0.0f); Vector2(0.088f, 0.04f) |] Metal
+               |> placed (Vector3(0.0f, 0.06f, -1.28f))
+               MeshGen.lathe 12 [| Vector2(0.086f, -0.04f); Vector2(0.100f, 0.0f); Vector2(0.086f, 0.04f) |] Metal
+               |> placed (Vector3(0.0f, 0.06f, -0.62f))
                // Receiver housing the rotor, and the motor bulge on its flank.
-               yield MeshGen.box (Vector3(0.24f, 0.26f, 0.44f)) Metal |> placed (Vector3(0.0f, 0.05f, -0.28f))
-               yield MeshGen.box (Vector3(0.14f, 0.16f, 0.22f)) Metal |> placed (Vector3(0.15f, 0.05f, -0.30f))
+               MeshGen.box (Vector3(0.24f, 0.26f, 0.44f)) Metal |> placed (Vector3(0.0f, 0.05f, -0.28f))
+               MeshGen.box (Vector3(0.14f, 0.16f, 0.22f)) Metal |> placed (Vector3(0.15f, 0.05f, -0.30f))
                // Flexible feed chute down into the ammo box on the hip.
-               yield MeshGen.box (Vector3(0.09f, 0.09f, 0.26f)) Metal |> MeshGen.rotateX -0.55f
-                     |> placed (Vector3(-0.13f, -0.10f, -0.16f))
-               yield MeshGen.box (Vector3(0.22f, 0.24f, 0.20f)) Metal |> placed (Vector3(-0.17f, -0.24f, -0.02f))
+               MeshGen.box (Vector3(0.09f, 0.09f, 0.26f)) Metal |> MeshGen.rotateX -0.55f
+               |> placed (Vector3(-0.13f, -0.10f, -0.16f))
+               MeshGen.box (Vector3(0.22f, 0.24f, 0.20f)) Metal |> placed (Vector3(-0.17f, -0.24f, -0.02f))
                // Spade grips: crossbar with a handle at each end.
-               yield MeshGen.box (Vector3(0.30f, 0.05f, 0.06f)) Metal |> placed (Vector3(0.0f, 0.02f, 0.06f))
-               yield MeshGen.cylinder 8 0.028f 0.20f Wood |> MeshGen.rotateX (MathF.PI * 0.5f)
-                     |> placed (Vector3(0.13f, -0.04f, 0.12f))
-               yield MeshGen.cylinder 8 0.028f 0.20f Wood |> MeshGen.rotateX (MathF.PI * 0.5f)
-                     |> placed (Vector3(-0.13f, -0.04f, 0.12f)) |]
+               MeshGen.box (Vector3(0.30f, 0.05f, 0.06f)) Metal |> placed (Vector3(0.0f, 0.02f, 0.06f))
+               MeshGen.cylinder 8 0.028f 0.20f Wood |> MeshGen.rotateX (MathF.PI * 0.5f)
+               |> placed (Vector3(0.13f, -0.04f, 0.12f))
+               MeshGen.cylinder 8 0.028f 0.20f Wood |> MeshGen.rotateX (MathF.PI * 0.5f)
+               |> placed (Vector3(-0.13f, -0.04f, 0.12f)) |]
+
+    let private minigun = MeshGen.union [| minigunBody; minigunBarrels |]
 
     /// Every weapon by name, so callers can iterate the set without repeating
     /// the list. `forWeapon` falls back to the Kar98k for anything unlisted.
@@ -383,3 +388,21 @@ module Guns =
     let forWeapon name =
         let arms = if name = "M1911" || name = "Luger P08" then pistolArms else rifleArms
         MeshGen.union [| meshFor name; arms |]
+
+    /// The same viewmodel with any rotating part turned to `spin` radians about
+    /// the bore. Only the minigun has one; everything else ignores the angle.
+    let forWeaponSpun name (spin: float32) =
+        match name with
+        | "M134 Minigun" ->
+            let axis = 0.06f
+            let spun =
+                minigunBarrels
+                |> MeshGen.transform (
+                    Matrix4x4.CreateTranslation(0.0f, -axis, 0.0f)
+                    * Matrix4x4.CreateRotationZ spin
+                    * Matrix4x4.CreateTranslation(0.0f, axis, 0.0f))
+            MeshGen.union [| minigunBody; spun; rifleArms |]
+        | _ -> forWeapon name
+
+    /// Whether a weapon's viewmodel has a part that turns while it fires.
+    let spins name = name = "M134 Minigun"

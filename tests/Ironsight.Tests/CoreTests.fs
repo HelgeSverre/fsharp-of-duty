@@ -221,6 +221,42 @@ module CoreTests =
         Assert.True(maxBloom > firstShotBloom)
 
     [<Fact>]
+    let ``a belt-fed gun overheats into a crawl and cools back down`` () =
+        // Holding the trigger on the minigun has to stop being a hose. The
+        // ceiling is the point of the weapon being fun rather than final.
+        let fire ticks (slot: WeaponSlot) =
+            let mutable rng = Rng.create 23UL
+            let mutable current = slot
+            let mutable shots = 0
+            for _ in 1..ticks do
+                let struct (next, requests) = Weapons.step Tuning.TickDuration 0.0f Standing true false 0.0f &rng current
+                shots <- shots + requests.Length
+                current <- next
+            shots, current
+        let cold = Tuning.weaponSlot Tuning.minigun 2
+        // The opening second is the hose: it starts at the rated 60 rounds a
+        // second and is already stepping down by the end of it.
+        let opening, _ = fire Tuning.TickRate cold
+        Assert.InRange(opening, 25, Tuning.TickRate)
+        // Ten seconds of held trigger: the barrels are hot and the rate has
+        // settled well below rated, so the gun is no longer a hose.
+        let _, hot = fire (Tuning.TickRate * 10) cold
+        Assert.True(hot.Heat > 0.4f, $"expected hot barrels, heat was {hot.Heat}")
+        let sustained, _ = fire Tuning.TickRate hot
+        Assert.True(sustained * 3 < opening, $"hot gun still fired {sustained} of {opening} rounds")
+        // Off the trigger it recovers, and is cold again inside twenty seconds.
+        let mutable rng = Rng.create 29UL
+        let mutable cooling = hot
+        for _ in 1 .. Tuning.TickRate * 20 do
+            let struct (next, _) = Weapons.step Tuning.TickDuration 0.0f Standing false false 0.0f &rng cooling
+            cooling <- next
+        Assert.Equal(0.0f, cooling.Heat)
+        // And nothing else in the arsenal is affected by any of this.
+        for weapon in Tuning.onlineWeapons |> Array.filter (Weapons.overheats >> not) do
+            let _, after = fire (Tuning.TickRate * 3) (Tuning.weaponSlot weapon 4)
+            Assert.Equal(0.0f, after.Heat)
+
+    [<Fact>]
     let ``firing while moving widens the spread`` () =
         let maxSpread speed =
             let mutable rng = Rng.create 17UL

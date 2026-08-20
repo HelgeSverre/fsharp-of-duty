@@ -981,6 +981,29 @@ module ServerTests =
         | other -> failwith $"server weapon should be reloading, was {other}"
 
     [<Fact>]
+    let ``barrel heat reaches the wire so the client predicts the same rate`` () =
+        // Heat decides how fast a belt-fed gun cycles. If it does not reach the
+        // client, prediction runs a cold gun's rate against the server's hot
+        // one and every held burst mispredicts.
+        let host = MatchHost(TeamDeathmatch, TestKit.streetArenaWithSpawns "Heat range")
+        let allyId, _ = host.TryAddPlayer("Ally").Value
+        let axisId, _ = host.TryAddPlayer("Axis").Value
+        host.SetLoadout(axisId, Tuning.minigun.Name)
+        TestKit.readyUp host [ allyId; axisId ]
+        // Two seconds of held trigger is plenty to get the barrels warm.
+        for tick in 1 .. Tuning.TickRate * 2 do
+            TestKit.applyCustom (int64 tick) 0.0f 0.0f 1 host axisId
+            host.AdvanceTick()
+        let state = host.Snapshot()
+        let served = state.Players[axisId].Slots[state.Players[axisId].Active]
+        Assert.Equal(Tuning.minigun.Name, served.Class.Name)
+        Assert.True(served.Heat > 0.0f, "the server never heated the gun")
+        use document = System.Text.Json.JsonDocument.Parse(Protocol.serialize (Protocol.snapshot state))
+        let parsed = Ironsight.Shell.SnapshotWire.parseSnapshot document.RootElement
+        let wire = parsed.Players |> Array.find (fun player -> player.Name = "Axis")
+        Assert.Equal(served.Heat, wire.Slots[wire.Active].Heat)
+
+    [<Fact>]
     let ``a kill streak reaches the wire and is cleared at round end`` () =
         let host = MatchHost(TeamDeathmatch, TestKit.streetArenaWithSpawns "Streak range")
         let allyId, _ = host.TryAddPlayer("Ally").Value

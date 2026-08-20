@@ -29,7 +29,11 @@ type WeaponSlotSnapshot =
       // Seconds left on the reload, 0 when not reloading. Without it the client
       // rebuilds every online weapon slot as Ready and the reload bar, the
       // viewmodel and the reload SFX all go missing.
-      reloadRemaining: float32 }
+      reloadRemaining: float32
+      // Barrel heat, 0-1. Belt-fed guns fire slower the hotter they are, and
+      // the server is the authority on that — without it the client predicts a
+      // cold gun's rate against a hot one's and every burst mispredicts.
+      heat: float32 }
 
 [<CLIMutable>]
 type PlayerSnapshot =
@@ -251,7 +255,8 @@ module Protocol =
                         { weapon = slot.Class.Name
                           ammo = slot.InMag
                           reserve = slot.Reserve
-                          reloadRemaining = (match slot.State with Reloading remaining -> Units.raw remaining | _ -> 0.0f) })
+                          reloadRemaining = (match slot.State with Reloading remaining -> Units.raw remaining | _ -> 0.0f)
+                          heat = slot.Heat })
                   active = player.Active
                   switchTo = (match player.Slots[player.Active].State with Switching(incoming, _) -> incoming | _ -> -1)
                   switchRemaining = (match player.Slots[player.Active].State with Switching(_, remaining) -> Units.raw remaining | _ -> 0.0f)

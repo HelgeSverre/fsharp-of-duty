@@ -44,6 +44,12 @@ type Renderer(gl: GL) =
     let mutable gunIndexBuffer = 0u
     let mutable gunIndexCount = 0u
     let mutable loadedGun = ""
+    // Rotor state for guns whose barrels turn: the angle currently uploaded,
+    // and the rate it is spinning at. Spin-up and spin-down are what sell a
+    // minigun, so the rate eases toward its target rather than snapping.
+    let mutable gunSpin = 0.0f
+    let mutable gunSpinRate = 0.0f
+    let mutable lastSpinStamp = 0L
     let mutable loadedLevel = ""
     let mutable loadedLevelRevision = -1
     let mutable settings = Settings.defaults
@@ -108,10 +114,12 @@ type Renderer(gl: GL) =
         loadedLevel <- level.Name
         loadedLevelRevision <- level.Revision
 
-    let uploadGun name =
-        let mesh = Guns.forWeapon name
+    let uploadGun name spin =
+        let mesh = Guns.forWeaponSpun name spin
         let vertices = GlUtil.flattenVertices mesh.Vertices
-        uploadMesh gunVao gunVertexBuffer gunIndexBuffer vertices mesh.Indices BufferUsageARB.StaticDraw
+        // A spinning gun re-uploads every frame, so its buffer is not static.
+        let usage = if Guns.spins name then BufferUsageARB.StreamDraw else BufferUsageARB.StaticDraw
+        uploadMesh gunVao gunVertexBuffer gunIndexBuffer vertices mesh.Indices usage
         gunIndexCount <- uint32 mesh.Indices.Length
         loadedGun <- name
 
@@ -345,9 +353,25 @@ type Renderer(gl: GL) =
                     Grenades.predictPath world.Level (Tuning.TickRate * 2) world.Player
                 else [||])
             particles.Render viewProjection
-            let activeClass = world.Player.Slots[world.Player.Active].Class
+            let activeSlot = world.Player.Slots[world.Player.Active]
+            let activeClass = activeSlot.Class
             let weaponName = activeClass.Name
-            if loadedGun <> weaponName then uploadGun weaponName
+            // Between rounds the weapon sits in Cooling, so on a gun that
+            // cycles this fast it reads as "the trigger is down".
+            let spinning = Guns.spins weaponName && (match activeSlot.State with Cooling _ -> true | _ -> false)
+            if Guns.spins weaponName then
+                let now = Stopwatch.GetTimestamp()
+                let elapsed =
+                    if lastSpinStamp = 0L then 0.0f
+                    else min 0.1f (float32 (float (now - lastSpinStamp) / float Stopwatch.Frequency))
+                lastSpinStamp <- now
+                gunSpinRate <- gunSpinRate + ((if spinning then 46.0f else 0.0f) - gunSpinRate) * min 1.0f (elapsed * 4.0f)
+                gunSpin <- (gunSpin + gunSpinRate * elapsed) % MathF.Tau
+                uploadGun weaponName gunSpin
+            elif loadedGun <> weaponName then
+                gunSpinRate <- 0.0f
+                lastSpinStamp <- 0L
+                uploadGun weaponName 0.0f
             let lookingThroughScope = activeClass.Kind = SniperRifle && world.Player.Ads >= 0.72f
             if gunIndexCount > 0u && not lookingThroughScope && not deathWatching then
                 // Particle rendering binds its own shader. Rebind the level/
@@ -408,6 +432,9 @@ type Renderer(gl: GL) =
                 setMatrix program "uLightViewProjection" gunMatrix
                 uniform3 program "uCamera" Vector3.Zero
                 uniform1i program "uViewmodel" 1
+                // Barrels glow as the gun heats. Only the front end: the
+                // receiver and the grips never get near it.
+                uniform1f program "uHeatGlow" activeSlot.Heat
                 uniform1i program "uImpactCount" 0
                 gl.Disable EnableCap.CullFace
                 gl.BindVertexArray gunVao
