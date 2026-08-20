@@ -35,7 +35,17 @@ module IntegrationTests =
         // also pins that chat does not depend on the match having started.
         // Every layer passes in isolation; only a real socket covers the seam
         // between SendChat's queue, the server dispatch and the snapshot pump.
-        let app, uri = startServer ()
+        //
+        // Honours IRONSIGHT_SMOKE_SERVER so the same scenario can confirm a
+        // deployment carries chat at all: a server built before chat existed
+        // drops the message on its dispatch's catch-all arm and says nothing,
+        // which is indistinguishable from a client bug from the outside.
+        let app, uri =
+            match remoteServer () with
+            | Some remote -> None, remote
+            | None ->
+                let started, local = startServer ()
+                Some started, local
         try
             MatchScript.run uri TeamDeathmatch [
                 Join "Alpha"
@@ -60,7 +70,7 @@ module IntegrationTests =
                     |> fun state -> state.Chat |> List.exists (fun item -> item.Text.Contains "hello"))
             ]
         finally
-            app.StopAsync().GetAwaiter().GetResult()
+            app |> Option.iter (fun started -> started.StopAsync().GetAwaiter().GetResult())
 
     [<Fact>]
     [<Trait("Category", Integration)>]
