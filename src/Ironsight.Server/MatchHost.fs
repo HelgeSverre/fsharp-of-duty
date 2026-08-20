@@ -5,8 +5,12 @@ open System.Numerics
 open System.Text.Json
 open Ironsight
 
-type MatchHost(mode: GameMode, ?matchLevel: Level, ?disconnectGrace: TimeSpan, ?opKey: string) =
+type MatchHost(mode: GameMode, ?matchLevel: Level, ?disconnectGrace: TimeSpan, ?opKey: string,
+               ?scoreLimit: int, ?timeLimit: float32<s>, ?maxPlayers: int) =
     let gate = obj ()
+    // Per-room rules. Omitting them gives what every room ran on before
+    // server.json existed, so the defaults are the old hardcoded values.
+    let maxPlayers = defaultArg maxPlayers ServerConfig.DefaultMaxPlayers
     // How long a disconnected player's slot (and session token) is reserved
     // for resume. Overridable so tests need not wait out wall-clock time.
     let disconnectGrace = defaultArg disconnectGrace (TimeSpan.FromSeconds 30.0)
@@ -16,7 +20,12 @@ type MatchHost(mode: GameMode, ?matchLevel: Level, ?disconnectGrace: TimeSpan, ?
     let opKey = defaultArg opKey (Environment.GetEnvironmentVariable "IRONSIGHT_OP_KEY")
     let mutable level = defaultArg matchLevel (Sim.createTrainingWorld 0xF5A4D3UL).Level
     let mutable nextPlayerId = 1
-    let mutable state = { Multiplayer.create mode with LevelName = level.Name }
+    let mutable state =
+        let baseline = Multiplayer.create mode
+        { baseline with
+            LevelName = level.Name
+            ScoreLimit = defaultArg scoreLimit baseline.ScoreLimit
+            TimeLimit = defaultArg timeLimit baseline.TimeLimit }
 
     /// Replace one player's entry in the authoritative state.
     let setPlayer id player =
@@ -201,7 +210,7 @@ type MatchHost(mode: GameMode, ?matchLevel: Level, ?disconnectGrace: TimeSpan, ?
                     | _ -> None)
             match resumed with
             | Some value -> Some value
-            | None when state.Players.Count >= 16 -> None
+            | None when state.Players.Count >= maxPlayers -> None
             | None ->
                 let id = EntityId nextPlayerId
                 nextPlayerId <- nextPlayerId + 1
@@ -618,3 +627,10 @@ type MatchHost(mode: GameMode, ?matchLevel: Level, ?disconnectGrace: TimeSpan, ?
         lock gate (fun () -> enqueue recipient event)
 
     member _.Snapshot() = lock gate (fun () -> state)
+
+    /// Room size, for the browser and for the room-picking fallback.
+    member _.Capacity = maxPlayers
+
+    /// Whether another player would be admitted right now. Reserved slots of
+    /// disconnected players still count, exactly as TryAddPlayer counts them.
+    member _.HasRoom = lock gate (fun () -> state.Players.Count < maxPlayers)

@@ -60,6 +60,9 @@ type MatchState =
 module Multiplayer =
     let scoreLimit = function FreeForAll -> 30 | TeamDeathmatch -> 75
 
+    /// Defaults match what every room ran on before rooms were configurable.
+    let defaultTimeLimit = Units.seconds 600.0f
+
     let create mode =
         { Tick = 0L
           Mode = mode
@@ -73,7 +76,7 @@ module Multiplayer =
           AlliesScore = 0
           AxisScore = 0
           ScoreLimit = scoreLimit mode
-          TimeLimit = Units.seconds 600.0f
+          TimeLimit = defaultTimeLimit
           Rng = Rng.create 0xC0D2F5UL }
 
     /// The one filter for player-supplied text: trims, drops control scalars

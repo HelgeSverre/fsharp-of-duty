@@ -14,7 +14,10 @@ type WelcomeMessage =
       tickRate: int
       snapshotRate: int
       level: string
-      mapHash: string }
+      mapHash: string
+      /// Which room the joiner actually landed in. A client that asked by mode
+      /// rather than by id would otherwise have no way to know.
+      room: string }
 
 [<CLIMutable>]
 type PlayerSnapshot =
@@ -98,7 +101,14 @@ type LeaderboardPlayer =
 
 [<CLIMutable>]
 type LeaderboardRoom =
-    { mode: string
+    { /// Stable key a client puts in its hello to join this exact room.
+      id: string
+      /// Operator-chosen label; what the server browser lists.
+      name: string
+      /// Per room now that rooms size independently; the response still
+      /// carries capacityPerRoom for clients that predate this field.
+      capacity: int
+      mode: string
       phase: string
       alliesScore: int
       axisScore: int
@@ -168,7 +178,7 @@ module Protocol =
 
     let serialize<'a> (value: 'a) = JsonSerializer.SerializeToUtf8Bytes(value, jsonOptions)
 
-    let welcome (EntityId playerId) token levelName mapHash =
+    let welcome (EntityId playerId) token levelName mapHash room =
         { ``type`` = "welcome"
           version = Version
           playerId = playerId
@@ -176,15 +186,16 @@ module Protocol =
           tickRate = Tuning.TickRate
           snapshotRate = 20
           level = levelName
-          mapHash = mapHash }
+          mapHash = mapHash
+          room = room }
 
     /// One joiner's welcome. The level must be the one that host runs *now*,
     /// not the one the process booted with: /map swaps it per host. A swapped
     /// level is always a builtin the client resolves by name, so it needs no
     /// hash — and only the boot map's bytes are served by /maps/{hash}, so
     /// advertising its hash would send the joiner downloading the wrong map.
-    let welcomeFor playerId token (bootLevel: string) (bootHash: string) (state: MatchState) =
-        welcome playerId token state.LevelName (if state.LevelName = bootLevel then bootHash else "")
+    let welcomeFor playerId token (bootLevel: string) (bootHash: string) room (state: MatchState) =
+        welcome playerId token state.LevelName (if state.LevelName = bootLevel then bootHash else "") room
 
     let snapshot state =
         let players =
@@ -279,10 +290,12 @@ module Protocol =
     let snapshotFor viewer state =
         snapshot { state with Events = state.Events |> List.filter (fun event -> event.Recipient = None || event.Recipient = Some viewer) }
 
-    let leaderboard states =
+    /// Rooms arrive as (id, name, capacity, state) so the response can name
+    /// them; the server browser lists one row per entry.
+    let leaderboard (rooms: (string * string * int * MatchState) array) =
         let rooms =
-            states
-            |> Array.map (fun state ->
+            rooms
+            |> Array.map (fun (roomId, roomName, capacity, state) ->
                 let players =
                     state.Players
                     |> Map.toArray
@@ -298,7 +311,10 @@ module Protocol =
                           deaths = player.Deaths
                           alive = player.Alive
                           weapon = player.Weapon.Class.Name })
-                { mode = string state.Mode
+                { id = roomId
+                  name = roomName
+                  capacity = capacity
+                  mode = string state.Mode
                   phase = string state.Phase
                   alliesScore = state.AlliesScore
                   axisScore = state.AxisScore
@@ -306,7 +322,9 @@ module Protocol =
                   players = players })
         { generatedAt = DateTimeOffset.UtcNow
           persistence = "Stats are in-memory and reset on redeploy."
-          capacityPerRoom = 16
+          // Legacy single number for clients that predate per-room capacity;
+          // the largest room is the least wrong answer for a mixed server.
+          capacityPerRoom = if Array.isEmpty rooms then ServerConfig.DefaultMaxPlayers else rooms |> Array.map (fun room -> room.capacity) |> Array.max
           rooms = rooms }
 
     let arsenal () =

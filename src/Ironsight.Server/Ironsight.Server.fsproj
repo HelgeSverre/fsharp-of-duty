@@ -6,6 +6,7 @@
     <ProjectReference Include="../Ironsight.Core/Ironsight.Core.fsproj" />
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="ServerConfig.fs" />
     <Compile Include="Protocol.fs" />
     <Compile Include="MatchHost.fs" />
     <Compile Include="Commands.fs" />

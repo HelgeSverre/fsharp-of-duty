@@ -146,14 +146,18 @@ module ClientTests =
         let official = { Name = "Official"; Url = Uri "wss://fsharp-of-duty.fly.dev/play" }
         let community = { Name = "Community"; Url = Uri "ws://lan.example:8080/play" }
         let rows =
-            [| { Server = official; Mode = TeamDeathmatch; Phase = "Playing"; Players = 3; Capacity = 16; PingMs = 42; Online = true }
-               { Server = official; Mode = FreeForAll; Phase = "Waiting"; Players = 1; Capacity = 16; PingMs = 42; Online = true }
-               { Server = community; Mode = TeamDeathmatch; Phase = ""; Players = 0; Capacity = 0; PingMs = 0; Online = false } |]
+            [| { Server = official; RoomId = "tdm"; RoomName = "Paintball TDM"; Mode = TeamDeathmatch; Phase = "Playing"; Players = 3; Capacity = 16; PingMs = 42; Online = true }
+               { Server = official; RoomId = "ffa"; RoomName = "Omaha FFA"; Mode = FreeForAll; Phase = "Waiting"; Players = 1; Capacity = 16; PingMs = 42; Online = true }
+               { Server = community; RoomId = ""; RoomName = ""; Mode = TeamDeathmatch; Phase = ""; Players = 0; Capacity = 0; PingMs = 0; Online = false } |]
         let listed = { StartMenu.initial with Page = ServerList; ServerRows = Some rows }
         let items = StartMenu.items listed
         Assert.Equal(4, items.Length)
-        // The row label is the directory's display name, not the raw host.
-        Assert.Contains("OFFICIAL", items[0])
+        // Rooms are named by the server, so ten rooms on one host do not all
+        // render as the same line. A server that names no room falls back to
+        // the directory's display name.
+        Assert.Contains("PAINTBALL TDM", items[0])
+        Assert.Contains("OMAHA FFA", items[1])
+        Assert.Contains("COMMUNITY", items[2])
         // Columns are structured cells drawn at fixed x offsets, not padded text.
         let cells = (StartMenu.serverCells listed).Value
         Assert.Equal(3, cells.Length)
@@ -169,9 +173,9 @@ module ClientTests =
         Assert.Equal(FreeForAll, ffaLoadout.OnlineMode)
         Assert.Equal(official.Url, ffaLoadout.OnlineServer)
         let struct (_, ffaAction) = StartMenu.update 1280 720 activate { ffaLoadout with Selected = 1 }
-        Assert.Equal(Some(StartOnline("Thompson", FreeForAll, official.Url)), ffaAction)
+        Assert.Equal(Some(StartOnline("Thompson", FreeForAll, "ffa", official.Url)), ffaAction)
         let struct (_, onlineAction) = StartMenu.update 1280 720 activate { ffaLoadout with Selected = 3 }
-        Assert.Equal(Some(StartOnline("Kar98k Sniper", FreeForAll, official.Url)), onlineAction)
+        Assert.Equal(Some(StartOnline("Kar98k Sniper", FreeForAll, "ffa", official.Url)), onlineAction)
 
         let struct (editing, _) = StartMenu.update 1280 720 activate (StartMenu.create "Old")
         let struct (edited, _) =
@@ -343,7 +347,7 @@ module ClientTests =
         let server index = { Name = $"S{index}"; Url = Uri $"ws://server-{index}.example:8080/play" }
         let rows =
             Array.init 14 (fun index ->
-                { Server = server index; Mode = TeamDeathmatch; Phase = "Waiting"; Players = 0; Capacity = 16; PingMs = 10; Online = true })
+                { Server = server index; RoomId = $"r{index}"; RoomName = $"Room {index}"; Mode = TeamDeathmatch; Phase = "Waiting"; Players = 0; Capacity = 16; PingMs = 10; Online = true })
         let listed = { StartMenu.initial with Page = ServerList; ServerRows = Some rows }
         // 14 rows + BACK = 15 items; the window shows MaxVisibleRows of them.
         Assert.Equal(15, (StartMenu.items listed).Length)

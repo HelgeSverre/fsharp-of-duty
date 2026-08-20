@@ -34,6 +34,9 @@ type StartMenuState =
       PlayerName: string
       /// Room chosen on the server list; the mode sent in the online hello.
       OnlineMode: GameMode
+      /// Id of the room chosen on the server list, blank against a server that
+      /// does not name its rooms — then the mode above is what picks one.
+      OnlineRoom: string
       /// Server chosen on the server list; where the online hello connects.
       OnlineServer: Uri
       /// None until the directory probe answers; one row per server room.
@@ -94,7 +97,7 @@ module MenuNav =
 
 type StartMenuAction =
     | StartOffline of map: string
-    | StartOnline of weaponName: string * mode: GameMode * server: Uri
+    | StartOnline of weaponName: string * mode: GameMode * room: string * server: Uri
     | OpenSettings
     | ExitGame
 
@@ -140,6 +143,7 @@ module StartMenu =
           FirstVisible = 0
           PlayerName = if System.String.IsNullOrWhiteSpace sanitized then "Soldier" else sanitized
           OnlineMode = TeamDeathmatch
+          OnlineRoom = ""
           OnlineServer = Uri ServerDirectory.DefaultServer
           ServerRows = None }
 
@@ -164,6 +168,12 @@ module StartMenu =
         |> Array.map (fun alias ->
             alias, (Ironsight.ProcGen.Levels.specByAlias alias).Value.Name.ToUpperInvariant())
 
+    /// What a browser row is called. The room name when the server reports one
+    /// — otherwise ten rooms on one server would render as ten identical
+    /// lines — falling back to the server name for servers without rooms.
+    let rowLabel (row: ServerRow) =
+        if String.IsNullOrWhiteSpace row.RoomName then row.Server.Name else row.RoomName
+
     let items state =
         match state.Page with
         | Main -> mainRows |> Array.map (mainLabel state)
@@ -174,7 +184,7 @@ module StartMenu =
             // drive selection count and keyboard flow; the HUD draws server
             // rows from serverCells below.
             match state.ServerRows with
-            | Some rows -> Array.append (rows |> Array.map (fun row -> row.Server.Name.ToUpperInvariant())) [| "BACK" |]
+            | Some rows -> Array.append (rows |> Array.map (fun row -> (rowLabel row).ToUpperInvariant())) [| "BACK" |]
             | None -> [| "CONTACTING SERVERS..."; "BACK" |]
         | OnlineLoadout ->
             Array.append (Tuning.onlineWeapons |> Array.map (fun weapon -> weapon.Name.ToUpperInvariant())) [| "BACK" |]
@@ -193,7 +203,7 @@ module StartMenu =
             rows
             |> Array.map (fun row ->
                 let host =
-                    let value = row.Server.Name
+                    let value = rowLabel row
                     if value.Length > 26 then value.Substring(0, 26) else value
                 if row.Online then
                     [| columnX 0, host
@@ -286,11 +296,11 @@ module StartMenu =
                 if index < rows.Length then
                     match Array.tryItem index rows with
                     | Some row when row.Online ->
-                        struct({ next with Page = OnlineLoadout; Selected = 0; OnlineMode = row.Mode; OnlineServer = row.Server.Url }, None)
+                        struct({ next with Page = OnlineLoadout; Selected = 0; OnlineMode = row.Mode; OnlineRoom = row.RoomId; OnlineServer = row.Server.Url }, None)
                     | _ -> struct(next, None) // offline row: nothing to join
                 elif state.ServerRows.IsNone && index = 0 then
                     struct(next, None) // still contacting servers
                 else struct({ next with Page = Main; Selected = 0 }, None)
             | OnlineLoadout, index when index < Tuning.onlineWeapons.Length ->
-                struct(next, Some(StartOnline(Tuning.onlineWeapons[index].Name, state.OnlineMode, state.OnlineServer)))
+                struct(next, Some(StartOnline(Tuning.onlineWeapons[index].Name, state.OnlineMode, state.OnlineRoom, state.OnlineServer)))
             | OnlineLoadout, _ -> struct({ next with Page = ServerList; Selected = 0 }, None)

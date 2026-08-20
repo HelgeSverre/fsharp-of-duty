@@ -253,6 +253,67 @@ module ServerTests =
         Assert.Contains("Ally", seen)
         Assert.Contains($"tick:{state.Tick}", seen)
 
+    [<Fact>]
+    let ``a room config fills in every omitted rule`` () =
+        let rooms =
+            ServerConfig.parse Levels.paintballArena """
+            { "rooms": [ { "id": "sniper", "name": "Sniper Alley", "mode": "FreeForAll", "level": "omaha",
+                           "scoreLimit": 20, "timeLimit": 300, "maxPlayers": 8 },
+                         { "id": "bare", "mode": "TeamDeathmatch" } ] }"""
+        Assert.Equal(2, rooms.Length)
+        Assert.Equal("Sniper Alley", rooms[0].Name)
+        Assert.Equal(FreeForAll, rooms[0].Mode)
+        Assert.Equal(Levels.omahaDraw.Name, rooms[0].Level.Name)
+        Assert.Equal(20, rooms[0].ScoreLimit)
+        Assert.Equal(Units.seconds 300.0f, rooms[0].TimeLimit)
+        Assert.Equal(8, rooms[0].MaxPlayers)
+        // Everything omitted falls back to what a room ran on before rooms
+        // were configurable, and the name defaults to the id.
+        Assert.Equal("bare", rooms[1].Name)
+        Assert.Equal(Levels.paintballArena.Name, rooms[1].Level.Name)
+        Assert.Equal(Multiplayer.scoreLimit TeamDeathmatch, rooms[1].ScoreLimit)
+        Assert.Equal(Multiplayer.defaultTimeLimit, rooms[1].TimeLimit)
+        Assert.Equal(ServerConfig.DefaultMaxPlayers, rooms[1].MaxPlayers)
+
+    [<Fact>]
+    let ``a broken room config fails loudly rather than being ignored`` () =
+        // A server config that is silently dropped is an operator trap: the
+        // server would run, on rules nobody asked for.
+        let fails (json: string) = Assert.ThrowsAny<exn>(fun () -> ServerConfig.parse Levels.paintballArena json |> ignore)
+        fails """{ "rooms": [ { "id": "a", "mode": "Deathmatch" } ] }" """ |> ignore
+        fails """{ "rooms": [ { "id": "a", "mode": "TeamDeathmatch", "level": "atlantis" } ] }""" |> ignore
+        fails """{ "rooms": [ { "mode": "TeamDeathmatch" } ] }""" |> ignore
+        fails """{ "rooms": [ { "id": "dup", "mode": "TeamDeathmatch" }, { "id": "DUP", "mode": "FreeForAll" } ] }""" |> ignore
+        fails """{ "rooms": [] }""" |> ignore
+        fails "not json at all" |> ignore
+
+    [<Fact>]
+    let ``no config file leaves the two rooms this server always had`` () =
+        let rooms = ServerConfig.defaultRooms Levels.canalYard
+        Assert.Equal<string array>([| "tdm"; "ffa" |], rooms |> Array.map (fun room -> room.Id))
+        Assert.Equal<GameMode array>([| TeamDeathmatch; FreeForAll |], rooms |> Array.map (fun room -> room.Mode))
+        for room in rooms do
+            Assert.Equal(Levels.canalYard.Name, room.Level.Name)
+            Assert.Equal(ServerConfig.DefaultMaxPlayers, room.MaxPlayers)
+            Assert.Equal(Multiplayer.scoreLimit room.Mode, room.ScoreLimit)
+
+    [<Fact>]
+    let ``per-room rules govern the match they belong to`` () =
+        // A room's score limit ends its round, and its own cap is what refuses
+        // the next joiner — neither is the process-wide constant any more.
+        let host = MatchHost(TeamDeathmatch, TestKit.streetArenaWithSpawns "Rules range", scoreLimit = 1, maxPlayers = 3)
+        let allyId, _ = host.TryAddPlayer("Ally").Value
+        let axisId, _ = host.TryAddPlayer("Axis").Value
+        Assert.True(host.TryAddPlayer("Third").IsSome)
+        Assert.True(host.TryAddPlayer("Fourth").IsNone)
+        Assert.Equal(3, host.Capacity)
+        Assert.False host.HasRoom
+        TestKit.readyUp host [ allyId; axisId ]
+        Assert.Equal(Playing, host.Snapshot().Phase)
+        TestKit.rifleShot host 1L axisId allyId |> ignore
+        // One kill is the whole match at scoreLimit 1.
+        Assert.Equal(Results, host.Snapshot().Phase)
+
     let private repliesTo (host: MatchHost) playerId =
         host.Snapshot().Events
         |> List.choose (fun event ->
@@ -453,13 +514,13 @@ module ServerTests =
         let host = MatchHost(TeamDeathmatch, Levels.canalYard, opKey = "hunter2")
         let playerId, token = host.TryAddPlayer("Ally").Value
         let bootHash = "cafef00d"
-        let atBoot = Protocol.welcomeFor playerId token Levels.canalYard.Name bootHash (host.Snapshot())
+        let atBoot = Protocol.welcomeFor playerId token Levels.canalYard.Name bootHash "tdm" (host.Snapshot())
         Assert.Equal(Levels.canalYard.Name, atBoot.level)
         Assert.Equal(bootHash, atBoot.mapHash)
         Assert.True(host.TryElevate(playerId, "hunter2"))
         Commands.handleChat [ Commands.builtins ] host playerId "/map omaha"
         host.Restart()
-        let afterSwap = Protocol.welcomeFor playerId token Levels.canalYard.Name bootHash (host.Snapshot())
+        let afterSwap = Protocol.welcomeFor playerId token Levels.canalYard.Name bootHash "tdm" (host.Snapshot())
         Assert.Equal(Levels.omahaDraw.Name, afterSwap.level)
         // /maps/{hash} only ever serves the boot map's bytes, so the swapped
         // builtin must travel by name alone rather than by an unreachable hash.
@@ -650,9 +711,13 @@ module ServerTests =
         let onlineId, _ = tdm.TryAddPlayer("Public Hero", weaponName = "M1897 Trench Gun").Value
         let offlineId, _ = tdm.TryAddPlayer("Gone Already").Value
         tdm.RemovePlayer offlineId
-        let board = Protocol.leaderboard [| tdm.Snapshot(); (MatchHost FreeForAll).Snapshot() |]
+        let board = Protocol.leaderboard [| "tdm", "Team Deathmatch", 16, tdm.Snapshot(); "ffa", "Free For All", 8, (MatchHost FreeForAll).Snapshot() |]
+        // Legacy field: the largest room, for clients predating per-room capacity.
         Assert.Equal(16, board.capacityPerRoom)
         Assert.Equal(2, board.rooms.Length)
+        Assert.Equal("tdm", board.rooms[0].id)
+        Assert.Equal("Team Deathmatch", board.rooms[0].name)
+        Assert.Equal(8, board.rooms[1].capacity)
         Assert.Single(board.rooms[0].players) |> ignore
         let (EntityId expectedId) = onlineId
         Assert.Equal(expectedId, board.rooms[0].players[0].id)

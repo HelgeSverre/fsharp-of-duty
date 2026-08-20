@@ -111,6 +111,12 @@ download it from the server automatically, verified by content hash.
 `--map /path/map.ironmap` plays a custom map offline against bots, and
 `tools/MapExport.fsx` writes the built-in maps out as reference files.
 
+A server hosts Team Deathmatch and Free For All on one map by default. Drop a
+`server.json` beside it (or point `IRONSIGHT_CONFIG` at one) to host as many
+rooms as you like, each with its own map, mode, score limit, time limit and
+player cap — see [docs/MULTIPLAYER.md](docs/MULTIPLAYER.md#rooms). Rooms show up
+as separate rows in the server browser.
+
 Press `Y` in an online match to chat. A line starting with `/` is a command,
 answered to you alone; `/help` lists the ones you may run. Set `IRONSIGHT_OP_KEY`
 on the server and type `/op <key>` to unlock `/say`, `/kick`, `/map`, and

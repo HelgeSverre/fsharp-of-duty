@@ -14,15 +14,47 @@ open Microsoft.Extensions.DependencyInjection
 open Microsoft.Extensions.Hosting
 
 module Program =
-    type private MatchDirectory(level: Level, mapBytes: byte array) =
-        member val TeamDeathmatch = MatchHost(TeamDeathmatch, level)
-        member val FreeForAll = MatchHost(FreeForAll, level)
+    type private Room = { Id: string; Name: string; Host: MatchHost }
+
+    /// Every room this process hosts, built from server.json (or the two
+    /// defaults when there is no config). `level`/`mapBytes` stay the *boot*
+    /// map: /maps/{hash} serves only those bytes, and a room on any other
+    /// builtin is resolved by the client by name instead.
+    type private MatchDirectory(rooms: RoomConfig array, level: Level, mapBytes: byte array) =
+        let rooms =
+            rooms
+            |> Array.map (fun room ->
+                { Id = room.Id
+                  Name = room.Name
+                  Host =
+                    MatchHost(
+                        room.Mode,
+                        room.Level,
+                        scoreLimit = room.ScoreLimit,
+                        timeLimit = room.TimeLimit,
+                        maxPlayers = room.MaxPlayers) })
+
+        member _.Rooms = rooms
         member _.LevelName = level.Name
         member _.MapBytes = mapBytes
         member val MapHash = Ironsight.ProcGen.MapFile.hash mapBytes
 
-        member this.Leaderboard() =
-            Protocol.leaderboard [| this.TeamDeathmatch.Snapshot(); this.FreeForAll.Snapshot() |]
+        member _.TryFind(id: string) =
+            rooms |> Array.tryFind (fun room -> String.Equals(room.Id, id, StringComparison.OrdinalIgnoreCase))
+
+        /// Where a client that named no room ends up: the first room of the
+        /// mode it asked for that still has a slot. Keeps pre-room clients
+        /// working, and spills a full room into the next one of its mode.
+        member _.TryFindByMode(mode: GameMode) =
+            let ofMode = rooms |> Array.filter (fun room -> room.Host.Snapshot().Mode = mode)
+            ofMode
+            |> Array.tryFind (fun room -> room.Host.HasRoom)
+            |> Option.orElse (Array.tryHead ofMode)
+
+        member _.Leaderboard() =
+            rooms
+            |> Array.map (fun room -> room.Id, room.Name, room.Host.Capacity, room.Host.Snapshot())
+            |> Protocol.leaderboard
 
     let private receiveMessage (socket: WebSocket) (cancellationToken: CancellationToken) = task {
         let buffer = Array.zeroCreate<byte> Protocol.MaxMessageBytes
@@ -95,10 +127,17 @@ module Program =
                 let root = document.RootElement
                 match Protocol.tryString "type" root, Protocol.tryString "name" root, Protocol.tryInt64 "version" root with
                 | Some "hello", Some name, Some version when version = int64 Protocol.Version ->
-                    let host =
+                    // An explicit room id wins. Without one — every client
+                    // built before rooms existed — fall back to the requested
+                    // mode, which is how the two-room server always routed.
+                    let requestedMode =
                         match Protocol.tryString "mode" root with
-                        | Some value when String.Equals(value, "FreeForAll", StringComparison.OrdinalIgnoreCase) -> matches.FreeForAll
-                        | _ -> matches.TeamDeathmatch
+                        | Some value when String.Equals(value, "FreeForAll", StringComparison.OrdinalIgnoreCase) -> FreeForAll
+                        | _ -> TeamDeathmatch
+                    let room =
+                        Protocol.tryString "room" root
+                        |> Option.bind matches.TryFind
+                        |> Option.orElseWith (fun () -> matches.TryFindByMode requestedMode)
                     let resumeToken = Protocol.tryString "sessionToken" root
                     let weaponName = Protocol.tryString "weapon" root
                     let header name =
@@ -113,6 +152,11 @@ module Program =
                     if Bans.isBanned address then
                         do! socket.CloseAsync(WebSocketCloseStatus.PolicyViolation, "You are banned from this server.", cancellationToken)
                     else
+                    match room with
+                    | None ->
+                        do! socket.CloseAsync(WebSocketCloseStatus.PolicyViolation, "No such room on this server.", cancellationToken)
+                    | Some room ->
+                    let host = room.Host
                     match host.TryAddPlayer(name, ?weaponName = weaponName, ?sessionToken = resumeToken) with
                     | None ->
                         do! socket.CloseAsync(WebSocketCloseStatus.PolicyViolation, "The match is full.", cancellationToken)
@@ -122,7 +166,7 @@ module Program =
                     Bans.remember playerId address
                     try
                         try
-                            do! send (Protocol.welcomeFor playerId token matches.LevelName matches.MapHash (host.Snapshot())) socket cancellationToken
+                            do! send (Protocol.welcomeFor playerId token matches.LevelName matches.MapHash room.Id (host.Snapshot())) socket cancellationToken
                             let mutable connected = true
                             let mutable pendingReceive = receiveMessage socket cancellationToken
                             // The snapshot timer must keep its own cadence. Starting a
@@ -190,7 +234,11 @@ module Program =
             | None -> Ironsight.ProcGen.PaintballMap.spec
         let mapBytes = Ironsight.ProcGen.MapFile.encode matchSpec
         let matchLevel = Ironsight.ProcGen.LevelCompile.compile matchSpec
-        let matches = MatchDirectory(matchLevel, mapBytes)
+        // server.json when present, otherwise the two rooms this server has
+        // always hosted on the IRONSIGHT_LEVEL map. A bad config throws here,
+        // at boot, rather than leaving an operator wondering why it was ignored.
+        let rooms = ServerConfig.load matchLevel
+        let matches = MatchDirectory(rooms, matchLevel, mapBytes)
         builder.Services.AddSingleton matches |> ignore
         builder.Services.AddHostedService(fun _ ->
             { new BackgroundService() with
@@ -215,8 +263,8 @@ module Program =
                         with ex -> eprintfn $"[{name}] AdvanceTick failed: {ex}"
                     use timer = new PeriodicTimer(TimeSpan.FromSeconds(1.0 / float Tuning.TickRate))
                     while! timer.WaitForNextTickAsync cancellationToken do
-                        tickSafely "tdm" matches.TeamDeathmatch
-                        tickSafely "ffa" matches.FreeForAll
+                        for room in matches.Rooms do
+                            tickSafely room.Id room.Host
                 } }) |> ignore
         let app = builder.Build()
         app.UseDefaultFiles() |> ignore

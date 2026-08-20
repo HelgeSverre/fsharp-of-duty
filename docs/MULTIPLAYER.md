@@ -21,6 +21,45 @@ Campaign and bot matches remain local-authoritative. The default online level is
 Paintball Killhouse; `IRONSIGHT_LEVEL` selects another: `training`, `depot`,
 `canal`, or `omaha`.
 
+## Rooms
+
+A server hosts a list of rooms, each with its own map, mode and rules. With no
+config file it hosts the two it always did — Team Deathmatch and Free For All,
+both on the `IRONSIGHT_LEVEL` map — so an existing deployment needs no changes.
+
+`server.json` beside the binary, or wherever `IRONSIGHT_CONFIG` points:
+
+```json
+{
+  "rooms": [
+    { "id": "tdm-canal", "name": "Canal Yard TDM", "mode": "TeamDeathmatch", "level": "canal" },
+    { "id": "ffa-depot", "name": "Depot Deathmatch", "mode": "FreeForAll", "level": "depot",
+      "scoreLimit": 20, "timeLimit": 300, "maxPlayers": 8 }
+  ]
+}
+```
+
+`id` and `mode` are required; everything else falls back to the old hardcoded
+values — the `IRONSIGHT_LEVEL` map, 75 kills for TDM and 30 for FFA, ten
+minutes, sixteen players. `level` takes the builtin aliases only, because the
+client resolves a builtin by name while a custom map has to be downloaded by
+content hash and only the boot map's bytes are served.
+
+A bad config **stops the server at boot** rather than being ignored: a silently
+dropped config would leave it running on rules nobody chose. Empty room lists,
+unknown modes or levels, missing or duplicate ids are all errors.
+
+Rooms appear as separate rows in the server browser, labelled by `name`, and
+joining one sends its `id`. A client that sends no id — anything built before
+rooms existed — gets the first room of the mode it asked for that has a free
+slot, so old clients keep working against a multi-room server.
+
+Every room is otherwise independent: its own players, scores, phase, chat and
+kick list. Ops are server-wide, since `IRONSIGHT_OP_KEY` is read once per
+process. All rooms tick on one thread, so their cost adds up on one core —
+measured, the tick itself is ~0.03 ms per player, and it is snapshot fan-out
+rather than simulation that sets the ceiling.
+
 ## Authority and timing
 
 The server owns movement, view angles, stance, weapon state, ammunition, spread,

@@ -30,6 +30,42 @@ module IntegrationTests =
 
     [<Fact>]
     [<Trait("Category", Integration)>]
+    let ``a configured server hosts many rooms and joins the one it is asked for`` () =
+        // Three rooms on one process, two of them the same mode on different
+        // maps — the case two hardcoded MatchHosts could never express.
+        let config = IO.Path.Combine(IO.Path.GetTempPath(), $"ironsight-rooms-{Guid.NewGuid():N}.json")
+        IO.File.WriteAllText(
+            config,
+            """
+            { "rooms": [
+                { "id": "tdm-canal",  "name": "Canal TDM",   "mode": "TeamDeathmatch", "level": "canal" },
+                { "id": "tdm-omaha",  "name": "Omaha TDM",   "mode": "TeamDeathmatch", "level": "omaha" },
+                { "id": "ffa-depot",  "name": "Depot FFA",   "mode": "FreeForAll",     "level": "depot" } ] }""")
+        let previous = Environment.GetEnvironmentVariable "IRONSIGHT_CONFIG"
+        Environment.SetEnvironmentVariable("IRONSIGHT_CONFIG", config)
+        let app, uri = try startServer () finally Environment.SetEnvironmentVariable("IRONSIGHT_CONFIG", previous)
+        try
+            // Named room wins, and it is the *second* room of its mode — so
+            // this cannot pass by falling back to "first of that mode".
+            MatchScript.runIn uri TeamDeathmatch "tdm-omaha" [
+                Join "Named"
+                WaitUntil("the named room's own map is running", 10.0, fun snapshot ->
+                    snapshot.LevelName = Ironsight.ProcGen.Levels.omahaDraw.Name)
+                Leave "Named"
+            ]
+            // No room id: a pre-rooms client still lands in a room of its mode.
+            MatchScript.run uri FreeForAll [
+                Join "Legacy"
+                WaitUntil("mode alone still finds a room", 10.0, fun snapshot ->
+                    snapshot.Mode = FreeForAll && snapshot.LevelName = Ironsight.ProcGen.Levels.scrapDepot.Name)
+                Leave "Legacy"
+            ]
+        finally
+            app.StopAsync().GetAwaiter().GetResult()
+            try IO.File.Delete config with _ -> ()
+
+    [<Fact>]
+    [<Trait("Category", Integration)>]
     let ``a lone player sees their own chat line come back`` () =
         // The solo case on purpose: one player never reaches Warmup, so this
         // also pins that chat does not depend on the match having started.

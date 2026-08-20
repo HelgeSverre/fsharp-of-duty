@@ -13,6 +13,11 @@ type ServerEntry = { Name: string; Url: Uri }
 /// One row of the Half-Life-style server browser: a room on a server.
 type ServerRow =
     { Server: ServerEntry
+      /// Room id to name in the hello, and the operator's label for it. Both
+      /// are blank against a server that predates configurable rooms, which is
+      /// why joining still falls back to Mode.
+      RoomId: string
+      RoomName: string
       Mode: GameMode
       Phase: string
       Players: int
@@ -118,18 +123,30 @@ module ServerDirectory =
                             match root.TryGetProperty "capacityPerRoom" with
                             | true, value -> value.GetInt32()
                             | _ -> 16
+                        // Every per-room field is optional: an older server
+                        // sends neither an id nor a per-room capacity, and its
+                        // rows must still list and still be joinable.
+                        let text (room: JsonElement) key =
+                            match room.TryGetProperty(key: string) with
+                            | true, value when value.ValueKind = JsonValueKind.String -> value.GetString()
+                            | _ -> ""
                         root.GetProperty("rooms").EnumerateArray()
                         |> Seq.map (fun room ->
                             { Server = server
+                              RoomId = text room "id"
+                              RoomName = text room "name"
                               Mode = (if room.GetProperty("mode").GetString() = "FreeForAll" then FreeForAll else TeamDeathmatch)
                               Phase = room.GetProperty("phase").GetString()
                               Players = room.GetProperty("connectedPlayers").GetInt32()
-                              Capacity = capacity
+                              Capacity =
+                                (match room.TryGetProperty "capacity" with
+                                 | true, value when value.ValueKind = JsonValueKind.Number -> value.GetInt32()
+                                 | _ -> capacity)
                               PingMs = ping
                               Online = true })
                         |> Seq.toList
                     with _ ->
-                        [ { Server = server; Mode = TeamDeathmatch; Phase = ""; Players = 0; Capacity = 0; PingMs = 0; Online = false } ])
+                        [ { Server = server; RoomId = ""; RoomName = ""; Mode = TeamDeathmatch; Phase = ""; Players = 0; Capacity = 0; PingMs = 0; Online = false } ])
             let! results = servers |> List.map probeOne |> Task.WhenAll
             return results |> Array.toList |> List.concat
         }

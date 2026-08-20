@@ -74,13 +74,15 @@ module MatchScript =
     /// Drives `script` against a live server, connecting a real `OnlineClient` per
     /// named bot. Raises with the failing label and a snapshot dump on any
     /// unsatisfied Expect/WaitUntil.
-    let run (serverUri: Uri) (mode: GameMode) (script: Act list) =
+    /// `room` names a room on a multi-room server; blank asks the server to
+    /// pick one of `mode`, which is what every pre-rooms client does.
+    let runIn (serverUri: Uri) (mode: GameMode) (room: string) (script: Act list) =
         let bots = Dictionary<string, Bot>()
         let ordered = ResizeArray<Bot>()
         use pumpCancellation = new CancellationTokenSource()
 
         let connect (bot: Bot) resume =
-            let client = new OnlineClient(serverUri, bot.Name, mode, bot.Weapon, ?resumeToken = resume)
+            let client = new OnlineClient(serverUri, bot.Name, mode, bot.Weapon, ?resumeToken = resume, room = room)
             client.ConnectAsync().GetAwaiter().GetResult()
             bot.Client <- client
             bot.Token <- client.SessionToken
@@ -208,6 +210,10 @@ module MatchScript =
             for entry in ordered do
                 try entry.Client.CloseAsync().GetAwaiter().GetResult() with _ -> ()
                 try (entry.Client :> IDisposable).Dispose() with _ -> ()
+
+    /// Any room of the requested mode, the way a client that predates rooms
+    /// connects. Most scripts want this.
+    let run (serverUri: Uri) (mode: GameMode) (script: Act list) = runIn serverUri mode "" script
 
     /// The snapshot the named bot currently sees, for assertions that need one
     /// specific viewpoint rather than "any connected bot".

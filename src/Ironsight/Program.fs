@@ -212,6 +212,9 @@ module Program =
     let main args =
         let mutable onlineRequested = args |> Array.contains "--online"
         let mutable selectedOnlineMode = if args |> Array.contains "--ffa" then FreeForAll else TeamDeathmatch
+        // Room chosen in the browser. Blank means "any room of that mode",
+        // which is what --online/--ffa and older servers both want.
+        let mutable selectedOnlineRoom = argumentValue "--room" args |> Option.defaultValue ""
         let mutable selectedServerUri = ServerDirectory.defaultUri ()
         let mutable playerName =
             argumentValue "--name" args
@@ -345,7 +348,7 @@ module Program =
 
         let beginReconnect generation token =
             task {
-                let client = new OnlineClient(selectedServerUri, playerName, selectedOnlineMode, selectedOnlineWeapon, ?resumeToken = token)
+                let client = new OnlineClient(selectedServerUri, playerName, selectedOnlineMode, selectedOnlineWeapon, ?resumeToken = token, room = selectedOnlineRoom)
                 try
                     do! client.ConnectAsync()
                     return struct (generation, Some client)
@@ -417,7 +420,7 @@ module Program =
             with error -> Console.Error.WriteLine($"Audio unavailable: {error.Message}")
             if onlineRequested then
                 try
-                    let client = new OnlineClient(selectedServerUri, playerName, selectedOnlineMode, selectedOnlineWeapon)
+                    let client = new OnlineClient(selectedServerUri, playerName, selectedOnlineMode, selectedOnlineWeapon, room = selectedOnlineRoom)
                     client.ConnectAsync().GetAwaiter().GetResult()
                     if applyServerMap client then
                         onlineClient <- Some client
@@ -514,11 +517,12 @@ module Program =
                                         current <- initialWorld
                                         setScreen Screen.Playing
                                         window.Title <- $"IRONSIGHT — {current.Level.Name}"
-                                    | StartOnline(weaponName, mode, server) ->
+                                    | StartOnline(weaponName, mode, room, server) ->
                                         disconnectOnline ()
                                         onlineRequested <- true
                                         selectedOnlineWeapon <- weaponName
                                         selectedOnlineMode <- mode
+                                        selectedOnlineRoom <- room
                                         selectedServerUri <- server
                                         reconnectAfter <- DateTimeOffset.MinValue
                                         setScreen Screen.Playing

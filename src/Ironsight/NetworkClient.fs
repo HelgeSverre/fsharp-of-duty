@@ -160,7 +160,7 @@ module SnapshotWire =
           Grenades = grenades
           Events = events }
 
-type OnlineClient(serverUri: Uri, playerName: string, requestedMode: GameMode, weaponName: string, ?resumeToken: string) =
+type OnlineClient(serverUri: Uri, playerName: string, requestedMode: GameMode, weaponName: string, ?resumeToken: string, ?room: string) =
     let socket = new ClientWebSocket()
     let cancellation = new CancellationTokenSource()
     let inputChannel = Channel.CreateBounded<InputFrame>(BoundedChannelOptions(4, FullMode = BoundedChannelFullMode.DropOldest, SingleReader = true, SingleWriter = true))
@@ -299,6 +299,9 @@ type OnlineClient(serverUri: Uri, playerName: string, requestedMode: GameMode, w
                    version = 1
                    name = playerName
                    mode = modeName
+                   // Blank against a server that does not name its rooms; it
+                   // falls back to picking one by mode, as it always did.
+                   room = defaultArg room ""
                    weapon = weaponName
                    sessionToken = requestedSessionToken |}
         let! welcome = receiveDocument ()
