@@ -325,6 +325,19 @@ module Tuning =
         // The STG-44 is a rifle that fires like an SMG, and sits with them.
         | Rifle -> if weapon.Mode = FullAuto then 1 else 0
 
+    /// Display name of a weapon key, for the loadout picker's group headings.
+    /// "Precision" rather than "Scoped": a bow belongs there and has no optic.
+    let categoryName =
+        function
+        | 0 -> "RIFLES"
+        | 1 -> "AUTOMATICS"
+        | 2 -> "SIDEARMS"
+        | 3 -> "PRECISION"
+        | _ -> "HEAVY"
+
+    /// Every weapon key, in key order.
+    let categories = [| 0 .. 4 |]
+
     /// Slot indices in `slots` that key `category` selects, in carry order.
     let categorySlots (slots: WeaponSlot array) category =
         slots
@@ -343,3 +356,46 @@ module Tuning =
           Reserve = weapon.MagSize * magazines
           BurstIx = 0
           Bloom = 0.0f }
+
+/// Everything derivable about a weapon from its stats, in one place. The
+/// website's arsenal endpoint and the in-game loadout picker both render this,
+/// so the numbers a player compares before a match are by construction the ones
+/// he compares during it.
+type WeaponStats =
+    { Weapon: WeaponClass
+      /// Per projectile; a shotgun fires `Pellets` of these.
+      DamagePerProjectile: float32
+      MaximumDamagePerShot: float32
+      /// Damage retained per projectile at maximum falloff range.
+      MinimumDamagePerProjectile: float32
+      FalloffStartMetres: float32
+      FalloffEndMetres: float32
+      /// Shots to drop a full-health target at point-blank range, every
+      /// projectile connecting.
+      ShotsToKill: int
+      /// Seconds those shots take, which is the number that actually decides a
+      /// pick. Zero for a one-shot kill: no second shot has to be waited for.
+      TimeToKillSeconds: float32 }
+
+[<RequireQualifiedAccess>]
+module WeaponStats =
+    /// Full health, matching the spawn value in Sim/MatchHost.
+    [<Literal>]
+    let private FullHealth = 100.0f
+
+    let of' (weapon: WeaponClass) =
+        let struct (falloffStart, falloffEnd, retained) = Tuning.falloffWindow weapon.Kind
+        let damage = Units.raw weapon.Damage
+        let perShot = damage * float32 weapon.Pellets
+        let shots = if perShot <= 0.0f then 0 else int (ceil (FullHealth / perShot))
+        { Weapon = weapon
+          DamagePerProjectile = damage
+          MaximumDamagePerShot = perShot
+          MinimumDamagePerProjectile = damage * retained
+          FalloffStartMetres = falloffStart
+          FalloffEndMetres = falloffEnd
+          ShotsToKill = shots
+          // The first shot costs no wait; only the gaps between shots do.
+          TimeToKillSeconds =
+            if shots <= 1 || weapon.RoundsPerMin <= 0.0f then 0.0f
+            else float32 (shots - 1) * 60.0f / weapon.RoundsPerMin }

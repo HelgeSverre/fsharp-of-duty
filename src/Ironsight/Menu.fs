@@ -111,28 +111,102 @@ module LoadoutMenu =
         | Closed
         | Chosen of weaponName: string
 
+    /// A group heading or a weapon. Headings are labels, never targets — the
+    /// same split SettingsUi uses for its section headers.
+    type Row =
+        | Header of category: int
+        | Weapon of index: int
+
+    type State = { Selected: int; FirstVisible: int }
+
     let RowHeight = 30.0f
     let FirstRowTop = 82.0f
 
+    /// Enough rows that the twelve-weapon arsenal shows whole, while leaving a
+    /// twenty-weapon one inside a 720p window once the panel chrome is added.
+    [<Literal>]
+    let MaxVisibleRows = 14
+
+    /// Weapons grouped under their own number key, so the picker and the 1-5
+    /// keys agree by construction rather than by a second hand-kept table.
+    let rows: Row array =
+        Tuning.categories
+        |> Array.collect (fun category ->
+            let members =
+                Tuning.onlineWeapons
+                |> Array.indexed
+                |> Array.filter (fun (_, weapon) -> Tuning.categoryOf weapon = category)
+            if Array.isEmpty members then [||]
+            else Array.append [| Header category |] (members |> Array.map (fst >> Weapon)))
+
+    let private selectableIndexes =
+        rows
+        |> Array.indexed
+        |> Array.choose (fun (index, row) -> match row with Weapon _ -> Some index | Header _ -> None)
+
+    let private visibleCount = min MaxVisibleRows rows.Length
+
+    /// Weapon indices in the order the picker lists them — grouped by number
+    /// key. The pre-join menu shares this so both pickers present the arsenal
+    /// the same way round, without it needing the header rows.
+    let weaponOrder =
+        rows |> Array.choose (function Weapon index -> Some index | Header _ -> None)
+
+    /// "3  M1911": the key that reaches a weapon, then its name.
+    let label (index: int) =
+        let weapon = Tuning.onlineWeapons[index]
+        $"{Tuning.categoryOf weapon + 1}  {weapon.Name}".ToUpperInvariant()
+
+    let create () =
+        { Selected = selectableIndexes[0]; FirstVisible = 0 }
+
+    /// The weapon a row index names, if it names one.
+    let weaponAt index =
+        if index < 0 || index >= rows.Length then None
+        else match rows[index] with Weapon weapon -> Some Tuning.onlineWeapons[weapon] | Header _ -> None
+
     let panelRect (width: int) (height: int) =
-        Rect.centered width height (min 640.0f (float32 width - 48.0f)) (150.0f + RowHeight * float32 Tuning.onlineWeapons.Length)
+        Rect.centered width height (min 900.0f (float32 width - 48.0f)) (150.0f + RowHeight * float32 visibleCount)
 
-    let rowsRect (panel: Rect) = Rect.rowsIn FirstRowTop RowHeight Tuning.onlineWeapons.Length panel
+    let rowsRect (panel: Rect) = Rect.rowsIn FirstRowTop RowHeight visibleCount panel
 
-    let update (width: int) (height: int) (input: MenuInput) (selected: int) =
-        let count = Tuning.onlineWeapons.Length
-        // Hover hits the same rect the HUD draws the rows in.
+    /// The window the HUD draws, with the selection always inside it.
+    let visibleRows (state: State) =
+        let first = MenuNav.scrollWindow rows.Length MaxVisibleRows state.Selected state.FirstVisible
+        let last = min (rows.Length - 1) (first + MaxVisibleRows - 1)
+        first, [ for index in first..last -> index, rows[index] ]
+
+    /// Typing 1-5 jumps to that key's first weapon. Menu-mode keystrokes already
+    /// arrive as TextInput, so this needs nothing from the input sampler.
+    let private categoryJump (input: MenuInput) =
+        input.TextInput
+        |> Seq.tryPick (fun character ->
+            if character >= '1' && character <= '5' then
+                let category = int character - int '1'
+                rows |> Array.tryFindIndex (function Weapon index -> Tuning.categoryOf Tuning.onlineWeapons[index] = category | Header _ -> false)
+            else None)
+
+    let update (width: int) (height: int) (input: MenuInput) (state: State) =
+        let first = MenuNav.scrollWindow rows.Length MaxVisibleRows state.Selected state.FirstVisible
+        // Hover hits the same rect the HUD draws, offset by the scroll position;
+        // headings are skipped so the cursor cannot land on one.
         let hovered =
             input.Pointer
-            |> Option.bind (fun pointer -> Rect.slotAt RowHeight count pointer (rowsRect (panelRect width height)))
-        let next = MenuNav.stepSelection [| 0 .. count - 1 |] input hovered selected
+            |> Option.bind (fun pointer -> Rect.slotAt RowHeight visibleCount pointer (rowsRect (panelRect width height)))
+            |> Option.map (fun slot -> min (first + slot) (rows.Length - 1))
+            |> Option.filter (fun index -> match rows[index] with Weapon _ -> true | Header _ -> false)
+        let stepped = MenuNav.stepSelection selectableIndexes input hovered state.Selected
+        let selected = categoryJump input |> Option.defaultValue stepped
         // A click lands on the row under the cursor even if a dpad step
         // arrived in the same frame.
-        let activateIndex = if input.Clicked && hovered.IsSome then hovered.Value else next
+        let activateIndex = if input.Clicked && hovered.IsSome then hovered.Value else selected
         let activate = input.Activate || (input.Clicked && hovered.IsSome)
+        let next = { Selected = selected; FirstVisible = MenuNav.scrollWindow rows.Length MaxVisibleRows selected first }
         if input.Back then struct (next, Closed)
-        elif activate then struct (next, Chosen Tuning.onlineWeapons[activateIndex].Name)
-        else struct (next, Browsing)
+        else
+            match (if activate then weaponAt activateIndex else None) with
+            | Some weapon -> struct (next, Chosen weapon.Name)
+            | None -> struct (next, Browsing)
 
 [<RequireQualifiedAccess>]
 module StartMenu =
@@ -187,7 +261,9 @@ module StartMenu =
             | Some rows -> Array.append (rows |> Array.map (fun row -> (rowLabel row).ToUpperInvariant())) [| "BACK" |]
             | None -> [| "CONTACTING SERVERS..."; "BACK" |]
         | OnlineLoadout ->
-            Array.append (Tuning.onlineWeapons |> Array.map (fun weapon -> weapon.Name.ToUpperInvariant())) [| "BACK" |]
+            // Same order and labelling as the in-game picker; StartMenu's own
+            // scroll window already keeps a long list on screen.
+            Array.append (LoadoutMenu.weaponOrder |> Array.map LoadoutMenu.label) [| "BACK" |]
 
     /// Column x-offsets from the row's left edge, shared by the header and rows.
     let serverColumns = [| 0.0f, "SERVER"; 300.0f, "MODE"; 500.0f, "PLAYERS"; 590.0f, "PHASE"; 700.0f, "PING" |]
@@ -301,6 +377,9 @@ module StartMenu =
                 elif state.ServerRows.IsNone && index = 0 then
                     struct(next, None) // still contacting servers
                 else struct({ next with Page = Main; Selected = 0 }, None)
-            | OnlineLoadout, index when index < Tuning.onlineWeapons.Length ->
-                struct(next, Some(StartOnline(Tuning.onlineWeapons[index].Name, state.OnlineMode, state.OnlineRoom, state.OnlineServer)))
+            | OnlineLoadout, index when index < LoadoutMenu.weaponOrder.Length ->
+                // The row index is a position in the picker's category order,
+                // not an index into onlineWeapons.
+                let weapon = Tuning.onlineWeapons[LoadoutMenu.weaponOrder[index]]
+                struct(next, Some(StartOnline(weapon.Name, state.OnlineMode, state.OnlineRoom, state.OnlineServer)))
             | OnlineLoadout, _ -> struct({ next with Page = ServerList; Selected = 0 }, None)

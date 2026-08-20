@@ -202,7 +202,7 @@ module Program =
     type Screen =
         | Playing
         /// Weapon picker over live play; the world keeps simulating.
-        | Loadout of selected: int
+        | Loadout of picker: LoadoutMenu.State
         /// Typing a chat line over live play. Unlike every other screen the
         /// mouse stays grabbed (see InputSampler.SetTextCapture).
         | Chat of draft: string
@@ -542,7 +542,7 @@ module Program =
                              if inputSampler.ConsumeDebugToggle() then debugView <- not debugView
                              // Chat only exists online; offline there is nobody to talk to.
                              if inputSampler.ConsumeChatToggle() && onlineClient.IsSome then setScreen (Screen.Chat "")
-                             elif inputSampler.ConsumeLoadoutToggle() then setScreen (Screen.Loadout 0)
+                             elif inputSampler.ConsumeLoadoutToggle() then setScreen (Screen.Loadout(LoadoutMenu.create ()))
                              elif inputSampler.ConsumeEscape() then
                                  // Pause, uniformly: offline the sim freezes
                                  // because the play block below is gated on

@@ -254,6 +254,25 @@ module ServerTests =
         Assert.Contains($"tick:{state.Tick}", seen)
 
     [<Fact>]
+    let ``weapon stats match what the arsenal publishes`` () =
+        // The picker and the website render the same derivation, so a player
+        // cannot be shown one set of numbers before a match and another during.
+        let published = Protocol.arsenal ()
+        for weapon in Tuning.onlineWeapons do
+            let stats = WeaponStats.of' weapon
+            let row = published.weapons |> Array.find (fun entry -> entry.name = weapon.Name)
+            Assert.Equal(row.damagePerProjectile, stats.DamagePerProjectile)
+            Assert.Equal(row.maximumDamagePerShot, stats.MaximumDamagePerShot)
+            Assert.Equal(row.minimumDamagePerProjectile, stats.MinimumDamagePerProjectile)
+            Assert.Equal(row.falloffStartMetres, stats.FalloffStartMetres)
+            Assert.Equal(row.falloffEndMetres, stats.FalloffEndMetres)
+            // Derived for the picker and not published: a kill always takes at
+            // least one shot, and one-shot kills wait for nothing.
+            Assert.True(stats.ShotsToKill >= 1)
+            if stats.ShotsToKill = 1 then Assert.Equal(0.0f, stats.TimeToKillSeconds)
+            else Assert.True(stats.TimeToKillSeconds > 0.0f)
+
+    [<Fact>]
     let ``a room config fills in every omitted rule`` () =
         let _, rooms =
             ServerConfig.parse Levels.paintballArena """

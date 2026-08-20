@@ -367,13 +367,16 @@ module Protocol =
           weapons =
             weapons
             |> Array.map (fun weapon ->
-                let struct (falloffStart, falloffEnd, retained) = Tuning.falloffWindow weapon.Kind
+                // Same derivation the in-game loadout picker renders, so the
+                // numbers a player compares before a match are the ones he
+                // compares during it.
+                let stats = WeaponStats.of' weapon
                 { name = weapon.Name
                   kind = string weapon.Kind
                   fireMode = string weapon.Mode
-                  damagePerProjectile = Units.raw weapon.Damage
+                  damagePerProjectile = stats.DamagePerProjectile
                   projectilesPerShot = weapon.Pellets
-                  maximumDamagePerShot = Units.raw weapon.Damage * float32 weapon.Pellets
+                  maximumDamagePerShot = stats.MaximumDamagePerShot
                   roundsPerMinute = weapon.RoundsPerMin
                   magazineSize = weapon.MagSize
                   reloadSeconds = Units.raw weapon.ReloadTime
@@ -381,7 +384,7 @@ module Protocol =
                   hipSpread = weapon.HipSpread
                   aimDownSightSpread = weapon.AdsSpread
                   penetration = weapon.Penetration
-                  falloffStartMetres = falloffStart
-                  falloffEndMetres = falloffEnd
-                  minimumDamagePerProjectile = Units.raw weapon.Damage * retained
+                  falloffStartMetres = stats.FalloffStartMetres
+                  falloffEndMetres = stats.FalloffEndMetres
+                  minimumDamagePerProjectile = stats.MinimumDamagePerProjectile
                   availability = if Set.contains weapon.Name onlineNames then "Player loadout" else "Mounted weapon" }) }

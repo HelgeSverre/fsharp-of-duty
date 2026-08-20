@@ -172,10 +172,16 @@ module ClientTests =
         Assert.Equal(OnlineLoadout, ffaLoadout.Page)
         Assert.Equal(FreeForAll, ffaLoadout.OnlineMode)
         Assert.Equal(official.Url, ffaLoadout.OnlineServer)
+        // The pre-join list is ordered by the in-game picker, so a row means
+        // whatever that order says rather than a position in onlineWeapons.
+        let atRow row = Tuning.onlineWeapons[LoadoutMenu.weaponOrder[row]].Name
         let struct (_, ffaAction) = StartMenu.update 1280 720 activate { ffaLoadout with Selected = 1 }
-        Assert.Equal(Some(StartOnline("Thompson", FreeForAll, "ffa", official.Url)), ffaAction)
+        Assert.Equal(Some(StartOnline(atRow 1, FreeForAll, "ffa", official.Url)), ffaAction)
         let struct (_, onlineAction) = StartMenu.update 1280 720 activate { ffaLoadout with Selected = 3 }
-        Assert.Equal(Some(StartOnline("Kar98k Sniper", FreeForAll, "ffa", official.Url)), onlineAction)
+        Assert.Equal(Some(StartOnline(atRow 3, FreeForAll, "ffa", official.Url)), onlineAction)
+        // Every weapon is reachable exactly once, whatever the grouping.
+        Assert.Equal(Tuning.onlineWeapons.Length, LoadoutMenu.weaponOrder.Length)
+        Assert.Equal(Tuning.onlineWeapons.Length, LoadoutMenu.weaponOrder |> Array.distinct |> Array.length)
 
         let struct (editing, _) = StartMenu.update 1280 720 activate (StartMenu.create "Old")
         let struct (edited, _) =
@@ -199,20 +205,90 @@ module ClientTests =
         Assert.Equal(Some ExitGame, quitAction)
 
     [<Fact>]
+    let ``the loadout picker fits on screen however many weapons there are`` () =
+        // It used to size its panel by the *total* weapon count, so the arsenal
+        // growing past about sixteen pushed the panel taller than a 720p window
+        // with no way to scroll to the rest.
+        let panel = LoadoutMenu.panelRect 1280 720
+        Assert.True(panel.H <= 720.0f, $"picker panel is {panel.H}px tall in a 720px window")
+        Assert.True(panel.Y >= 0.0f)
+        // The window never claims more rows than exist, and never more than the cap.
+        let _, visible = LoadoutMenu.visibleRows (LoadoutMenu.create ())
+        Assert.True(visible.Length <= LoadoutMenu.MaxVisibleRows)
+        Assert.True(visible.Length <= LoadoutMenu.rows.Length)
+
+    [<Fact>]
+    let ``picker headings group the weapons and are never selectable`` () =
+        let idle = TestKit.idleMenuInput
+        // Every weapon appears exactly once, under a heading for its own key.
+        Assert.Equal(Tuning.onlineWeapons.Length, LoadoutMenu.weaponOrder.Length)
+        Assert.Equal(Tuning.onlineWeapons.Length, LoadoutMenu.weaponOrder |> Array.distinct |> Array.length)
+        let headings =
+            LoadoutMenu.rows |> Array.choose (function LoadoutMenu.Header category -> Some category | _ -> None)
+        Assert.Equal(headings |> Array.distinct |> Array.length, headings.Length)
+        // Weapons following a heading all belong to that heading's key.
+        let mutable current = -1
+        for row in LoadoutMenu.rows do
+            match row with
+            | LoadoutMenu.Header category -> current <- category
+            | LoadoutMenu.Weapon index -> Assert.Equal(current, Tuning.categoryOf Tuning.onlineWeapons[index])
+        // Stepping through every row lands on weapons only, never a heading.
+        let mutable state = LoadoutMenu.create ()
+        for _ in 1 .. LoadoutMenu.rows.Length + 2 do
+            let struct (next, _) = LoadoutMenu.update 1280 720 { idle with Down = true } state
+            state <- next
+            Assert.True((LoadoutMenu.weaponAt state.Selected).IsSome, "selection landed on a heading")
+
+    [<Fact>]
+    let ``typing a category number jumps to that group`` () =
+        // Menu-mode keystrokes arrive as TextInput, so this needs nothing from
+        // the input sampler.
+        let idle = TestKit.idleMenuInput
+        let start = LoadoutMenu.create ()
+        for category in Tuning.categories do
+            let occupied = Tuning.onlineWeapons |> Array.exists (fun weapon -> Tuning.categoryOf weapon = category)
+            let struct (jumped, _) =
+                LoadoutMenu.update 1280 720 { idle with TextInput = string (category + 1) } start
+            if occupied then
+                match LoadoutMenu.weaponAt jumped.Selected with
+                | Some weapon -> Assert.Equal(category, Tuning.categoryOf weapon)
+                | None -> failwith $"key {category + 1} did not land on a weapon"
+            else
+                // A key holding nothing must not move the cursor.
+                Assert.Equal(start.Selected, jumped.Selected)
+
+    [<Fact>]
+    let ``picker hover still matches the drawn row after scrolling`` () =
+        // The off-by-one this pattern invites: hover is computed from the drawn
+        // window, so it has to be offset by the scroll position.
+        let idle = TestKit.idleMenuInput
+        let rows = LoadoutMenu.rowsRect (LoadoutMenu.panelRect 1280 720)
+        let scrolled = { LoadoutMenu.create () with Selected = LoadoutMenu.rows.Length - 1 }
+        let first, visible = LoadoutMenu.visibleRows scrolled
+        // Hover the last drawn slot and confirm it selects the row drawn there.
+        let slot = visible.Length - 1
+        let struct (hovered, _) =
+            LoadoutMenu.update 1280 720 { idle with Pointer = Some(TestKit.rowMiddle LoadoutMenu.RowHeight slot rows) } scrolled
+        Assert.Equal(first + slot, hovered.Selected)
+
+    [<Fact>]
     let ``loadout picker supports mouse hover and click-to-equip`` () =
         let idle = TestKit.idleMenuInput
         let rowsRect = LoadoutMenu.rowsRect (LoadoutMenu.panelRect 1280 720)
         let middleOf index = TestKit.rowMiddle LoadoutMenu.RowHeight index rowsRect
-        let struct (hoveredIndex, browsing) =
-            LoadoutMenu.update 1280 720 { idle with Pointer = Some(middleOf 3) } 0
-        Assert.Equal(3, hoveredIndex)
+        // Row 3 of the drawn window; rows are category-grouped, so ask the
+        // picker which weapon that row names rather than assuming an order.
+        let start = LoadoutMenu.create ()
+        let struct (hovered, browsing) =
+            LoadoutMenu.update 1280 720 { idle with Pointer = Some(middleOf 3) } start
+        Assert.Equal(3, hovered.Selected)
         Assert.Equal(LoadoutMenu.Browsing, browsing)
         let struct (_, equipped) =
-            LoadoutMenu.update 1280 720 { idle with Pointer = Some(middleOf 3); Clicked = true } 0
-        Assert.Equal(LoadoutMenu.Chosen Tuning.onlineWeapons[3].Name, equipped)
+            LoadoutMenu.update 1280 720 { idle with Pointer = Some(middleOf 3); Clicked = true } start
+        Assert.Equal(LoadoutMenu.Chosen (LoadoutMenu.weaponAt 3).Value.Name, equipped)
         // A click with the pointer outside the rows equips nothing.
         let struct (_, outside) =
-            LoadoutMenu.update 1280 720 { idle with Pointer = Some(Vector2(5.0f, 5.0f)); Clicked = true } 0
+            LoadoutMenu.update 1280 720 { idle with Pointer = Some(Vector2(5.0f, 5.0f)); Clicked = true } start
         Assert.Equal(LoadoutMenu.Browsing, outside)
 
     [<Fact>]
@@ -223,8 +299,8 @@ module ClientTests =
         let loadoutRows = LoadoutMenu.rowsRect (LoadoutMenu.panelRect 1280 720)
         let loadoutMiddle index = TestKit.rowMiddle LoadoutMenu.RowHeight index loadoutRows
         let struct (stepped, _) =
-            LoadoutMenu.update 1280 720 { idle with Pointer = Some(loadoutMiddle 2); Down = true } 0
-        Assert.Equal(3, stepped)
+            LoadoutMenu.update 1280 720 { idle with Pointer = Some(loadoutMiddle 2); Down = true } (LoadoutMenu.create ())
+        Assert.Equal(3, stepped.Selected)
         let mainCount = (StartMenu.items StartMenu.initial).Length
         let mainRows = MenuLayout.rowsRect (MenuLayout.panelRect 1280 720 mainCount) mainCount
         let mainMiddle = TestKit.rowMiddle MenuLayout.RowHeight 1 mainRows

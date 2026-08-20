@@ -37,7 +37,7 @@ type HudInfo =
       /// state, so the world would always report idle.
       GrenadeCooking: bool
       /// In-game loadout picker: Some selectedIndex while open.
-      LoadoutScreen: int option
+      LoadoutScreen: LoadoutMenu.State option
       Menu: StartMenuState option
       Settings: GameSettings
       SettingsScreen: SettingsUi.State option }
@@ -414,33 +414,77 @@ type Hud(gl: GL) =
             addText (centerX - 92.0f) (centerY - 24.0f) 1.6f white "YOU WERE KILLED"
             let restart = if world.Round.IsSome then "NEXT ROUND..." else "PRESS R TO RESTART"
             addTextCentered centerX (centerY + 10.0f) 1.0f white restart
-        let drawLoadoutScreen (selected: int) =
-            let weapons = Tuning.onlineWeapons
+        let drawLoadoutScreen (picker: LoadoutMenu.State) =
             let rowHeight = LoadoutMenu.RowHeight
-            let picker = LoadoutMenu.panelRect width height
-            let panelRect = overlay false accent.W picker "UP/DOWN, MOUSE   ENTER/CLICK EQUIP   ESC CLOSE"
+            let panelRect =
+                overlay false accent.W (LoadoutMenu.panelRect width height)
+                    "UP/DOWN, MOUSE   1-5 JUMP   ENTER/CLICK EQUIP   ESC CLOSE"
             addText (panelRect.X + 26.0f) (panelRect.Y + 20.0f) 2.0f white "LOADOUT"
             let hint = if info.Online.IsSome then "ARMS ON YOUR NEXT SPAWN" else "SWAPS IMMEDIATELY"
             addTextRight (panelRect.X + panelRect.W - 26.0f) (panelRect.Y + 30.0f) 1.0f label hint
             let rows = LoadoutMenu.rowsRect panelRect
-            let columns = [| 0.0f, "WEAPON"; 280.0f, "DMG"; 360.0f, "RPM"; 440.0f, "MAG" |]
+            // The list keeps the left two thirds; the stat block sits in the
+            // remainder, so a name and its numbers are read without a second
+            // screen.
+            let listWidth = rows.W * 0.58f
+            let statsX = rows.X + listWidth + 24.0f
+            let columns = [| 0.0f, "WEAPON"; 250.0f, "DMG"; 320.0f, "RPM" |]
             tableHeader rows (panelRect.Y + 62.0f) 0.95f label columns
-            weapons
-            |> Array.iteri (fun index weaponClass ->
-                let isSelected = index = selected
-                let isCurrent = weaponClass.Name = weapon.Class.Name
-                let color =
-                    if isSelected then Vector4(1.0f, 0.91f, 0.64f, 1.0f)
-                    elif isCurrent then Vector4(1.0f, 0.86f, 0.30f, 0.95f)
-                    else white
-                let pellets = if weaponClass.Pellets > 1 then $"x{weaponClass.Pellets}" else ""
-                let cells =
-                    [ fst columns[0], 1.15f, weaponClass.Name.ToUpperInvariant()
-                      fst columns[1], 1.0f, $"{int (Units.raw weaponClass.Damage)}{pellets}"
-                      fst columns[2], 1.0f, $"{int weaponClass.RoundsPerMin}"
-                      fst columns[3], 1.0f, $"{weaponClass.MagSize}" ]
-                let cells = if isCurrent then cells @ [ 500.0f, 1.0f, "<" ] else cells
-                tableRow rows rowHeight index isSelected color cells)
+            let firstVisible, visible = LoadoutMenu.visibleRows picker
+            visible
+            |> List.iteri (fun slot (index, row) ->
+                match row with
+                | LoadoutMenu.Header category ->
+                    // A heading names the number key that reaches this group.
+                    let y = Rect.textY 0.95f (Rect.slot rowHeight slot rows)
+                    addText (rows.X + rowTextPad) y 0.95f accent $"{category + 1}  {Tuning.categoryName category}"
+                | LoadoutMenu.Weapon weaponIndex ->
+                    let weaponClass = Tuning.onlineWeapons[weaponIndex]
+                    let isSelected = index = picker.Selected
+                    let isCurrent = weaponClass.Name = weapon.Class.Name
+                    let color =
+                        if isSelected then Vector4(1.0f, 0.91f, 0.64f, 1.0f)
+                        elif isCurrent then Vector4(1.0f, 0.86f, 0.30f, 0.95f)
+                        else white
+                    let pellets = if weaponClass.Pellets > 1 then $"x{weaponClass.Pellets}" else ""
+                    let cells =
+                        [ fst columns[0] + 14.0f, 1.15f, weaponClass.Name.ToUpperInvariant()
+                          fst columns[1], 1.0f, $"{int (Units.raw weaponClass.Damage)}{pellets}"
+                          fst columns[2], 1.0f, $"{int weaponClass.RoundsPerMin}" ]
+                    let cells = if isCurrent then cells @ [ fst columns[2] + 60.0f, 1.0f, "<" ] else cells
+                    tableRow rows rowHeight slot isSelected color cells)
+            // More rows than fit: show which part of the list is on screen.
+            if LoadoutMenu.rows.Length > LoadoutMenu.MaxVisibleRows then
+                let span = float32 LoadoutMenu.MaxVisibleRows / float32 LoadoutMenu.rows.Length
+                let track = { X = rows.X + listWidth + 4.0f; Y = rows.Y; W = 3.0f; H = rows.H }
+                solid track.X track.Y track.W track.H (Vector4(1.0f, 1.0f, 1.0f, 0.10f))
+                let thumb = track.H * span
+                let offset = track.H * (float32 firstVisible / float32 LoadoutMenu.rows.Length)
+                solid track.X (track.Y + offset) track.W thumb (Vector4(1.0f, 0.86f, 0.30f, 0.55f))
+            // Full stats for the highlighted weapon, from the same derivation
+            // the website's arsenal renders.
+            LoadoutMenu.weaponAt picker.Selected
+            |> Option.iter (fun weaponClass ->
+                let stats = WeaponStats.of' weaponClass
+                let falloff =
+                    if stats.FalloffEndMetres <= 0.0f then "NONE"
+                    else $"{int stats.FalloffStartMetres}-{int stats.FalloffEndMetres}M  MIN {int stats.MinimumDamagePerProjectile}"
+                let ttk = if stats.TimeToKillSeconds <= 0.0f then "ONE SHOT" else $"{stats.ShotsToKill} SHOTS  %.2f{stats.TimeToKillSeconds}S"
+                let lines =
+                    [ $"{Tuning.categoryName (Tuning.categoryOf weaponClass)}  {weaponClass.Mode}".ToUpperInvariant(), accent
+                      $"KILL      {ttk}", white
+                      $"DAMAGE    {int stats.DamagePerProjectile}" + (if weaponClass.Pellets > 1 then $" x{weaponClass.Pellets} = {int stats.MaximumDamagePerShot}" else ""), white
+                      $"HEADSHOT  x%.1f{weaponClass.HeadshotMultiplier}", white
+                      $"RPM       {int weaponClass.RoundsPerMin}", white
+                      $"MAGAZINE  {weaponClass.MagSize}", white
+                      $"RELOAD    %.2f{Units.raw weaponClass.ReloadTime}S", white
+                      $"ADS       %.2f{Units.raw weaponClass.AdsTime}S", white
+                      $"SPREAD    %.3f{weaponClass.HipSpread} HIP  %.3f{weaponClass.AdsSpread} ADS", label
+                      $"PIERCE    %.0f{weaponClass.Penetration}", label
+                      $"FALLOFF   {falloff}", label ]
+                lines
+                |> List.iteri (fun index (text, color) ->
+                    addText statsX (rows.Y + 6.0f + float32 index * 22.0f) 0.95f color text))
         let drawStartMenu (menu: StartMenuState) =
             let options = StartMenu.items menu
             let firstVisible, visibleCount = StartMenu.visibleRange menu
