@@ -167,7 +167,6 @@ module SnapshotWire =
                                ReloadRemaining = getFloat "reloadRemaining" slot
                                LastMelee =
                                    match getString "meleeAttack" slot with
-                                   | "ChainContact" -> Some ChainContact
                                    | "KatanaSweep" -> Some KatanaSweep
                                    | "KatanaOverhead" -> Some KatanaOverhead
                                    | _ -> None })

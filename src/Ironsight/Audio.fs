@@ -34,7 +34,6 @@ type AudioSystem() =
     let harpoonHit = upload (AudioSynth.harpoonImpact ())
     let bow = upload (AudioSynth.bowRelease ())
     let laser = upload (AudioSynth.laserClick ())
-    let chainsaw = upload (AudioSynth.chainsawMotor ())
     let katana = upload (AudioSynth.katanaSwing ())
     let arrowHit = upload (AudioSynth.arrowImpact ())
     let blast = upload (AudioSynth.explosion ())
@@ -44,7 +43,7 @@ type AudioSystem() =
     let heartbeat = upload (AudioSynth.heartbeat ())
     let radio = upload (AudioSynth.radio ())
     let wind = upload (AudioSynth.wind ())
-    let buffers = [| rifle; smg; marker; foam; rocket; flame; flameHit; water; nail; harpoon; harpoonHit; bow; laser; chainsaw; katana; arrowHit; blast; step; reload; ping; heartbeat; radio; wind |]
+    let buffers = [| rifle; smg; marker; foam; rocket; flame; flameHit; water; nail; harpoon; harpoonHit; bow; laser; katana; arrowHit; blast; step; reload; ping; heartbeat; radio; wind |]
 
     // Conventional guns share two synthesized samples; the special weapons
     // use bespoke pneumatic, spring and rocket-launch transients.
@@ -59,7 +58,6 @@ type AudioSystem() =
         | "Harpoon Gun" -> harpoon
         | "Bow" -> bow
         | "Laser Pointer" -> laser
-        | "Electric Chainsaw" -> chainsaw
         | "Katana" -> katana
         | "Thompson" | "MG42" | "MP40" | "STG-44" | "FG42" | "BAR" -> smg
         | _ -> rifle
@@ -75,7 +73,6 @@ type AudioSystem() =
         | "Harpoon Gun" -> 0.88f
         | "Bow" -> 1.0f
         | "Laser Pointer" -> 1.0f
-        | "Electric Chainsaw" -> 0.96f
         | "Katana" -> 1.04f
         | "M1911" -> 1.18f
         | "Luger P08" -> 1.26f

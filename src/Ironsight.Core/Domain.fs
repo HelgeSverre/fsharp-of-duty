@@ -27,14 +27,12 @@ type WeaponMechanism =
     | Harpoon
     | Bow
     | Laser
-    | Chainsaw
     | Katana
 
 /// Melee is resolved as a swept volume, never as a zero-range bullet. The
 /// attack variant is carried with the server request so secondary fire can
 /// select the katana's top-down cut without trusting a client-reported hit.
 type MeleeAttack =
-    | ChainContact
     | KatanaSweep
     | KatanaOverhead
 

@@ -92,12 +92,10 @@ module Weapons =
             // that was taken on the final few frames of the transition.
             let melee =
                 match current.Class.Mechanism with
-                | Chainsaw -> Some ChainContact
                 | Katana when ads >= 0.5f -> Some KatanaOverhead
                 | Katana -> Some KatanaSweep
                 | _ -> None
-            let damage = if melee = Some KatanaOverhead then Units.health 110.0f else current.Class.Damage
-            let shots = requests damage (spread 1.0f) melee current &rng
+            let shots = requests current.Class.Damage (spread 1.0f) melee current &rng
             struct (firedSlot melee, shots)
         else
             let burstIx = if trigger then current.BurstIx else 0

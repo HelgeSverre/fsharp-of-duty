@@ -88,19 +88,6 @@ module AudioSynth =
             let casing = MathF.Sin(MathF.Tau * 680.0f * time) * MathF.Exp(-time * 105.0f)
             (switch * 0.11f + casing * 0.045f) * 0.50f)
 
-    /// One overlapping motor tile. At the 10 Hz contact cadence neighbouring
-    /// tiles crossfade into a continuous electric whine under held input.
-    let chainsawMotor () =
-        let mutable low = 0.0f
-        render 0.22f 18271 (fun time white ->
-            low <- low * 0.91f + white * 0.09f
-            let edge = min 1.0f (time / 0.018f) * min 1.0f ((0.22f - time) / 0.045f)
-            let motor =
-                MathF.Sin(MathF.Tau * 116.0f * time) * 0.28f
-                + MathF.Sin(MathF.Tau * 232.0f * time) * 0.16f
-                + MathF.Sin(MathF.Tau * 1510.0f * time) * 0.07f
-            MathF.Tanh((motor + low * 0.22f) * edge * 1.6f) * 0.58f)
-
     let katanaSwing () =
         let mutable air = 0.0f
         render 0.18f 7213 (fun time white ->

@@ -510,34 +510,12 @@ module Tuning =
           // at the centre of its black emitter instead of beside the hand.
           MuzzleDistance = 0.59f }
 
-    /// 180 charge units at ten contact checks per second is eighteen seconds
-    /// of free-running battery. Each authoritative contact check deals 8 HP,
-    /// making held contact 80 DPS without coupling damage to render frames.
-    let electricChainsaw =
-        { Name = "Electric Chainsaw"
-          Mode = FullAuto
-          Kind = MachineGun
-          Mechanism = Chainsaw
-          Damage = Units.health 8.0f
-          RoundsPerMin = 600.0f
-          MagSize = 180
-          ReloadTime = Units.seconds 2.4f
-          Pellets = 1
-          AdsTime = Units.seconds 0.10f
-          // Swept-volume melee ignores firearm spread entirely.
-          HipSpread = 0.0f
-          AdsSpread = 0.0f
-          Recoil = [| Vector2.Zero |]
-          Penetration = 0.0f
-          HeadshotMultiplier = 1.0f
-          MuzzleDistance = 0.42f }
-
     let katana =
         { Name = "Katana"
           Mode = SemiAuto
           Kind = Rifle
           Mechanism = Katana
-          Damage = Units.health 70.0f
+          Damage = Units.health 110.0f
           // A complete wind-up, cut and return takes 0.4 s.
           RoundsPerMin = 150.0f
           MagSize = 1
@@ -553,9 +531,9 @@ module Tuning =
 
     // Appended in this order on purpose: existing indices are load-bearing for
     // the online loadout menu and its tests.
-    let onlineWeapons = [| kar98k; thompson; m1911; kar98kSniper; m1897; m1Garand; stg44; mp40; leeEnfield; fg42; bar; luger; bow; electricChainsaw; katana |]
+    let onlineWeapons = [| kar98k; thompson; m1911; kar98kSniper; m1897; m1Garand; stg44; mp40; leeEnfield; fg42; bar; luger; bow; katana |]
 
-    let specialWeapons = [| paintballMarker; nerfBlaster; bazooka; flamethrower; superSoaker; nailgun; harpoonGun; bow; laserPointer; electricChainsaw; katana |]
+    let specialWeapons = [| paintballMarker; nerfBlaster; bazooka; flamethrower; superSoaker; nailgun; harpoonGun; bow; laserPointer; katana |]
 
     let defaultWeapon = function Allies -> thompson | Axis -> kar98k
 
@@ -573,7 +551,7 @@ module Tuning =
     /// belongs with the heavies, so Kind is matched before Mode.
     let categoryOf (weapon: WeaponClass) =
         match weapon.Mechanism with
-        | Paintball | FoamDart | Rocket | FlameJet | WaterJet | Nail | Harpoon | Bow | Laser | Chainsaw | Katana -> 4
+        | Paintball | FoamDart | Rocket | FlameJet | WaterJet | Nail | Harpoon | Bow | Laser | Katana -> 4
         | Hitscan ->
             match weapon.Kind with
             | Pistol -> 2

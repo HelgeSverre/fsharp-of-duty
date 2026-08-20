@@ -101,7 +101,7 @@ module CoreTests =
     let ``kar98k hip fire is the tightest among player weapons`` () =
         let tightest =
             Tuning.onlineWeapons
-            |> Array.filter (fun weapon -> weapon.Mechanism <> Chainsaw && weapon.Mechanism <> Katana)
+            |> Array.filter (fun weapon -> weapon.Mechanism <> Katana)
             |> Array.minBy (fun weapon -> weapon.HipSpread)
         Assert.Equal("Kar98k", tightest.Name)
         Assert.True(Tuning.kar98k.HipSpread < Tuning.thompson.HipSpread)

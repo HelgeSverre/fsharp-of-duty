@@ -83,25 +83,27 @@ module Melee =
         struct (first, second, s, t, Vector3.DistanceSquared(first, second))
 
     let private weaponSegments attack position yaw pitch =
-        let forward = Ballistics.directionFromAngles yaw pitch Vector2.Zero
         let flatForward = MathEx.yawForward yaw
         let right = MathEx.yawRight yaw
         match attack with
-        | ChainContact ->
-            let handle = position + Vector3.UnitY * 1.14f + flatForward * 0.24f + right * 0.05f
-            [| struct (handle, handle + forward * 0.92f, 0.14f) |]
         | KatanaSweep ->
-            let hand = position + Vector3.UnitY * 1.18f + flatForward * 0.18f
+            // A neutral look crosses the neck line. Looking down lowers the
+            // cut toward torso/limbs, so decapitation is available without
+            // turning every possible sweep into a forced neck cut.
+            let height = 1.40f + Math.Clamp(pitch, -0.55f, 0.55f) * 0.42f
+            let hand = position + Vector3.UnitY * height + flatForward * 0.18f
             [| for sample in 0..14 do
+                   // -right to +right: authoritative left-to-right traversal.
                    let angle = -1.48f + 2.96f * float32 sample / 14.0f
                    let direction = MathEx.normalizedOrZero (flatForward * MathF.Cos angle + right * MathF.Sin angle)
-                   yield struct (hand, hand + direction * 2.05f, 0.085f) |]
+                   yield struct (hand, hand + direction * 2.05f, 0.095f) |]
         | KatanaOverhead ->
             let hand = position + Vector3.UnitY * 1.18f + flatForward * 0.20f
             [| for sample in 0..14 do
-                   let angle = 1.42f - 2.62f * float32 sample / 14.0f
+                   // Raised tip to below-neutral: authoritative up-to-down.
+                   let angle = 1.48f - 2.78f * float32 sample / 14.0f
                    let tip = hand + flatForward * (0.40f + MathF.Cos angle * 1.58f) + Vector3.UnitY * (MathF.Sin angle * 1.58f)
-                   yield struct (hand, tip, 0.085f) |]
+                   yield struct (hand, tip, 0.095f) |]
 
     let traceEndpoint attack position yaw pitch =
         let segments = weaponSegments attack position yaw pitch
@@ -123,6 +125,11 @@ module Melee =
     let resolve attack attackerPosition yaw pitch canHit (level: Level) (targets: MeleeTarget array) =
         let segments = weaponSegments attack attackerPosition yaw pitch
         let origin = attackerPosition + Vector3.UnitY * (Ballistics.eyeHeight Standing * 0.70f)
+        let partPriority = function
+            | BodyHead -> 0
+            | BodyLeftUpperArm | BodyLeftLowerArm | BodyRightUpperArm | BodyRightLowerArm -> 1
+            | BodyTorso -> 2
+            | BodyLeftUpperLeg | BodyLeftLowerLeg | BodyRightUpperLeg | BodyRightLowerLeg -> 3
         let hits =
             targets
             |> Array.choose (fun target ->
@@ -131,18 +138,24 @@ module Melee =
                     anatomy target
                     |> Array.collect (fun body ->
                         segments
-                        |> Array.choose (fun struct (a, b, radius) ->
+                        |> Array.mapi (fun sweepOrder struct (a, b, radius) ->
                             hitCapsule origin (a, b, radius) body
                             |> Option.bind (fun (point, normal, fraction, distance) ->
                                 if Ballistics.lineOfSight origin point level then
-                                    Some { Victim = target.Id; Part = body.Part; Point = point; Normal = normal; Fraction = fraction; Distance = distance }
-                                else None)))
+                                    Some(struct (
+                                        sweepOrder,
+                                        partPriority body.Part,
+                                        { Victim = target.Id; Part = body.Part; Point = point; Normal = normal; Fraction = fraction; Distance = distance }))
+                                else None))
+                        |> Array.choose id)
                     |> function
                         | [||] -> None
-                        | values -> Some(Array.minBy (fun hit -> hit.Distance) values))
+                        | values ->
+                            let struct (_, _, hit) = Array.minBy (fun struct (order, priority, hit) -> priority, order, hit.Distance) values
+                            Some hit)
             |> Array.sortBy (fun hit -> hit.Distance)
         match attack with
-        | ChainContact | KatanaOverhead -> hits |> Array.truncate 1
+        | KatanaOverhead -> hits |> Array.truncate 1
         | KatanaSweep -> hits |> Array.truncate 3
 
     let cutSite = function
@@ -159,7 +172,7 @@ module Melee =
 
     let makeCut deathRevision victimPosition yaw attack seed (hit: MeleeHit) =
         let inverse = Matrix4x4.CreateTranslation(-victimPosition) * Matrix4x4.CreateRotationY(yaw)
-        let impulseScale = match attack with ChainContact -> 3.8f | KatanaSweep -> 7.0f | KatanaOverhead -> 8.5f
+        let impulseScale = match attack with KatanaSweep -> 7.0f | KatanaOverhead -> 8.5f
         { DeathRevision = deathRevision
           Site = cutSite hit.Part
           Fraction = Math.Clamp(hit.Fraction, 0.12f, 0.88f)

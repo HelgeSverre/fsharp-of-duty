@@ -225,11 +225,6 @@ type Hud(gl: GL) =
             let weaponName = weapon.Class.Name.ToUpperInvariant()
             addText (weaponPanelX + 14.0f) (weaponPanelY + 10.0f) 1.0f label weaponName
             match weapon.Class.Mechanism with
-            | Chainsaw ->
-                let percent = int (100.0f * float32 weapon.InMag / float32 (max 1 weapon.Class.MagSize))
-                let battery = $"BAT {percent}%%"
-                addText (weaponPanelX + 14.0f) (weaponPanelY + 31.0f) 1.5f white battery
-                addText (weaponPanelX + 18.0f + textWidth 1.5f battery) (weaponPanelY + 40.0f) 0.9f label $"+{weapon.Reserve / max 1 weapon.Class.MagSize}"
             | Katana ->
                 addText (weaponPanelX + 14.0f) (weaponPanelY + 34.0f) 1.15f white "BLADE READY"
             | _ ->

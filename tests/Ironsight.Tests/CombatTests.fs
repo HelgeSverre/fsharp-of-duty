@@ -264,11 +264,10 @@ module CombatTests =
         Assert.DoesNotContain(Tuning.harpoonGun.Name, online)
         Assert.DoesNotContain(Tuning.laserPointer.Name, online)
         Assert.Contains(Tuning.bow.Name, online)
-        Assert.Contains(Tuning.electricChainsaw.Name, online)
         Assert.Contains(Tuning.katana.Name, online)
         Assert.All(
             Tuning.onlineWeapons
-            |> Array.filter (fun weapon -> weapon.Mechanism <> Bow && weapon.Mechanism <> Chainsaw && weapon.Mechanism <> Katana),
+            |> Array.filter (fun weapon -> weapon.Mechanism <> Bow && weapon.Mechanism <> Katana),
             fun weapon -> Assert.Equal(Hitscan, weapon.Mechanism))
         Assert.Equal(Bow, Tuning.bow.Mechanism)
         Assert.All(Tuning.specialWeapons, fun weapon -> Assert.Equal(4, Tuning.categoryOf weapon))
@@ -813,22 +812,7 @@ module CombatTests =
         Assert.NotEqual(world.PaintColor, reset.PaintColor)
 
     [<Fact>]
-    let ``chainsaw contact resolves against an anatomical limb and stops at walls`` () =
-        let target = { Id = EntityId 70; Position = Vector3(0.0f, 0.0f, -0.82f); Yaw = MathF.PI; Stance = Standing }
-        let clear = Melee.resolve ChainContact Vector3.Zero 0.0f 0.0f (fun _ -> true) openLevel [| target |]
-        Assert.Single clear |> ignore
-        Assert.Equal(target.Id, clear[0].Victim)
-        Assert.InRange(clear[0].Fraction, 0.0f, 1.0f)
-
-        let blocked =
-            LevelDsl.level "Melee wall"
-                [ LevelDsl.street 20.0f 10.0f Mud
-                  LevelDsl.block (Vector3(0.0f, 1.0f, -0.42f)) (Vector3(4.0f, 2.2f, 0.18f)) Brick ]
-            |> LevelCompile.compile
-        Assert.Empty(Melee.resolve ChainContact Vector3.Zero 0.0f 0.0f (fun _ -> true) blocked [| target |])
-
-    [<Fact>]
-    let ``katana sweep deduplicates victims and can cleave three targets`` () =
+    let ``katana left to right sweep reaches far deduplicates and can cleave three targets`` () =
         let targets =
             [| { Id = EntityId 71; Position = Vector3(-0.55f, 0.0f, -0.75f); Yaw = MathF.PI; Stance = Standing }
                { Id = EntityId 72; Position = Vector3(0.0f, 0.0f, -0.95f); Yaw = MathF.PI; Stance = Standing }
@@ -836,6 +820,8 @@ module CombatTests =
         let hits = Melee.resolve KatanaSweep Vector3.Zero 0.0f 0.0f (fun _ -> true) openLevel targets
         Assert.Equal(3, hits.Length)
         Assert.Equal(3, hits |> Array.map _.Victim |> Array.distinct |> Array.length)
+        Assert.All(hits, fun hit -> Assert.Equal(BodyHead, hit.Part))
+        Assert.True((Melee.traceEndpoint KatanaSweep Vector3.Zero 0.0f 0.0f).X > 1.8f)
 
         let longRange =
             { Id = EntityId 75
@@ -846,6 +832,16 @@ module CombatTests =
 
     [<Fact>]
     let ``katana secondary is a top down sweep without entering ADS`` () =
+        let damageFor ads expectedAttack =
+            let mutable rng = Rng.create 920UL
+            let slot = Tuning.weaponSlot Tuning.katana 0
+            let struct (_, shots) = Weapons.step Tuning.TickDuration 0.0f Standing true false ads &rng slot
+            Assert.Single shots |> ignore
+            Assert.Equal(Some expectedAttack, shots[0].Melee)
+            shots[0].Damage
+        Assert.Equal(damageFor 0.0f KatanaSweep, damageFor 1.0f KatanaOverhead)
+        Assert.Equal(Units.health 110.0f, damageFor 0.0f KatanaSweep)
+
         let baseWorld = Sim.createTrainingWorld 920UL
         let active = baseWorld.Player.Slots |> Array.findIndex (fun slot -> slot.Class.Mechanism = Katana)
         let victim =
@@ -859,6 +855,7 @@ module CombatTests =
         let struct (after, events) = Sim.step (TestKit.input 1L InputButtons.Ads Vector2.Zero) world
         Assert.Equal(0.0f, after.Player.Ads)
         Assert.Equal(Some KatanaOverhead, after.Player.Slots[active].LastMelee)
+        Assert.Equal(Units.health 110.0f, Tuning.katana.Damage)
         match after.Player.Slots[active].State with
         | Cooling remaining -> Assert.InRange(Units.raw remaining, 0.399f, 0.401f)
         | state -> failwith $"katana should be recovering from its sweep, was {state}"
@@ -866,13 +863,13 @@ module CombatTests =
         Assert.Contains(events, function MeleeTrace(_, _, _, KatanaOverhead) -> true | _ -> false)
 
     [<Fact>]
-    let ``lethal chainsaw contact stores the exact cut for the corpse`` () =
+    let ``lethal primary katana sweep decapitates and stores the exact neck cut`` () =
         let baseWorld = Sim.createTrainingWorld 919UL
-        let active = baseWorld.Player.Slots |> Array.findIndex (fun slot -> slot.Class.Mechanism = Chainsaw)
+        let active = baseWorld.Player.Slots |> Array.findIndex (fun slot -> slot.Class.Mechanism = Katana)
         let victim =
             { TestKit.soldier 74 (Vector3(0.0f, 0.0f, -0.82f)) with
                 Facing = MathF.PI
-                Health = Units.health 8.0f }
+                Health = Units.health 100.0f }
         let world =
             { baseWorld with
                 Level = openLevel
@@ -882,5 +879,6 @@ module CombatTests =
         Assert.True(after.Soldiers[0].IsDead)
         Assert.True(Map.containsKey victim.Id after.Dismemberments)
         let cut = after.Dismemberments[victim.Id]
+        Assert.Equal(CutNeck, cut.Site)
         Assert.InRange(cut.Fraction, 0.12f, 0.88f)
         Assert.Contains(events, function Dismembered(id, _, descriptor) when id = victim.Id && descriptor = cut -> true | _ -> false)

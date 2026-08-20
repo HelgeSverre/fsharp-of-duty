@@ -28,7 +28,6 @@ module Sim =
            Tuning.weaponSlot Tuning.harpoonGun 4
            Tuning.weaponSlot Tuning.bow 3
            Tuning.weaponSlot Tuning.laserPointer 1
-           Tuning.weaponSlot Tuning.electricChainsaw 1
            Tuning.weaponSlot Tuning.katana 0 |]
 
     /// The paintball round loadout opens on the Thompson.
@@ -311,7 +310,7 @@ module Sim =
                     | HitConfirmed(victim, true) ->
                         shotEvents.Add(Kill(Some armedPlayer.Id, victim, result.Weapon.Class.Name, false))
                     | _ -> ()
-            | Chainsaw | Katana ->
+            | Katana ->
                 match shot.Melee with
                 | None -> ()
                 | Some attack ->

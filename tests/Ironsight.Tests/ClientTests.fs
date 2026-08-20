@@ -9,6 +9,17 @@ open Xunit
 
 module ClientTests =
     [<Fact>]
+    let ``katana viewmodel travels left to right and up to down`` () =
+        let tip = -Vector3.UnitZ
+        let primaryStart = Vector3.Transform(tip, Matrix4x4.CreateRotationY(ViewmodelAnimation.katanaYaw true (Some 0.0f) (Some KatanaSweep)))
+        let primaryEnd = Vector3.Transform(tip, Matrix4x4.CreateRotationY(ViewmodelAnimation.katanaYaw true (Some 0.71f) (Some KatanaSweep)))
+        Assert.True(primaryStart.X < primaryEnd.X, $"primary moved {primaryStart.X} -> {primaryEnd.X}, expected left -> right")
+
+        let overheadStart = Vector3.Transform(tip, Matrix4x4.CreateRotationX(ViewmodelAnimation.katanaPitch (Some 0.0f) (Some KatanaOverhead)))
+        let overheadEnd = Vector3.Transform(tip, Matrix4x4.CreateRotationX(ViewmodelAnimation.katanaPitch (Some 0.71f) (Some KatanaOverhead)))
+        Assert.True(overheadStart.Y > overheadEnd.Y, $"alternate moved {overheadStart.Y} -> {overheadEnd.Y}, expected up -> down")
+
+    [<Fact>]
     let ``hud ui scale maps framebuffer pixels to logical window units`` () =
         Assert.Equal(1.0f, HudLayout.uiScale 1280 1280)
         Assert.Equal(2.0f, HudLayout.uiScale 2560 1280)

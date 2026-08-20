@@ -56,7 +56,6 @@ type MatchHost(mode: GameMode, ?matchLevel: Level, ?disconnectGrace: TimeSpan, ?
     // Rewindable anatomical pose, not just feet. Revision rejects a sample
     // from the same id's previous life after a respawn.
     let mutable positionHistory: Map<int64, Map<EntityId, struct (Vector3 * float32 * Stance * int64)>> = Map.empty
-    let mutable heldButtons: Map<EntityId, InputButtons> = Map.empty
     // Session tokens are a convenience for reconnecting after a disconnect, not
     // a security boundary: the server does no authentication and a token simply
     // resumes whichever player slot it was minted for.
@@ -283,7 +282,6 @@ type MatchHost(mode: GameMode, ?matchLevel: Level, ?disconnectGrace: TimeSpan, ?
                 disconnectedSince <- Map.add id DateTimeOffset.UtcNow disconnectedSince
                 pendingInputs <- Map.remove id pendingInputs
                 inputCredits <- Map.remove id inputCredits
-                heldButtons <- Map.remove id heldButtons
                 ops <- Set.remove id ops
                 kicked <- Set.remove id kicked
                 // Announced on disconnect, not on grace expiry, so the feed
@@ -373,7 +371,6 @@ type MatchHost(mode: GameMode, ?matchLevel: Level, ?disconnectGrace: TimeSpan, ?
                 disconnectedSince <- Map.remove id disconnectedSince
                 pendingInputs <- Map.remove id pendingInputs
                 inputCredits <- Map.remove id inputCredits
-                heldButtons <- Map.remove id heldButtons
                 // Not in RemovePlayer: the slot is still resumable during the
                 // grace, and clearing there would let a flooder reset his chat
                 // and op-guess throttles with a leave/rejoin round trip.
@@ -411,7 +408,6 @@ type MatchHost(mode: GameMode, ?matchLevel: Level, ?disconnectGrace: TimeSpan, ?
             let mutable rng = state.Rng
             let shots = ResizeArray<EntityId * Vector3 * Vector3 * float32<hp> * float32 * float32 * WeaponKind * MeleeAttack option * Vector3 * float32 * float32 * string * int64>()
             let thrownGrenades = ResizeArray<Grenade>()
-            let mutable sawStepped = Set.empty<EntityId>
             let respawnedPlayers =
                 lifecycleState.Players
                 |> Map.map (fun id player ->
@@ -426,17 +422,13 @@ type MatchHost(mode: GameMode, ?matchLevel: Level, ?disconnectGrace: TimeSpan, ?
                         if remaining <= Units.seconds 0.0f then freshSpawn lifecycleState.Tick id player
                         else { player with RespawnIn = remaining })
             let stepFrame id (player: NetworkPlayer) (input: InputFrame) (estimatedTick: int64) acknowledge =
-                if acknowledge then heldButtons <- Map.add id input.Buttons heldButtons
                 let canEngage = lifecycleState.Phase = Playing
                 // Same selection rules as the campaign: the number keys start a
                 // switch, and a switch in flight freezes the weapon clock.
                 let switched, weaponLocked = Sim.stepWeaponSwitch input (toPlayer player)
                 // Shared with Sim.step's campaign/round-bot tick: movement,
                 // weapon cycling, grenade hand, footstep material, shot rays.
-                let activeMechanism = switched.Slots[switched.Active].Class.Mechanism
-                let stepWeapon = not weaponLocked && not (activeMechanism = Chainsaw && Set.contains id sawStepped)
-                let result = Sim.stepLocomotion Tuning.TickDuration level lifecycleState.Tick input stepWeapon canEngage canEngage switched &rng
-                if activeMechanism = Chainsaw then sawStepped <- Set.add id sawStepped
+                let result = Sim.stepLocomotion Tuning.TickDuration level lifecycleState.Tick input (not weaponLocked) canEngage canEngage switched &rng
                 result.Thrown |> Option.iter thrownGrenades.Add
                 result.FootStep |> Option.iter emit
                 if not result.Shots.IsEmpty then
@@ -503,11 +495,7 @@ type MatchHost(mode: GameMode, ?matchLevel: Level, ?disconnectGrace: TimeSpan, ?
                                 match current.Slots[current.Active].State with
                                 | Drawing _ -> InputButtons.Fire
                                 | _ -> InputButtons.None
-                            let chainButton =
-                                match current.Slots[current.Active].Class.Mechanism, Map.tryFind id heldButtons with
-                                | Chainsaw, Some buttons when Input.hasButton InputButtons.Fire buttons -> InputButtons.Fire
-                                | _ -> InputButtons.None
-                            let idleButtons = grenadeButton ||| bowButton ||| chainButton
+                            let idleButtons = grenadeButton ||| bowButton
                             let idle = { Sequence = current.LastInputSequence; Move = Vector2.Zero; Look = Vector2.Zero; Buttons = idleButtons }
                             current <- stepFrame id current idle lifecycleState.Tick false
                         if not (List.isEmpty remaining) then leftoverInputs <- Map.add id remaining leftoverInputs

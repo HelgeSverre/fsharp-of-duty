@@ -10,6 +10,38 @@ open Ironsight
 open Ironsight.ProcGen
 open Silk.NET.OpenGL
 
+[<RequireQualifiedAccess>]
+module ViewmodelAnimation =
+    let private ease value =
+        let value = MathEx.clamp01 value
+        value * value * (3.0f - 2.0f * value)
+
+    let private lerpScalar a b amount = a + (b - a) * amount
+
+    let katanaYaw isKatana progress attack =
+        match progress, attack with
+        | Some value, Some KatanaSweep when value < 0.72f ->
+            // Positive yaw places the -Z blade tip left on screen; negative
+            // yaw places it right. This is one uninterrupted left-to-right cut.
+            lerpScalar 1.35f -1.35f (ease (value / 0.72f))
+        | Some value, Some KatanaSweep ->
+            lerpScalar -1.35f 1.05f (ease ((value - 0.72f) / 0.28f))
+        | Some value, Some KatanaOverhead when value < 0.72f -> 0.0f
+        | Some value, Some KatanaOverhead ->
+            lerpScalar 0.0f 1.05f (ease ((value - 0.72f) / 0.28f))
+        | None, _ when isKatana -> 1.05f
+        | _ -> 0.0f
+
+    let katanaPitch progress attack =
+        match progress, attack with
+        | Some value, Some KatanaOverhead when value < 0.72f ->
+            // Positive pitch raises the -Z blade tip; negative lowers it.
+            // Starting raised avoids showing a backwards/upward attack phase.
+            lerpScalar 1.20f -0.70f (ease (value / 0.72f))
+        | Some value, Some KatanaOverhead ->
+            lerpScalar -0.70f 0.0f (ease ((value - 0.72f) / 0.28f))
+        | _ -> 0.0f
+
 /// A recent lethal-looking event kept around briefly so a soldier who dies
 /// this frame can be ragdolled away from what killed them. Radius > 0 marks a
 /// radial (explosion) source; otherwise Push is the directional kick.
@@ -571,7 +603,6 @@ type Renderer(gl: GL) =
             let mechanismPose =
                 match activeSlot.State, activeClass.Mechanism with
                 | Drawing charge, Bow -> Tuning.drawPose charge
-                | Cooling _, Chainsaw -> float32 world.Tick * 0.37f
                 | _ -> harpoonPose
             let meshKey = weaponMeshKey weaponName paintKey localMarks mechanismPose
             if loadedGun <> meshKey then uploadGun weaponName world mechanismPose
@@ -612,36 +643,8 @@ type Renderer(gl: GL) =
                         let total = 60.0f / activeClass.RoundsPerMin
                         Some(1.0f - Units.raw remaining / max 0.01f total |> MathEx.clamp01)
                     | _ -> None
-                let ease value =
-                    let value = MathEx.clamp01 value
-                    value * value * (3.0f - 2.0f * value)
-                let lerpScalar a b amount = a + (b - a) * amount
-                let katanaSweepYaw =
-                    match katanaProgress, activeSlot.LastMelee with
-                    | Some progress, Some KatanaSweep when progress < 0.08f ->
-                        lerpScalar 0.0f -1.35f (ease (progress / 0.08f))
-                    | Some progress, Some KatanaSweep when progress < 0.76f ->
-                        // Travel from the opposite side from the old animation,
-                        // through a single broad 155-degree cutting stroke.
-                        lerpScalar -1.35f 1.35f (ease ((progress - 0.08f) / 0.68f))
-                    | Some progress, Some KatanaSweep ->
-                        lerpScalar 1.35f 0.0f (ease ((progress - 0.76f) / 0.24f))
-                    | _ -> 0.0f
-                let katanaOverheadPitch =
-                    match katanaProgress, activeSlot.LastMelee with
-                    | Some progress, Some KatanaOverhead when progress < 0.10f ->
-                        lerpScalar 0.0f 1.15f (ease (progress / 0.10f))
-                    | Some progress, Some KatanaOverhead when progress < 0.72f ->
-                        // Raised blade travels downward past neutral instead of
-                        // performing the previous upward/backward swing.
-                        lerpScalar 1.15f -0.65f (ease ((progress - 0.10f) / 0.62f))
-                    | Some progress, Some KatanaOverhead ->
-                        lerpScalar -0.65f 0.0f (ease ((progress - 0.72f) / 0.28f))
-                    | _ -> 0.0f
-                let sawVibration =
-                    match activeSlot.State, activeClass.Mechanism with
-                    | Cooling _, Chainsaw -> MathF.Sin(float32 world.Tick * 2.7f) * 0.010f
-                    | _ -> 0.0f
+                let katanaSweepYaw = ViewmodelAnimation.katanaYaw (activeClass.Mechanism = Katana) katanaProgress activeSlot.LastMelee
+                let katanaOverheadPitch = ViewmodelAnimation.katanaPitch katanaProgress activeSlot.LastMelee
                 // Sprinting lowers the weapon across the chest.
                 sprintBlend <- sprintBlend + ((if world.Player.Sprinting then 1.0f else 0.0f) - sprintBlend) * 0.18f
                 let view = Vector2(world.Player.Yaw, world.Player.Pitch)
@@ -654,11 +657,11 @@ type Renderer(gl: GL) =
                         0.34f * (1.0f - ads) + bowAdsOffset + MathF.Sin(phase) * 0.012f * bob - viewSway.X + sprintBlend * 0.10f,
                         -0.31f + ads * 0.10f + MathF.Abs(MathF.Cos phase) * 0.012f * bob + viewSway.Y
                         - reloadPose * 0.20f - switchPose * 0.25f - boltPose * 0.045f - sprintBlend * 0.14f,
-                        -0.68f - ads * 0.05f + recoil * 0.55f + boltPose * 0.07f + sawVibration)
+                        -0.68f - ads * 0.05f + recoil * 0.55f + boltPose * 0.07f)
                 let model =
                     Matrix4x4.CreateRotationX(-recoil * 0.75f + sprintBlend * 0.42f + katanaOverheadPitch)
                     * Matrix4x4.CreateRotationY(-sprintBlend * 0.38f + katanaSweepYaw)
-                    * Matrix4x4.CreateRotationZ(-0.035f * (1.0f - ads) + reloadPose * 0.32f + boltPose * 0.22f + sawVibration)
+                    * Matrix4x4.CreateRotationZ(-0.035f * (1.0f - ads) + reloadPose * 0.32f + boltPose * 0.22f)
                     * Matrix4x4.CreateTranslation position
                 let projection = Matrix4x4.CreatePerspectiveFieldOfView(55.0f * MathF.PI / 180.0f, float32 width / float32 (max 1 height), 0.03f, 8.0f)
                 let gunMatrix = model * projection

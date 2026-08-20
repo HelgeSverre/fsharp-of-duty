@@ -36,7 +36,6 @@ module OnlineWorld =
         | "melee-trace" ->
             let attack =
                 match event.Text with
-                | "ChainContact" -> ChainContact
                 | "KatanaOverhead" -> KatanaOverhead
                 | _ -> KatanaSweep
             Some(MeleeTrace(EntityId event.EntityId, event.Position, event.Position + event.Direction * event.Value, attack))
