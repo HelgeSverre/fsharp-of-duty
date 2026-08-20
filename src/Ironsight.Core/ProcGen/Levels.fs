@@ -10,12 +10,13 @@ module Levels =
     let trainingYard = LevelCompile.compile TrainingYardMap.spec
     let omahaDraw = LevelCompile.compile OmahaDrawMap.spec
     let rust = LevelCompile.compile RustMap.spec
+    let killhouse = LevelCompile.compile KillhouseMap.spec
 
     /// Uncompiled specs, in the same order as `all` — the source material for
     /// MapFile encoding (map downloads, exports, identity hashes).
     let specs =
         [| PaintballMap.spec; ScrapDepotMap.spec; CanalYardMap.spec; TrainingYardMap.spec
-           OmahaDrawMap.spec; RustMap.spec |]
+           OmahaDrawMap.spec; RustMap.spec; KillhouseMap.spec |]
 
     /// Short aliases shared by the client's map menu / argv and the server's
     /// IRONSIGHT_LEVEL — the one table both sides resolve builtin maps from.
@@ -26,14 +27,15 @@ module Levels =
         | "canal" -> Some CanalYardMap.spec
         | "omaha" -> Some OmahaDrawMap.spec
         | "rust" -> Some RustMap.spec
+        | "killhouse" -> Some KillhouseMap.spec
         // Training Yard stays as the dev/test fixture but is not on the menu.
         | "training" -> Some TrainingYardMap.spec
         | _ -> None
 
     /// The aliases offered on the offline map menu, in menu order.
-    let offlineAliases = [| "paintball"; "depot"; "canal"; "omaha"; "rust" |]
+    let offlineAliases = [| "paintball"; "depot"; "canal"; "omaha"; "rust"; "killhouse" |]
 
-    let all = [| paintballArena; scrapDepot; canalYard; trainingYard; omahaDraw; rust |]
+    let all = [| paintballArena; scrapDepot; canalYard; trainingYard; omahaDraw; rust; killhouse |]
 
     let byName name = all |> Array.tryFind (fun level -> level.Name = name)
 

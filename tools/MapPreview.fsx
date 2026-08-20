@@ -22,8 +22,14 @@ let requested =
     | None -> "paintball"
 
 let level =
+    let wanted = requested.ToLowerInvariant()
+    // Exact name first, then the alias table, then a substring: "killhouse"
+    // must not land on "Paintball Killhouse".
     Levels.all
-    |> Array.tryFind (fun candidate -> candidate.Name.ToLowerInvariant().Contains(requested.ToLowerInvariant()))
+    |> Array.tryFind (fun candidate -> candidate.Name.ToLowerInvariant() = wanted)
+    |> Option.orElseWith (fun () -> Levels.byAlias wanted)
+    |> Option.orElseWith (fun () ->
+        Levels.all |> Array.tryFind (fun candidate -> candidate.Name.ToLowerInvariant().Contains wanted))
     |> function
         | Some found -> found
         | None ->

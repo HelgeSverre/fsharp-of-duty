@@ -304,7 +304,7 @@ module LevelCompile =
     /// interior used to have no navmesh at all: every node climbed onto the
     /// roof and the room underneath, which is the entire playable space, was
     /// invisible to the bots.
-    let surfaceLayers (mesh: CollisionMesh) (x: float32) (z: float32) =
+    let surfaceLayersWhere (walkableOnly: bool) (mesh: CollisionMesh) (x: float32) (z: float32) =
         let cell value = int (MathF.Floor(value / mesh.CellSize))
         let indices =
             match Map.tryFind (struct (cell x, cell z)) mesh.Cells with
@@ -314,7 +314,7 @@ module LevelCompile =
         let hits = ResizeArray<struct (float32 * Vector3)>()
         for index in indices do
             let triangle = mesh.Triangles[index]
-            if triangle.Normal.Y >= Tuning.MaxSlopeCosine then
+            if triangle.Normal.Y >= (if walkableOnly then Tuning.MaxSlopeCosine else 0.05f) then
                 match MathEx.rayTriangle origin -Vector3.UnitY triangle.A triangle.B triangle.C with
                 | ValueSome distance -> hits.Add(struct (origin.Y - distance, triangle.Normal))
                 | ValueNone -> ()
@@ -331,6 +331,8 @@ module LevelCompile =
             []
         |> List.rev
         |> List.toArray
+
+    let surfaceLayers mesh x z = surfaceLayersWhere true mesh x z
 
     /// Any ground at all, used to settle spawns and cover onto the map.
     let surfaceUnderneath mesh x z = surfaceColumnWhere false mesh x z
@@ -542,16 +544,20 @@ module LevelCompile =
                             extra[from] <- fresh
                 for volume in ladders do
                     let centre = (volume.Min + volume.Max) * 0.5f
+                    // Horizontal and vertical separately: judged on straight-line
+                    // distance alone, a ceiling two metres over the ladder head
+                    // beats the deck the ladder actually serves.
                     let nearest (height: float32) =
-                        let target = Vector3(centre.X, height, centre.Z)
                         nodes
-                        |> Array.mapi (fun index node -> index, Vector3.DistanceSquared(node.Position, target))
-                        |> Array.minBy snd
-                    let bottom, bottomDistance = nearest volume.Min.Y
-                    let top, topDistance = nearest volume.Max.Y
-                    // Both ends must actually be near the ladder, or a lone
-                    // ladder in open ground would rope two unrelated nodes.
-                    if bottom <> top && bottomDistance < 9.0f && topDistance < 9.0f then join bottom top
+                        |> Array.mapi (fun index node -> index, node)
+                        |> Array.filter (fun (_, node) -> abs (node.Position.Y - height) <= 1.0f)
+                        |> Array.map (fun (index, node) ->
+                            index, Vector2.DistanceSquared(Vector2(node.Position.X, node.Position.Z), Vector2(centre.X, centre.Z)))
+                        |> Array.filter (fun (_, distance) -> distance < 9.0f)
+                        |> function [||] -> None | found -> Some(Array.minBy snd found |> fst)
+                    match nearest volume.Min.Y, nearest volume.Max.Y with
+                    | Some bottom, Some top when bottom <> top -> join bottom top
+                    | _ -> ()
                 nodes
                 |> Array.mapi (fun index node ->
                     match extra.TryGetValue index with
@@ -613,12 +619,49 @@ module LevelCompile =
             |> compileCollision
         vertices, indices, collision
 
-    /// Drops a point onto whatever ground lies beneath it, so spawns and cover
-    /// never keep the Y the DSL author wrote and end up floating or buried.
+    /// Drops nav nodes no spawned entity could ever walk to. A roof is a
+    /// walkable surface like any other, so a roofed hall grows a full grid of
+    /// nodes across its lid that nothing can reach — more than half the navmesh
+    /// on an indoor map. Pruning them keeps A* working on the graph that
+    /// actually exists.
+    let private pruneUnreachable (spawns: struct (Team option * Vector3) array) (nodes: NavNode array) =
+        if Array.isEmpty nodes || Array.isEmpty spawns then nodes
+        else
+            let seen = HashSet<int>()
+            let queue = Queue<int>()
+            for struct (_, position) in spawns do
+                let start =
+                    nodes
+                    |> Array.mapi (fun index node -> index, Vector3.DistanceSquared(node.Position, position))
+                    |> Array.minBy snd
+                    |> fst
+                if seen.Add start then queue.Enqueue start
+            while queue.Count > 0 do
+                for neighbour in nodes[queue.Dequeue()].Neighbours do
+                    if seen.Add neighbour then queue.Enqueue neighbour
+            let kept = [| for index in 0 .. nodes.Length - 1 do if seen.Contains index then yield index |]
+            let remapped = Dictionary<int, int>()
+            kept |> Array.iteri (fun position index -> remapped[index] <- position)
+            kept
+            |> Array.map (fun index ->
+                { nodes[index] with
+                    Neighbours = nodes[index].Neighbours |> Array.choose (fun n -> match remapped.TryGetValue n with true, v -> Some v | _ -> None) })
+
+    /// Drops a point onto the ground nearest the height it was authored at, so
+    /// spawns and cover never keep the Y the DSL author wrote and end up
+    /// floating or buried.
+    ///
+    /// Nearest, not highest: indoors those are different places, and taking the
+    /// highest put every spawn in a roofed hall on top of the building.
     let private snapToGround (collision: CollisionMesh) (position: Vector3) =
-        match surfaceUnderneath collision position.X position.Z with
-        | ValueSome(struct (height, _)) -> Vector3(position.X, height, position.Z)
-        | ValueNone -> position
+        match surfaceLayersWhere false collision position.X position.Z with
+        | [||] -> position
+        | layers ->
+            // Ties go to the lower surface: a spawn written at floor level
+            // belongs on the floor, not on the crate standing beside it.
+            let struct (height, _) =
+                layers |> Array.minBy (fun (struct (height, _)) -> abs (height - position.Y), height)
+            Vector3(position.X, height, position.Z)
 
     let compile (spec: LevelSpec) =
         let streets = spec.Items |> List.choose (function Street(length, width, surface) -> Some(length, width, surface) | _ -> None)
@@ -812,9 +855,10 @@ module LevelCompile =
                             let angle = rank * 2.3999632f
                             let radius = 2.0f + MathF.Sqrt(rank) * 0.85f
                             Vector3(MathF.Cos(angle) * radius, 0.0f, MathF.Sin(angle) * radius)
-                    let flat = center + offset
-                    // Snapped to the ground once the collision mesh exists, below.
-                    spawns.Add(struct (Some team, Vector3(flat.X, 0.0f, flat.Z)))
+                    // The authored height is kept, not flattened: it is what
+                    // picks which floor of a building the squad spawns on once
+                    // the collision mesh exists and these are snapped, below.
+                    spawns.Add(struct (Some team, center + offset))
         let brushArray = brushes.ToArray()
         let brushGrid = compileBrushGrid brushArray
         let slopedArray = sloped.ToArray()
@@ -833,6 +877,7 @@ module LevelCompile =
             { Min = Vector3(bounds.Min.X, lowest, bounds.Min.Z)
               Max = Vector3(bounds.Max.X, max bounds.Max.Y (highest + 4.0f), bounds.Max.Z) }
         let vertices, indices, collision = buildGeometry brushArray slopedArray ladderArray waterLevel worldBounds
+        let snappedSpawns = spawns.ToArray() |> Array.map (fun struct (team, position) -> struct (team, snapToGround collision position))
         { Name = spec.Name
           Revision = 0
           Bounds = worldBounds
@@ -847,16 +892,14 @@ module LevelCompile =
           Cover =
             covers.ToArray()
             |> Array.map (fun point -> { point with Pos = snapToGround collision point.Pos })
-          Spawns =
-            spawns.ToArray()
-            |> Array.map (fun struct (team, position) -> struct (team, snapToGround collision position))
+          Spawns = snappedSpawns
           MountedGuns = mountedGuns.ToArray()
           MissionRules =
             spec.Items
             |> List.choose (function MissionRule(condition, action) -> Some { Condition = condition; Action = action; Fired = false } | _ -> None)
             |> List.toArray
           Ladders = ladderArray
-          Nav = compileNav bounds brushArray brushGrid ladderArray collision
+          Nav = compileNav bounds brushArray brushGrid ladderArray collision |> pruneUnreachable snappedSpawns
           WaterLevel = waterLevel
           Vertices = vertices
           Indices = indices }
@@ -872,6 +915,6 @@ module LevelCompile =
             Brushes = brushes
             BrushGrid = brushGrid
             Collision = rebuiltCollision
-            Nav = compileNav level.Bounds brushes brushGrid level.Ladders rebuiltCollision
+            Nav = compileNav level.Bounds brushes brushGrid level.Ladders rebuiltCollision |> pruneUnreachable level.Spawns
             Vertices = vertices
             Indices = indices }

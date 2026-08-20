@@ -49,8 +49,11 @@ module CanalYardMap =
               LevelDsl.spawnSquad Allies 1 (Vector3(-9.0f, 0.0f, 37.0f))
               LevelDsl.spawnSquad Allies 1 (Vector3(9.0f, 0.0f, 37.0f))
               LevelDsl.spawnSquad Allies 1 (Vector3(0.0f, 0.0f, 37.0f))
-              LevelDsl.spawnSquad Axis 1 (Vector3(16.0f, 0.0f, -34.0f))
-              LevelDsl.spawnSquad Axis 1 (Vector3(20.0f, 0.0f, -32.0f))
+              // On the raised east bank, said out loud: spawns snap to the
+              // ground nearest the height they are written at, so a bank spawn
+              // written at y = 0 lands in the yard below it.
+              LevelDsl.spawnSquad Axis 1 (Vector3(16.0f, 1.2f, -34.0f))
+              LevelDsl.spawnSquad Axis 1 (Vector3(20.0f, 1.2f, -32.0f))
               LevelDsl.spawnSquad Axis 1 (Vector3(-12.0f, 0.0f, -35.0f))
               LevelDsl.spawnSquad Axis 1 (Vector3(-4.0f, 0.0f, -35.0f))
               LevelDsl.spawnSquad Axis 1 (Vector3(4.0f, 0.0f, -35.0f))

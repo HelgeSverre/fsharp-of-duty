@@ -64,6 +64,33 @@ module CombatTests =
             Assert.True(world.Round.IsSome, $"{alias} has no round")
 
     [<Fact>]
+    let ``killhouse is an indoors map you can fight through`` () =
+        let level = Levels.killhouse
+        Assert.Single level.Ladders |> ignore
+        // Roofed, and the roof is over your head rather than under your feet.
+        Assert.True(level.Bounds.Max.Y > 7.0f)
+        let nearest (target: Vector3) =
+            level.Nav |> Array.mapi (fun index node -> index, Vector3.DistanceSquared(node.Position, target)) |> Array.minBy snd |> fst
+        // Spawns land on the floor of the hall, not on top of the building.
+        for struct (_, position) in level.Spawns do
+            Assert.InRange(position.Y, -0.1f, 0.5f)
+        // Everything that matters is reachable from a spawn: the far team, and
+        // the tower deck by way of its ladder.
+        let reachable =
+            let seen = System.Collections.Generic.HashSet<int>()
+            let queue = System.Collections.Generic.Queue<int>()
+            let start = nearest (level.Spawns |> Array.pick (fun struct (team, p) -> if team = Some Allies then Some p else None))
+            queue.Enqueue start
+            seen.Add start |> ignore
+            while queue.Count > 0 do
+                for neighbour in level.Nav[queue.Dequeue()].Neighbours do
+                    if seen.Add neighbour then queue.Enqueue neighbour
+            seen
+        let axisSpawn = level.Spawns |> Array.pick (fun struct (team, p) -> if team = Some Axis then Some p else None)
+        Assert.True(reachable.Contains(nearest axisSpawn), "the far spawn is unreachable")
+        Assert.True(reachable.Contains(nearest (Vector3(0.3f, 4.9f, 1.3f))), "the tower deck is unreachable")
+
+    [<Fact>]
     let ``rust compiles with a standing derrick and reachable high ground`` () =
         let level = Levels.rust
         Assert.NotEmpty level.Nav
@@ -81,11 +108,13 @@ module CombatTests =
                 Assert.False(obstructed, $"{team} spawn buried at {position}")
         // The derrick is the silhouette: it has to actually reach into the sky.
         Assert.True(level.Bounds.Max.Y > 24.0f, $"derrick too short, world tops out at {level.Bounds.Max.Y}")
-        // And the vertical play has to be navigable, not just standable: the
-        // catwalks and the derrick pad only matter if bots can get up there.
+        // And the vertical play has to be navigable, not just standable. Nav
+        // now keeps only what a spawn can reach, so a node above the yard floor
+        // existing at all means something can walk to it — the derrick pad's
+        // ramp was 55 degrees and ran through a building, and this is the
+        // assertion that caught both.
         let high = level.Nav |> Array.filter (fun node -> node.Position.Y > 3.0f)
-        Assert.True(high.Length >= 4, $"only {high.Length} nav nodes above the yard floor")
-        Assert.True(high |> Array.exists (fun node -> node.Neighbours.Length > 0), "high ground is not linked to anything")
+        Assert.True(high.Length >= 4, $"only {high.Length} reachable nav nodes above the yard floor")
 
     [<Fact>]
     let ``head capsule applies lethal multiplier`` () =

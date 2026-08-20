@@ -105,13 +105,18 @@ module RustMap =
                   yield LevelDsl.fence a b
 
               // ---- The derrick, on its concrete pad ----
-              yield LevelDsl.block (Vector3(-11.9f, 1.75f, 11.8f)) (Vector3(7.2f, 3.5f, 6.7f)) Concrete
+              yield LevelDsl.block (Vector3(-11.9f, 1.75f, 11.8f)) (Vector3(7.2f, 3.5f, 5.4f)) Concrete
               yield LevelDsl.prop (derrick 22.4f 5.6f 1.9f) (Vector3(-11.9f, 3.5f, 11.8f)) 0.0f
               // Ramp onto the pad, so the tower base is a real position rather
-              // than scenery: 3.5 m over 6 m is inside the slope limit.
-              yield LevelDsl.ramp (Vector3(-11.9f, 0.0f, 17.0f)) (Vector3(-11.9f, 3.5f, 14.6f)) 3.0f Concrete
-              // Squat block north of the pad, climbable from it.
-              yield LevelDsl.block (Vector3(-12.7f, 4.0f, 17.6f)) (Vector3(4.2f, 8.0f, 4.1f)) Concrete
+              // than scenery. Long on purpose: at 2.4 m of run this was 55
+              // degrees, past the walk limit, and even a legal 35 degree ramp
+              // left the last stride onto the pad too tall for the navmesh to
+              // link. Over 7.5 m the grade is gentle enough that bots walk up
+              // it too.
+              yield LevelDsl.ramp (Vector3(-11.9f, 0.0f, 22.0f)) (Vector3(-11.9f, 3.5f, 14.5f)) 3.0f Concrete
+              // Squat block west of the pad. It sat north of it and the ramp
+              // ran straight through it, which is why nothing could walk up.
+              yield LevelDsl.block (Vector3(-17.5f, 4.0f, 17.6f)) (Vector3(4.2f, 8.0f, 4.1f)) Concrete
 
               // ---- Central structure: two catwalk floors in an open frame ----
               yield LevelDsl.block (Vector3(-3.3f, 4.6f, 1.3f)) (Vector3(6.1f, 0.3f, 10.4f)) RustedMetal

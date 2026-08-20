@@ -23,6 +23,7 @@
     <Compile Include="Maps/TrainingYard.fs" />
     <Compile Include="Maps/OmahaDraw.fs" />
     <Compile Include="Maps/Rust.fs" />
+    <Compile Include="Maps/Killhouse.fs" />
     <Compile Include="ProcGen/Levels.fs" />
     <Compile Include="Movement.fs" />
     <Compile Include="Weapons.fs" />
