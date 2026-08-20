@@ -53,6 +53,17 @@ type OnlinePlayer =
       BestStreak: int
       AcknowledgedInput: int64 }
 
+/// A server-owned projectile in flight. Velocity rides along so the client can
+/// carry one forward between the 20 Hz snapshots it arrives in — an arrow at
+/// 88 m/s moves four metres between them, which reads as teleporting.
+[<Struct>]
+type OnlineProjectile =
+    { OwnerId: int
+      Kind: string
+      Color: string
+      Position: Vector3
+      Velocity: Vector3 }
+
 [<Struct>]
 type OnlineGrenade =
     { OwnerId: int
@@ -80,6 +91,7 @@ type OnlineSnapshot =
       AxisScore: int
       Players: OnlinePlayer array
       Grenades: OnlineGrenade array
+      Projectiles: OnlineProjectile array
       Events: OnlineEvent array }
 
 /// Pure JSON -> snapshot decoding, lifted out of OnlineClient so the wire
@@ -206,6 +218,18 @@ module SnapshotWire =
                       Fuse = getFloat "fuse" value })
                 |> Seq.toArray
             | _ -> [||]
+        let projectiles =
+            match root.TryGetProperty "projectiles" with
+            | true, values ->
+                values.EnumerateArray()
+                |> Seq.map (fun value ->
+                    { OwnerId = getInt "ownerId" value
+                      Kind = getString "kind" value
+                      Color = getString "color" value
+                      Position = Vector3(getFloat "x" value, getFloat "y" value, getFloat "z" value)
+                      Velocity = Vector3(getFloat "vx" value, getFloat "vy" value, getFloat "vz" value) })
+                |> Seq.toArray
+            | _ -> [||]
         let events =
             match root.TryGetProperty "events" with
             | true, values ->
@@ -230,6 +254,7 @@ module SnapshotWire =
           AxisScore = getInt "axisScore" root
           Players = players
           Grenades = grenades
+          Projectiles = projectiles
           Events = events }
 
 type OnlineClient(serverUri: Uri, playerName: string, requestedMode: GameMode, weaponName: string, ?resumeToken: string, ?room: string) =
@@ -437,6 +462,10 @@ type OnlineClient(serverUri: Uri, playerName: string, requestedMode: GameMode, w
                         if index < first.Grenades.Length && first.Grenades[index].OwnerId = grenade.OwnerId then
                             { grenade with Position = Vector3.Lerp(first.Grenades[index].Position, grenade.Position, amount) }
                         else grenade)
+                // Projectiles are not blended between snapshots: they are
+                // spawned and consumed far too fast to pair up by index, and a
+                // wrong pairing lerps an arrow across the map. RenderInterpolation
+                // carries them forward on their own velocity instead.
                 Some { second with Players = players; Grenades = grenades })
 
     member _.CloseAsync() = task {

@@ -100,6 +100,21 @@ type PlayerSnapshot =
       acknowledgedInput: int64 }
 
 [<CLIMutable>]
+type ProjectileSnapshot =
+    { ownerId: int
+      /// Kind tag plus the one payload that matters to a viewer: the paint
+      /// colour of a paintball. Skewered victims and arrow damage stay
+      /// server-side — a spectator has no use for either.
+      kind: string
+      color: string
+      x: float32
+      y: float32
+      z: float32
+      vx: float32
+      vy: float32
+      vz: float32 }
+
+[<CLIMutable>]
 type GrenadeSnapshot =
     { ownerId: int
       x: float32
@@ -135,6 +150,7 @@ type SnapshotMessage =
       axisScore: int
       players: PlayerSnapshot array
       grenades: GrenadeSnapshot array
+      projectiles: ProjectileSnapshot array
       events: EventSnapshot array }
 
 [<CLIMutable>]
@@ -324,6 +340,27 @@ module Protocol =
                   y = grenade.Position.Y
                   z = grenade.Position.Z
                   fuse = Units.raw grenade.Fuse })
+        let projectiles =
+            state.Projectiles
+            |> Array.map (fun projectile ->
+                let (EntityId ownerId) = projectile.Owner
+                { ownerId = ownerId
+                  kind =
+                    match projectile.Kind with
+                    | PaintBall _ -> "paint"
+                    | NerfDart -> "dart"
+                    | BazookaRocket -> "rocket"
+                    | WaterDroplet -> "water"
+                    | NailRound -> "nail"
+                    | HarpoonRound _ -> "harpoon"
+                    | ArrowRound _ -> "arrow"
+                  color = (match projectile.Kind with PaintBall color -> string color | _ -> "")
+                  x = projectile.Position.X
+                  y = projectile.Position.Y
+                  z = projectile.Position.Z
+                  vx = projectile.Velocity.X
+                  vy = projectile.Velocity.Y
+                  vz = projectile.Velocity.Z })
         let eventSnapshot (replicated: ReplicatedEvent) =
             let make (kind: string) (entity: EntityId) (position: Vector3) (direction: Vector3) (value: float32) (text: string) =
                 let (EntityId entityId) = entity
@@ -394,6 +431,7 @@ module Protocol =
           axisScore = state.AxisScore
           players = players
           grenades = grenades
+          projectiles = projectiles
           events = events }
 
     /// One viewer's wire snapshot. A recipient tag is a routing hint, not a

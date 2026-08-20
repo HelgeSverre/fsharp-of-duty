@@ -2,6 +2,7 @@ namespace Ironsight.Shell
 
 open System.Numerics
 open Ironsight
+open Ironsight.ProcGen
 
 [<RequireQualifiedAccess>]
 module OnlineWorld =
@@ -180,6 +181,25 @@ module OnlineWorld =
           Suppression = 0.0f
           AnimPhase = snapshot.AnimPhase }
 
+    /// Server-owned projectiles, rebuilt for rendering only: the client never
+    /// steps these, so the fields the sim would need carry placeholder values.
+    let private toProjectile (projectile: OnlineProjectile) =
+        { Owner = EntityId projectile.OwnerId
+          Kind =
+            match projectile.Kind with
+            | "paint" -> PaintBall(Materials.parse projectile.Color |> Option.defaultValue PaintRed)
+            | "dart" -> NerfDart
+            | "rocket" -> BazookaRocket
+            | "water" -> WaterDroplet
+            | "nail" -> NailRound
+            | "harpoon" -> HarpoonRound []
+            | _ -> ArrowRound(Units.health 0.0f)
+          Position = projectile.Position
+          Velocity = projectile.Velocity
+          DistanceTravelled = 0.0f
+          Bounces = 0
+          Remaining = Units.seconds 1.0f }
+
     let private toGrenade (grenade: OnlineGrenade) =
         { Owner = EntityId grenade.OwnerId
           Position = grenade.Position
@@ -213,7 +233,9 @@ module OnlineWorld =
                 Player = predicted
                 Soldiers = soldiers
                 Grenades = grenades
-                SpecialProjectiles = [||]
+                SpecialProjectiles = snapshot.Projectiles |> Array.map toProjectile
+                // Decals stay offline. They are cosmetic, they accumulate, and
+                // a paint splat nobody can shoot is not worth a second stream.
                 PersistentMarks = [||]
                 ElementalStatus = Map.empty
                 Dismemberments = dismemberments
@@ -239,4 +261,7 @@ module OnlineWorld =
                         Behavior = if remote.Alive then soldier.Behavior else Dying(Units.seconds 0.7f) }
                 | _ -> soldier)
         let grenades = snapshot.Grenades |> Array.map toGrenade
-        { world with Soldiers = soldiers; Grenades = grenades }
+        { world with
+            Soldiers = soldiers
+            Grenades = grenades
+            SpecialProjectiles = snapshot.Projectiles |> Array.map toProjectile }

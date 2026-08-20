@@ -150,13 +150,25 @@ module SpecialProjectiles =
             | [||] -> None
             | distances -> Some(Array.min distances)
 
-    let private ownerTeam owner (player: Player) (soldiers: Soldier array) =
-        if owner = player.Id then Some Allies
-        else soldiers |> Array.tryFind (fun soldier -> soldier.Id = owner) |> Option.map _.Team
+    /// Whether `target` is a valid victim of something `owner` fired. Campaign
+    /// play decides by team, but free-for-all has no teams to decide by, so the
+    /// rule is injected rather than assumed. Without this the server can only
+    /// ever run team rules, whatever mode the room is set to.
+    type Hostility = EntityId -> EntityId -> bool
 
-    let private trace owner origin direction distance collisionRadius hitsAnyTeam (level: Level) (player: Player) (soldiers: Soldier array) =
+    /// The campaign rule: anyone not on your side, and anyone whose side is
+    /// unknown. `player` is always Allies, matching the rest of the sim.
+    let teamHostility (player: Player) (soldiers: Soldier array) : Hostility =
+        let teamOf id =
+            if id = player.Id then Some Allies
+            else soldiers |> Array.tryFind (fun soldier -> soldier.Id = id) |> Option.map _.Team
+        fun owner target ->
+            match teamOf owner with
+            | None -> true
+            | Some source -> teamOf target |> Option.forall ((<>) source)
+
+    let private trace (hostility: Hostility) owner origin direction distance collisionRadius hitsAnyTeam (level: Level) (player: Player) (soldiers: Soldier array) =
         let hits = ResizeArray<Collision>()
-        let sourceTeam = ownerTeam owner player soldiers
         LevelCompile.trianglesAlongRay origin direction (distance + 0.06f) level
         |> Array.iter (fun triangle ->
             if Vector3.Dot(triangle.Normal, direction) < 0.0f then
@@ -165,7 +177,7 @@ module SpecialProjectiles =
                 | _ -> ())
         soldiers
         |> Array.iteri (fun index soldier ->
-            let hostile = hitsAnyTeam || (sourceTeam |> Option.forall ((<>) soldier.Team))
+            let hostile = hitsAnyTeam || hostility owner soldier.Id
             if soldier.IsAlive && soldier.Id <> owner && hostile then
                 match nearestCapsuleHit origin direction distance collisionRadius soldier.Stance soldier.Position with
                 | Some hitDistance ->
@@ -174,7 +186,7 @@ module SpecialProjectiles =
                     let normal = MathEx.normalizedOrZero (hit - centre)
                     hits.Add(Character(hitDistance, index, if normal.LengthSquared() < 0.01f then -direction else normal))
                 | None -> ())
-        let hostileToPlayer = hitsAnyTeam || (sourceTeam |> Option.exists ((=) Axis))
+        let hostileToPlayer = hitsAnyTeam || hostility owner player.Id
         if player.IsAlive && player.Id <> owner && hostileToPlayer then
             match nearestCapsuleHit origin direction distance collisionRadius player.Stance player.Position with
             | Some hitDistance ->
@@ -341,7 +353,7 @@ module SpecialProjectiles =
                     BurnOwner = if heat >= IgniteExposure then Some owner else current.BurnOwner }
         Map.add target next statuses
 
-    let applyFlameJet owner origin direction (level: Level) (player: Player) (soldiers: Soldier array) statuses =
+    let applyFlameJetWith (hostility: Hostility) owner origin direction (level: Level) (player: Player) (soldiers: Soldier array) statuses =
         let forward = MathEx.normalizedOrZero direction
         let surface = nearestSurface origin forward FlameRange level
         let reach = surface |> Option.map fst |> Option.defaultValue FlameRange
@@ -350,7 +362,6 @@ module SpecialProjectiles =
         events.Add(FlameStream(origin, endpoint))
         surface |> Option.iter (fun (_, normal) -> events.Add(FlameImpact(endpoint + normal * 0.025f, normal)))
         let mutable currentStatuses = statuses
-        let sourceTeam = ownerTeam owner player soldiers
         let characterContact stance position =
             Ballistics.hitCapsules stance position
             |> Array.tryPick (fun struct (low, high, capsuleRadius) ->
@@ -366,7 +377,7 @@ module SpecialProjectiles =
         let updatedSoldiers =
             soldiers
             |> Array.map (fun soldier ->
-                let hostile = sourceTeam |> Option.forall ((<>) soldier.Team)
+                let hostile = hostility owner soldier.Id
                 let contact = characterContact soldier.Stance soldier.Position
                 if soldier.IsAlive && soldier.Id <> owner && hostile && contact.IsSome then
                     let hitPosition = contact.Value
@@ -378,7 +389,7 @@ module SpecialProjectiles =
                     if not lethal then currentStatuses <- flameContact owner soldier.Id hitPosition currentStatuses events
                     { soldier with Health = health; Behavior = if lethal then Dying(Units.seconds 0.0f) else soldier.Behavior }
                 else soldier)
-        let hostilePlayer = sourceTeam |> Option.exists ((=) Axis)
+        let hostilePlayer = hostility owner player.Id
         let playerContact = characterContact player.Stance player.Position
         let updatedPlayer =
             if player.IsAlive && player.Id <> owner && hostilePlayer && playerContact.IsSome then
@@ -429,7 +440,7 @@ module SpecialProjectiles =
                 { player with Health = health; RegenIn = if health < player.Health then Tuning.RegenDelay else player.RegenIn }
         updatedPlayer, updatedSoldiers, remaining, List.ofSeq events
 
-    let stepWithStatus (dt: float32<s>) (level: Level) (player: Player) (soldiers: Soldier array) (projectiles: SpecialProjectile array) (existingMarks: PersistentMark array) statuses =
+    let stepWith (hostility: Hostility) (dt: float32<s>) (level: Level) (player: Player) (soldiers: Soldier array) (projectiles: SpecialProjectile array) (existingMarks: PersistentMark array) statuses =
         let seconds = Units.raw dt
         let active = ResizeArray<SpecialProjectile>()
         let marks = ResizeArray<PersistentMark>()
@@ -472,7 +483,7 @@ module SpecialProjectiles =
                 | ArrowRound _ -> 0.025f
                 | _ -> 0.0f
             let hitsAnyTeam = match projectile.Kind with HarpoonRound _ -> true | _ -> false
-            match trace projectile.Owner projectile.Position direction distance collisionRadius hitsAnyTeam level currentPlayer currentSoldiers with
+            match trace hostility projectile.Owner projectile.Position direction distance collisionRadius hitsAnyTeam level currentPlayer currentSoldiers with
             | None when projectile.Remaining > dt ->
                 active.Add { projectile with Position = projectile.Position + travel; DistanceTravelled = projectile.DistanceTravelled + distance; Remaining = projectile.Remaining - dt }
             | None -> ()
@@ -660,6 +671,14 @@ module SpecialProjectiles =
             |> Array.rev
             |> fun bounded -> if bounded.Length <= 256 then bounded else bounded[bounded.Length - 256 ..]
         active.ToArray(), Array.append durableMarks wetMarks, currentPlayer, currentSoldiers, currentStatuses, List.ofSeq events
+
+    /// Campaign entry points: the team rule, taken from the world they are
+    /// given, so callers that have no notion of hostility keep the old shape.
+    let stepWithStatus dt level player soldiers projectiles existingMarks statuses =
+        stepWith (teamHostility player soldiers) dt level player soldiers projectiles existingMarks statuses
+
+    let applyFlameJet owner origin direction level (player: Player) (soldiers: Soldier array) statuses =
+        applyFlameJetWith (teamHostility player soldiers) owner origin direction level player soldiers statuses
 
     let step dt level player soldiers projectiles existingMarks =
         let active, marks, nextPlayer, nextSoldiers, _, events = stepWithStatus dt level player soldiers projectiles existingMarks Map.empty

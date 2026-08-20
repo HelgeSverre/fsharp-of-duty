@@ -10,6 +10,7 @@ open Ironsight.Server
 open Ironsight.Shell
 open Xunit
 
+[<Collection("Process-global environment")>]
 module MapFileTests =
     // Heightfields carry a height function, so decoded specs cannot be compared
     // structurally. Identity is proven the way the game relies on it instead:

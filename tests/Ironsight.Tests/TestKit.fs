@@ -10,6 +10,13 @@ open Ironsight.Shell
 open Microsoft.AspNetCore.Hosting.Server
 open Microsoft.AspNetCore.Hosting.Server.Features
 open Microsoft.Extensions.DependencyInjection
+open Xunit
+
+/// Tests that change process-global configuration cannot overlap any other
+/// collection. Keeping that constraint local lets the pure suites run in
+/// parallel without racing IRONSIGHT_* environment variables.
+[<CollectionDefinition("Process-global environment", DisableParallelization = true)>]
+type ProcessGlobalEnvironmentCollection() = class end
 
 /// Shared test scaffolding: helpers duplicated verbatim (or near-verbatim)
 /// across multiple test files live here instead of being copy-pasted.

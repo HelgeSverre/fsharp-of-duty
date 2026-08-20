@@ -32,4 +32,11 @@ jobs:
         run: dotnet build Ironsight.sln --no-restore
 
       - name: Test
-        run: dotnet test Ironsight.sln --no-build --no-restore --nologo
+        run: dotnet test Ironsight.sln --no-build --no-restore --nologo --collect:"XPlat Code Coverage" --results-directory TestResults
+
+      - name: Upload coverage
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: TestResults/**/coverage.cobertura.xml
+          if-no-files-found: error

@@ -57,6 +57,12 @@ type MatchState =
       PhaseRemaining: float32<s>
       Players: Map<EntityId, NetworkPlayer>
       Grenades: Grenade array
+      /// Physical projectiles in flight — arrows, rockets, darts, nails. Owned
+      /// by the server exactly like grenades, and replicated the same way.
+      Projectiles: SpecialProjectile array
+      /// Burning and soaking, by victim. Server-owned so a flamethrower kill
+      /// cannot be a client's opinion.
+      Elemental: Map<EntityId, ElementalStatus>
       Events: ReplicatedEvent list
       NextEventId: int64
       AlliesScore: int
@@ -80,6 +86,8 @@ module Multiplayer =
           PhaseRemaining = Units.seconds 0.0f
           Players = Map.empty
           Grenades = [||]
+          Projectiles = [||]
+          Elemental = Map.empty
           Events = []
           NextEventId = 1L
           AlliesScore = 0

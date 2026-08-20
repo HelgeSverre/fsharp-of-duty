@@ -7,14 +7,16 @@ open Ironsight.ProcGen
 open Ironsight.Shell
 open Xunit
 
+[<Collection("Process-global environment")>]
 module ClientTests =
-    [<Fact>]
-    let ``gamepad look sensitivity eases to half speed during ADS`` () =
-        Assert.Equal(1.0f, InputTuning.gamepadAdsScale 0.0f)
-        Assert.Equal(0.75f, InputTuning.gamepadAdsScale 0.5f)
-        Assert.Equal(0.5f, InputTuning.gamepadAdsScale 1.0f)
-        Assert.Equal(1.0f, InputTuning.gamepadAdsScale -1.0f)
-        Assert.Equal(0.5f, InputTuning.gamepadAdsScale 2.0f)
+    [<Theory>]
+    [<InlineData(0.0f, 1.0f)>]
+    [<InlineData(0.5f, 0.75f)>]
+    [<InlineData(1.0f, 0.5f)>]
+    [<InlineData(-1.0f, 1.0f)>]
+    [<InlineData(2.0f, 0.5f)>]
+    let ``gamepad look sensitivity eases to half speed during ADS`` ads expected =
+        Assert.Equal(expected, InputTuning.gamepadAdsScale ads)
 
     [<Fact>]
     let ``katana viewmodel travels left to right and up to down`` () =
@@ -678,6 +680,7 @@ module ClientTests =
                         Deaths = 2
                         AcknowledgedInput = 9L } |]
               Grenades = [||]
+              Projectiles = [||]
               Events = [||] }
         let pending =
             [ { Sequence = 10L; Move = Vector2.UnitY; Look = Vector2.Zero; Buttons = InputButtons.None }
@@ -707,6 +710,7 @@ module ClientTests =
                 [| { TestKit.onlinePlayer 1 "Local" Allies world.Player.Position with ReloadRemaining = 1.5f }
                    { TestKit.onlinePlayer 2 "Remote" Axis (Vector3(4.0f, 0.0f, -4.0f)) with ReloadRemaining = 0.0f } |]
               Grenades = [||]
+              Projectiles = [||]
               Events = [||] }
         let reconciled, _ = OnlineWorld.reconcile world.Level [] 1 world snapshot
         Assert.Equal(Reloading(Units.seconds 1.5f), reconciled.Player.Slots[reconciled.Player.Active].State)
@@ -728,7 +732,8 @@ module ClientTests =
               Players =
                 [| drawing 1 "Local" Allies world.Player.Position 0.8f
                    drawing 2 "Remote" Axis (world.Player.Position - Vector3.UnitZ * 4.0f) 1.2f |]
-              Grenades = [||]; Events = [||] }
+              Grenades = [||]
+              Projectiles = [||]; Events = [||] }
         let reconciled, _ = OnlineWorld.reconcile world.Level [] 1 world snapshot
         Assert.Equal(Drawing(Units.seconds 0.8f), reconciled.Player.Slots[0].State)
         Assert.Equal(Drawing(Units.seconds 1.2f), reconciled.Soldiers[0].Weapon.State)
@@ -762,7 +767,7 @@ module ClientTests =
                 SwitchRemaining = switchRemaining }
         let snapshotOf player =
             { Tick = 100L; Mode = TeamDeathmatch; LevelName = world.Level.Name; Phase = Playing
-              AlliesScore = 0; AxisScore = 0; Players = [| player |]; Grenades = [||]; Events = [||] }
+              AlliesScore = 0; AxisScore = 0; Players = [| player |]; Grenades = [||]; Projectiles = [||]; Events = [||] }
         // Pistol in hand, rifle still remembering its three rounds.
         let reconciled, _ = OnlineWorld.reconcile world.Level [] 1 world (snapshotOf (withKit 1 -1 0.0f))
         Assert.Equal(2, reconciled.Player.Slots.Length)
@@ -820,6 +825,7 @@ module ClientTests =
                         Ads = atAck.Ads
                         AcknowledgedInput = 18L } |]
               Grenades = [||]
+              Projectiles = [||]
               Events = [||] }
         let reconciled, _ = OnlineWorld.reconcile world.Level inputs 1 world snapshot
         Assert.InRange(Vector3.Distance(reconciled.Player.Position, final.Position), 0.0f, 0.0001f)

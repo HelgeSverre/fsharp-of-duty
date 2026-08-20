@@ -327,29 +327,21 @@ module CombatTests =
         Assert.True(reverses, "the predicted path never bounced back off the wall")
 
     [<Fact>]
-    let ``projectile toybox stays offline while authoritative bow and melee are online`` () =
+    let ``every weapon in the arsenal is one the server can resolve`` () =
+        // The projectile weapons used to be offline-only because the match host
+        // could not simulate one. It can now, so the whole arsenal is online —
+        // and every mechanism in it needs an authoritative path, or picking that
+        // weapon in a match is picking a gun that does nothing.
         let online = Tuning.onlineWeapons |> Array.map _.Name |> Set.ofArray
-        Assert.DoesNotContain(Tuning.paintballMarker.Name, online)
-        Assert.DoesNotContain(Tuning.nerfBlaster.Name, online)
-        Assert.DoesNotContain(Tuning.bazooka.Name, online)
-        Assert.DoesNotContain(Tuning.flamethrower.Name, online)
-        Assert.DoesNotContain(Tuning.superSoaker.Name, online)
-        Assert.DoesNotContain(Tuning.nailgun.Name, online)
-        Assert.DoesNotContain(Tuning.harpoonGun.Name, online)
-        Assert.DoesNotContain(Tuning.laserPointer.Name, online)
-        Assert.Contains(Tuning.bow.Name, online)
-        Assert.Contains(Tuning.katana.Name, online)
-        Assert.All(
-            Tuning.onlineWeapons
-            |> Array.filter (fun weapon -> weapon.Mechanism <> Bow && weapon.Mechanism <> Katana),
-            fun weapon -> Assert.Equal(Hitscan, weapon.Mechanism))
+        for weapon in Tuning.specialWeapons do
+            Assert.True(online.Contains weapon.Name, $"{weapon.Name} is not selectable online")
         Assert.Equal(Bow, Tuning.bow.Mechanism)
-        // The sandbox toys sit with the heavies, but the two that were promoted
-        // to the online arsenal get keys that mean something: a bow is a
-        // precision weapon and a blade is what you swap to.
-        let online = Tuning.onlineWeapons |> Array.map _.Name |> Set.ofArray
+        Assert.Equal(Katana, Tuning.katana.Mechanism)
+        // Keys that mean something: a bow is a precision weapon and a blade is
+        // what you swap to. The rest of the toys sit with the heavies.
         Assert.All(
-            Tuning.specialWeapons |> Array.filter (fun weapon -> not (online.Contains weapon.Name)),
+            Tuning.specialWeapons
+            |> Array.filter (fun weapon -> weapon.Mechanism <> Bow && weapon.Mechanism <> Katana),
             fun weapon -> Assert.Equal(4, Tuning.categoryOf weapon))
         Assert.Equal(3, Tuning.categoryOf Tuning.bow)
         Assert.Equal(2, Tuning.categoryOf Tuning.katana)

@@ -584,7 +584,10 @@ module Tuning =
     // the online loadout menu and its tests.
     let onlineWeapons =
         [| kar98k; thompson; m1911; kar98kSniper; m1897; m1Garand; stg44; mp40; leeEnfield; fg42; bar; luger
-           minigun; bow; katana |]
+           minigun; bow; katana
+           // The projectile weapons are server-simulated now, so there is no
+           // longer a reason to keep them out of a match.
+           paintballMarker; nerfBlaster; bazooka; flamethrower; superSoaker; nailgun; harpoonGun; laserPointer |]
 
     let specialWeapons = [| paintballMarker; nerfBlaster; bazooka; flamethrower; superSoaker; nailgun; harpoonGun; bow; laserPointer; katana |]
 

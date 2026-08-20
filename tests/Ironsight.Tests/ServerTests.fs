@@ -1061,6 +1061,57 @@ module ServerTests =
             Assert.True(agreement > 0.9f, $"indicator points {agreement} of the way toward the shooter")
 
     [<Fact>]
+    let ``an online bow flies a real arrow and kills with it`` () =
+        // The bow used to be ballistic offline and hitscan online: the server
+        // never simulated a projectile at all, so the same weapon had two
+        // different physics depending on who was running it.
+        let host = MatchHost(TeamDeathmatch, TestKit.streetArenaWithSpawns "Archery range")
+        let archer, _ = host.TryAddPlayer("Archer", weaponName = "Bow").Value
+        let target, _ = host.TryAddPlayer("Target").Value
+        TestKit.readyUp host [ archer; target ]
+        let start = host.Snapshot()
+        let from = start.Players[archer].Position
+        let victim = start.Players[target].Position
+        // Draw for a second, then release by sending a frame without Fire.
+        let direction = Vector3.Normalize(victim - from)
+        let yaw = MathF.Atan2(direction.X, -direction.Z)
+        let mutable sequence = 1L
+        let mutable remaining = yaw - start.Players[archer].Yaw
+        while MathF.Abs remaining > 0.0001f do
+            let look = Math.Clamp(remaining, -0.25f, 0.25f)
+            TestKit.applyCustom sequence 0.0f look 0 host archer
+            host.AdvanceTick()
+            sequence <- sequence + 1L
+            remaining <- remaining - look
+        // Drawn sighted: a hip-fired bow spreads enough to miss a torso at
+        // twenty metres, and this test is about physics, not marksmanship.
+        for _ in 1 .. Tuning.TickRate do
+            TestKit.applyCustom sequence 0.0f 0.0f 3 host archer
+            host.AdvanceTick()
+            sequence <- sequence + 1L
+        TestKit.applyCustom sequence 0.0f 0.0f 2 host archer
+        host.AdvanceTick()
+        // An arrow now exists, is server-owned, and is on the wire.
+        let released = host.Snapshot()
+        Assert.NotEmpty released.Projectiles
+        Assert.All(released.Projectiles, fun projectile -> Assert.Equal(archer, projectile.Owner))
+        use document = System.Text.Json.JsonDocument.Parse(Protocol.serialize (Protocol.snapshot released))
+        let parsed = Ironsight.Shell.SnapshotWire.parseSnapshot document.RootElement
+        Assert.NotEmpty parsed.Projectiles
+        Assert.Equal("arrow", parsed.Projectiles[0].Kind)
+        // It travels rather than arriving: the victim is untouched on the tick
+        // the string is loosed, and hit some ticks later.
+        Assert.Equal(released.Players[target].Health, start.Players[target].Health)
+        let mutable ticks = 0
+        while ticks < Tuning.TickRate && host.Snapshot().Players[target].Health = start.Players[target].Health do
+            host.AdvanceTick()
+            ticks <- ticks + 1
+        Assert.True(ticks > 0, "the arrow arrived instantly, which is hitscan")
+        Assert.True(
+            host.Snapshot().Players[target].Health < start.Players[target].Health,
+            "the arrow never landed")
+
+    [<Fact>]
     let ``a kill streak reaches the wire and is cleared at round end`` () =
         let host = MatchHost(TeamDeathmatch, TestKit.streetArenaWithSpawns "Streak range")
         let allyId, _ = host.TryAddPlayer("Ally").Value

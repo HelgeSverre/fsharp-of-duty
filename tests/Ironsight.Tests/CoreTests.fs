@@ -99,9 +99,12 @@ module CoreTests =
 
     [<Fact>]
     let ``kar98k hip fire is the tightest among player weapons`` () =
+        // Among the guns. A laser pointer has no cone at all and a blade has no
+        // barrel; comparing either to a rifle says nothing about how rifles are
+        // tuned, which is what this is guarding.
         let tightest =
             Tuning.onlineWeapons
-            |> Array.filter (fun weapon -> weapon.Mechanism <> Katana)
+            |> Array.filter (fun weapon -> weapon.Mechanism = Hitscan)
             |> Array.minBy (fun weapon -> weapon.HipSpread)
         Assert.Equal("Kar98k", tightest.Name)
         Assert.True(Tuning.kar98k.HipSpread < Tuning.thompson.HipSpread)

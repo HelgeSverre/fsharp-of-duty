@@ -14,6 +14,7 @@ open Xunit
 ///
 /// Set IRONSIGHT_SMOKE_SERVER to point the tolerant scenario at a deployed
 /// server instead of an in-process one.
+[<Collection("Process-global environment")>]
 module IntegrationTests =
     [<Literal>]
     let private Integration = "Integration"

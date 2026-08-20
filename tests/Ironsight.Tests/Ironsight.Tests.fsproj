@@ -8,6 +8,11 @@
     <ProjectReference Include="../../src/Ironsight.Server/Ironsight.Server.fsproj" />
     <ProjectReference Include="../../src/Ironsight/Ironsight.fsproj" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.9.0" />
+    <PackageReference Include="coverlet.collector" Version="10.0.1">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+    <PackageReference Include="FsCheck.Xunit" Version="3.3.4" />
     <PackageReference Include="xunit" Version="2.9.3" />
     <PackageReference Include="xunit.runner.visualstudio" Version="4.0.0">
       <PrivateAssets>all</PrivateAssets>
@@ -15,10 +20,9 @@
     </PackageReference>
   </ItemGroup>
   <ItemGroup>
-    <!-- Collections run serially: several modules mutate process-global env
-         vars (IRONSIGHT_LEVEL, IRONSIGHT_HOME) and would race in parallel. -->
     <Content Include="xunit.runner.json" CopyToOutputDirectory="PreserveNewest" />
     <Compile Include="TestKit.fs" />
+    <Compile Include="PropertyTests.fs" />
     <Compile Include="CoreTests.fs" />
     <Compile Include="GeometryTests.fs" />
     <Compile Include="CombatTests.fs" />
