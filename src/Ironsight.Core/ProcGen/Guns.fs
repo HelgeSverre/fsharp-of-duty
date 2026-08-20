@@ -13,6 +13,14 @@ module Guns =
         MeshGen.cylinder 9 radius (max 0.01f (delta.Length())) material
         |> MeshGen.transform (Matrix4x4.CreateFromQuaternion(MathEx.rotationFromZ delta) * Matrix4x4.CreateTranslation((startPoint + endPoint) * 0.5f))
 
+    let private hoopXY segments radius thickness material (centre: Vector3) =
+        Array.init segments (fun index ->
+            let point step =
+                let angle = float32 step / float32 segments * MathF.Tau
+                centre + Vector3(MathF.Cos angle * radius, MathF.Sin angle * radius, 0.0f)
+            limb thickness material (point index) (point (index + 1)))
+        |> MeshGen.union
+
     /// Four triangular cutting fins around the shaft. The point is local Z=0,
     /// the ferrule/shaft connection is at +Z, and the 45-degree clocking makes
     /// the blades read as an X when viewed head-on.
@@ -485,50 +493,70 @@ module Guns =
 
     let private harpoonGun = harpoonGunForLoad 1.0f
 
-    /// Recurve bow with a genuinely moving string/nock. At full draw the
-    /// string centre comes back toward the camera while both tips remain
-    /// fixed, forming the characteristic drawn triangle around the arrow.
+    /// Recurve bow with a genuinely moving string, nock and limb stack. The
+    /// string pulls both tips inward and toward the archer while the working
+    /// limbs visibly unload their forward curve.
     let bowForDraw draw =
         let draw = MathEx.clamp01 draw
         let centre = Vector3(0.0f, 0.0f, -0.31f)
+        let flex = draw * draw * (3.0f - 2.0f * draw)
+        let signed side y z = Vector3(0.0f, side * y, z)
         // -Z is downrange. The working limbs belly toward the target before
         // their tips recurve back toward the archer; the old profile had this
         // backwards and read as a bow being fired inside-out in side view.
-        let topTip = Vector3(0.0f, 0.84f, -0.11f)
-        let bottomTip = Vector3(0.0f, -0.84f, -0.11f)
+        let root side = signed side 0.14f -0.32f
+        let inner side = signed side (0.36f - flex * 0.02f) (-0.43f + flex * 0.05f)
+        let belly side = signed side (0.62f - flex * 0.07f) (-0.54f + flex * 0.12f)
+        let recurve side = signed side (0.76f - flex * 0.11f) (-0.40f + flex * 0.13f)
+        let tip side = signed side (0.84f - flex * 0.16f) (-0.11f + flex * 0.16f)
+        let topTip = tip 1.0f
+        let bottomTip = tip -1.0f
         // At brace height the nock shares the tips' Z plane, so the resting
         // string is straight. Pulling it toward +Z creates the draw triangle.
         let nock = Vector3(0.0f, 0.0f, topTip.Z + draw * 0.43f)
+        let sightCentre = Vector3(-0.18f, 0.17f, -0.255f)
+        let sightPin y color =
+            MeshGen.union
+                [| limb 0.0045f Metal
+                       (Vector3(sightCentre.X + 0.064f, y, sightCentre.Z))
+                       (Vector3(sightCentre.X + 0.012f, y, sightCentre.Z))
+                   MeshGen.cylinder 8 0.009f 0.016f color
+                   |> placed (Vector3(sightCentre.X + 0.006f, y, sightCentre.Z)) |]
         MeshGen.union
             [| // Laminated working limbs sweep downrange, then the short
                // recurved ends hook back behind the riser to meet the string.
-               limb 0.030f Wood centre (Vector3(0.0f, 0.36f, -0.43f))
-               limb 0.026f Wood (Vector3(0.0f, 0.36f, -0.43f)) (Vector3(0.0f, 0.62f, -0.54f))
-               limb 0.022f Wood (Vector3(0.0f, 0.62f, -0.54f)) (Vector3(0.0f, 0.76f, -0.40f))
-               limb 0.018f Metal (Vector3(0.0f, 0.76f, -0.40f)) topTip
-               limb 0.030f Wood centre (Vector3(0.0f, -0.36f, -0.43f))
-               limb 0.026f Wood (Vector3(0.0f, -0.36f, -0.43f)) (Vector3(0.0f, -0.62f, -0.54f))
-               limb 0.022f Wood (Vector3(0.0f, -0.62f, -0.54f)) (Vector3(0.0f, -0.76f, -0.40f))
-               limb 0.018f Metal (Vector3(0.0f, -0.76f, -0.40f)) bottomTip
+               limb 0.030f Wood (root 1.0f) (inner 1.0f)
+               limb 0.026f Wood (inner 1.0f) (belly 1.0f)
+               limb 0.022f Wood (belly 1.0f) (recurve 1.0f)
+               limb 0.018f Metal (recurve 1.0f) topTip
+               limb 0.030f Wood (root -1.0f) (inner -1.0f)
+               limb 0.026f Wood (inner -1.0f) (belly -1.0f)
+               limb 0.022f Wood (belly -1.0f) (recurve -1.0f)
+               limb 0.018f Metal (recurve -1.0f) bottomTip
                MeshGen.box (Vector3(0.12f, 0.30f, 0.10f)) ToolBlack |> placed centre
                // String and small metal nocking loop.
                limb 0.008f ToolBlack topTip nock
                limb 0.008f ToolBlack nock bottomTip
                MeshGen.cylinder 8 0.016f 0.06f Metal |> MeshGen.rotateY (MathF.PI * 0.5f) |> placed nock
-               // Side-mounted hunting sight: guard stem plus a bright pin. It
-               // sits to the archer's right so ADS can line the dot up without
-               // hiding the arrow or string behind the bow grip.
-               limb 0.010f Metal (Vector3(0.075f, -0.02f, -0.34f)) (Vector3(0.19f, -0.02f, -0.34f))
-               limb 0.011f Metal (Vector3(0.19f, -0.14f, -0.34f)) (Vector3(0.19f, 0.14f, -0.34f))
-               MeshGen.lathe 10
-                   [| Vector2(0.0f, -0.018f); Vector2(0.025f, 0.0f); Vector2(0.0f, 0.018f) |]
-                   PaintRed
-               |> placed (Vector3(0.19f, 0.045f, -0.36f))
+               // Right-handed recurve sight: the aperture sits left of the
+               // riser so ADS can put its centre on screen while the bow stays
+               // visibly offset. A rail, bracket, guard and three fibre pins
+               // make it read as bow hardware rather than a floating red dot.
+               MeshGen.box (Vector3(0.022f, 0.30f, 0.026f)) Metal
+               |> placed (Vector3(-0.078f, sightCentre.Y, sightCentre.Z))
+               limb 0.009f Metal
+                   (Vector3(-0.078f, sightCentre.Y, sightCentre.Z))
+                   (Vector3(sightCentre.X + 0.07f, sightCentre.Y, sightCentre.Z))
+               hoopXY 18 0.072f 0.009f ToolBlack sightCentre
+               sightPin (sightCentre.Y + 0.026f) PaintRed
+               sightPin sightCentre.Y PaintGreen
+               sightPin (sightCentre.Y - 0.026f) PaintYellow
                // Loaded arrow. It shifts back with the nock while its point
                // stays aimed down -Z, making the draw obvious in first person.
                MeshGen.cylinder 8 0.0075f 1.10f Wood |> placed (Vector3(0.0f, 0.015f, nock.Z - 0.49f))
                broadhead Metal |> placed (Vector3(0.0f, 0.015f, nock.Z - 1.18f))
-               MeshGen.box (Vector3(0.11f, 0.012f, 0.16f)) PaintRed |> MeshGen.rotateY 0.42f |> placed (Vector3(0.0f, 0.015f, nock.Z + 0.05f)) |]
+               MeshGen.box (Vector3(0.052f, 0.008f, 0.14f)) PaintRed |> MeshGen.rotateY 0.30f |> placed (Vector3(0.0f, 0.015f, nock.Z + 0.05f))
+               MeshGen.box (Vector3(0.008f, 0.052f, 0.14f)) PaintRed |> MeshGen.rotateX -0.30f |> placed (Vector3(0.0f, 0.015f, nock.Z + 0.05f)) |]
 
     let private bow = bowForDraw 0.0f
 
@@ -585,8 +613,8 @@ module Guns =
         MeshGen.union
             [| MeshGen.cylinder 8 0.0075f 1.05f Wood |> placed (Vector3(0.0f, 0.0f, 0.46f))
                broadhead Metal |> placed (Vector3(0.0f, 0.0f, -0.205f))
-               MeshGen.box (Vector3(0.12f, 0.012f, 0.17f)) PaintRed |> MeshGen.rotateY 0.42f |> placed (Vector3(0.0f, 0.0f, 0.95f))
-               MeshGen.box (Vector3(0.012f, 0.12f, 0.17f)) PaintRed |> MeshGen.rotateX -0.42f |> placed (Vector3(0.0f, 0.0f, 0.95f)) |]
+               MeshGen.box (Vector3(0.052f, 0.008f, 0.14f)) PaintRed |> MeshGen.rotateY 0.30f |> placed (Vector3(0.0f, 0.0f, 0.95f))
+               MeshGen.box (Vector3(0.008f, 0.052f, 0.14f)) PaintRed |> MeshGen.rotateX -0.30f |> placed (Vector3(0.0f, 0.0f, 0.95f)) |]
 
     let splatMesh color = MeshGen.cylinder 12 0.17f 0.012f color
 
@@ -622,6 +650,13 @@ module Guns =
         | "Bow" -> bow
         | _ -> kar98k
 
+    /// Gun-only pose variant used by previews and geometry inspection.
+    let meshForPose name pose =
+        match name with
+        | "Harpoon Gun" -> harpoonGunForLoad pose
+        | "Bow" -> bowForDraw pose
+        | _ -> meshFor name
+
     let forWeapon name =
         let arms = if name = "M1911" || name = "Luger P08" then pistolArms else rifleArms
         MeshGen.union [| meshFor name; arms |]
@@ -629,9 +664,5 @@ module Guns =
     /// Runtime viewmodel variant used for mechanisms with moving geometry.
     let forWeaponPose name pose =
         let arms = if name = "M1911" || name = "Luger P08" then pistolArms else rifleArms
-        let gun =
-            match name with
-            | "Harpoon Gun" -> harpoonGunForLoad pose
-            | "Bow" -> bowForDraw pose
-            | _ -> meshFor name
+        let gun = meshForPose name pose
         MeshGen.union [| gun; arms |]

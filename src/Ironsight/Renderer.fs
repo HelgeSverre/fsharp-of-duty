@@ -608,7 +608,7 @@ type Renderer(gl: GL) =
                 lastView <- view
                 viewSway <- Vector2.Lerp(viewSway, Vector2(Math.Clamp(viewDelta.X * 2.5f, -0.06f, 0.06f), Math.Clamp(viewDelta.Y * 2.5f, -0.05f, 0.05f)), 0.22f)
                 let position =
-                    let bowAdsOffset = if activeClass.Mechanism = Bow then ads * 0.13f else 0.0f
+                    let bowAdsOffset = if activeClass.Mechanism = Bow then ads * 0.18f else 0.0f
                     Vector3(
                         0.34f * (1.0f - ads) + bowAdsOffset + MathF.Sin(phase) * 0.012f * bob - viewSway.X + sprintBlend * 0.10f,
                         -0.31f + ads * 0.10f + MathF.Abs(MathF.Cos phase) * 0.012f * bob + viewSway.Y

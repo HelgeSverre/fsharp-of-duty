@@ -368,6 +368,17 @@ module CombatTests =
         Assert.True(bounds.Z < 1.0f && bounds.Y < 0.8f, $"nailgun bounds were {bounds}")
 
     [<Fact>]
+    let ``bow limbs flex inward under draw and sight sits left of the riser`` () =
+        let rest = Guns.bowForDraw 0.0f
+        let drawn = Guns.bowForDraw 1.0f
+        let verticalSpan mesh =
+            let ys = mesh.Vertices |> Array.map (fun vertex -> vertex.Position.Y)
+            Array.max ys - Array.min ys
+        let leftmost = rest.Vertices |> Array.map (fun vertex -> vertex.Position.X) |> Array.min
+        Assert.True(verticalSpan drawn < verticalSpan rest - 0.10f, "draw should pull both limb tips inward")
+        Assert.True(leftmost < -0.24f, "the recurve aperture should sit left of the riser")
+
+    [<Fact>]
     let ``offline trigger pulls spawn each special projectile and consume its ammo`` () =
         let original = Sim.createTrainingWorld 76UL
         for slot, expected in [ 12, PaintBall original.PaintColor; 13, NerfDart; 14, BazookaRocket ] do

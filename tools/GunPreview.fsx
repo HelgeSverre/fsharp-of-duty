@@ -6,6 +6,7 @@
 //
 //   just gun-preview "Kar98k"
 //   just gun-preview all
+//   dotnet fsi tools/GunPreview.fsx Bow 1.0   # inspect full draw
 //
 // Views share one scale so parts can be compared across them. A faint grid
 // every 0.1 world units gives a ruler for measuring gaps, and the muzzle
@@ -138,8 +139,7 @@ let views: (string * (Vector3 -> Vector3)) array =
 let pad = 26
 let gridStep = 0.1f
 
-let renderWeapon (name: string) (path: string) =
-    let mesh = Guns.meshFor name
+let renderWeapon (name: string) (mesh: ProceduralMesh) (path: string) =
     let positions = mesh.Vertices |> Array.map (fun v -> v.Position)
     // One shared scale and one shared world origin across all three views, so
     // a part's position can be read off consistently from view to view.
@@ -218,6 +218,10 @@ let outDir = Path.Combine(__SOURCE_DIRECTORY__, "..", "debug", "gun-preview")
 Directory.CreateDirectory outDir |> ignore
 
 let requested = fsi.CommandLineArgs |> Array.skip 1 |> Array.tryHead |> Option.defaultValue "Kar98k"
+let requestedPose =
+    if fsi.CommandLineArgs.Length > 2 then
+        Some(Single.Parse(fsi.CommandLineArgs[2], Globalization.CultureInfo.InvariantCulture))
+    else None
 
 let targets =
     if requested.Equals("all", StringComparison.OrdinalIgnoreCase) then Guns.names
@@ -233,4 +237,9 @@ let targets =
 
 printfn "Grid %.2f units. Muzzle points -Z (left in SIDE/TOP), up is +Y.\n" gridStep
 for name in targets do
-    renderWeapon name (Path.Combine(outDir, name.Replace(" ", "-").ToLowerInvariant() + ".png"))
+    let mesh = requestedPose |> Option.map (Guns.meshForPose name) |> Option.defaultWith (fun () -> Guns.meshFor name)
+    let poseSuffix =
+        requestedPose
+        |> Option.map (fun pose -> "-pose-" + pose.ToString("0.00", Globalization.CultureInfo.InvariantCulture))
+        |> Option.defaultValue ""
+    renderWeapon name mesh (Path.Combine(outDir, name.Replace(" ", "-").ToLowerInvariant() + poseSuffix + ".png"))
