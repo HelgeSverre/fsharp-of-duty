@@ -14,6 +14,8 @@ type NetworkPlayer =
       Yaw: float32
       Pitch: float32
       Stance: Stance
+      /// Locomotion pose used by shared anatomical hit proxies and rewind.
+      AnimPhase: float32
       Sprinting: bool
       Ads: float32
       Health: float32<hp>

@@ -21,6 +21,7 @@ module ServerTests =
         let host = MatchHost TeamDeathmatch
         let playerId, _ = host.TryAddPlayer("Runner").Value
         let before = host.Snapshot().Players[playerId].Position
+        let beforePhase = host.Snapshot().Players[playerId].AnimPhase
         let maxTickDistance = Tuning.WalkSpeed * Tuning.SprintMultiplier / float32 Tuning.TickRate + 0.001f
         applyInput 1 host playerId
         applyInput 2 host playerId
@@ -31,6 +32,7 @@ module ServerTests =
         // frame; the rest stay buffered instead of being dropped and falsely
         // acknowledged.
         Assert.InRange(Vector3.Distance(before, afterOne.Position), 0.0f, maxTickDistance)
+        Assert.True(afterOne.AnimPhase > beforePhase)
         Assert.Equal(1L, afterOne.LastInputSequence)
         host.AdvanceTick()
         host.AdvanceTick()
@@ -1108,7 +1110,11 @@ module ServerTests =
         Assert.True dead.Cut.IsSome
         Assert.Equal(CutNeck, dead.Cut.Value.Site)
         Assert.Equal(dead.LifeRevision, dead.Cut.Value.DeathRevision)
+        Assert.InRange(dead.Cut.Value.LocalPlaneNormal.Length(), 0.999f, 1.001f)
+        Assert.InRange(dead.Cut.Value.LocalBladeTangent.Length(), 0.999f, 1.001f)
+        Assert.InRange(dead.Cut.Value.LocalSweepDirection.Length(), 0.999f, 1.001f)
         use document = System.Text.Json.JsonDocument.Parse(Protocol.serialize (Protocol.snapshot (host.Snapshot())))
         let parsed = Ironsight.Shell.SnapshotWire.parseSnapshot document.RootElement
         let wireTarget = parsed.Players |> Array.find (fun player -> player.Id = (let (EntityId id) = target in id))
         Assert.Equal(Some dead.Cut.Value, wireTarget.Cut)
+        Assert.Equal(dead.AnimPhase, wireTarget.AnimPhase)

@@ -63,7 +63,9 @@ module OnlineWorld =
                       Site = site
                       Fraction = event.Value
                       LocalPoint = Vector3.Zero
-                      LocalNormal = Vector3.Zero
+                      LocalPlaneNormal = Vector3.Zero
+                      LocalBladeTangent = Vector3.Zero
+                      LocalSweepDirection = Vector3.Zero
                       Impulse = event.Direction
                       CosmeticSeed = 0 }))
         | "flame-impact" -> Some(FlameImpact(event.Position, event.Direction))
@@ -174,7 +176,7 @@ module OnlineWorld =
           Squad = if snapshot.Team = Allies then 1 else 2
           Contacts = Map.empty
           Suppression = 0.0f
-          AnimPhase = float32 snapshot.Id }
+          AnimPhase = snapshot.AnimPhase }
 
     let private toGrenade (grenade: OnlineGrenade) =
         { Owner = EntityId grenade.OwnerId

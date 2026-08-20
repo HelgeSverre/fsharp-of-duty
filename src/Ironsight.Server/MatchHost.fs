@@ -55,7 +55,7 @@ type MatchHost(mode: GameMode, ?matchLevel: Level, ?disconnectGrace: TimeSpan, ?
     let mutable inputCredits: Map<EntityId, int> = Map.empty
     // Rewindable anatomical pose, not just feet. Revision rejects a sample
     // from the same id's previous life after a respawn.
-    let mutable positionHistory: Map<int64, Map<EntityId, struct (Vector3 * float32 * Stance * int64)>> = Map.empty
+    let mutable positionHistory: Map<int64, Map<EntityId, struct (Vector3 * float32 * Stance * float32 * int64)>> = Map.empty
     // Session tokens are a convenience for reconnecting after a disconnect, not
     // a security boundary: the server does no authentication and a token simply
     // resumes whichever player slot it was minted for.
@@ -160,6 +160,7 @@ type MatchHost(mode: GameMode, ?matchLevel: Level, ?disconnectGrace: TimeSpan, ?
         { player with
             Position = spawnFor player.Team id tick
             Velocity = Vector3.Zero
+            AnimPhase = 0.0f
             Health = Units.health 100.0f
             RegenIn = Units.seconds 0.0f
             Slots = loadoutFor player.Team (defaultArg player.RequestedWeapon (primaryOf player))
@@ -202,7 +203,7 @@ type MatchHost(mode: GameMode, ?matchLevel: Level, ?disconnectGrace: TimeSpan, ?
           Squad = 0
           Contacts = Map.empty
           Suppression = 0.0f
-          AnimPhase = 0.0f }
+          AnimPhase = player.AnimPhase }
 
     member _.TryAddPlayer(name: string, ?weaponName: string, ?sessionToken: string) =
         lock gate (fun () ->
@@ -248,6 +249,7 @@ type MatchHost(mode: GameMode, ?matchLevel: Level, ?disconnectGrace: TimeSpan, ?
                       Yaw = if team = Allies then 0.0f else MathF.PI
                       Pitch = 0.0f
                       Stance = Standing
+                      AnimPhase = 0.0f
                       Sprinting = false
                       Ads = 0.0f
                       Health = Units.health 100.0f
@@ -454,6 +456,7 @@ type MatchHost(mode: GameMode, ?matchLevel: Level, ?disconnectGrace: TimeSpan, ?
                     Yaw = handPlayer.Yaw
                     Pitch = handPlayer.Pitch
                     Stance = handPlayer.Stance
+                    AnimPhase = player.AnimPhase + Vector3.Distance(player.Position, handPlayer.Position) * 3.0f
                     Sprinting = handPlayer.Sprinting
                     Ads = handPlayer.Ads
                     Slots = writtenSlots
@@ -515,8 +518,8 @@ type MatchHost(mode: GameMode, ?matchLevel: Level, ?disconnectGrace: TimeSpan, ?
                         |> Array.map (fun (id, player) ->
                             let soldier = asSoldier player
                             match Map.tryFind id historical with
-                            | Some struct (position, yaw, stance, revision) when revision = player.LifeRevision ->
-                                { soldier with Position = position; Facing = yaw; Stance = stance }
+                            | Some struct (position, yaw, stance, animPhase, revision) when revision = player.LifeRevision ->
+                                { soldier with Position = position; Facing = yaw; Stance = stance; AnimPhase = animPhase }
                             | _ -> soldier)
                     let canHit (candidate: Soldier) =
                         match Map.tryFind candidate.Id combatState.Players with
@@ -533,9 +536,9 @@ type MatchHost(mode: GameMode, ?matchLevel: Level, ?disconnectGrace: TimeSpan, ?
                             targets
                             |> Array.map (fun (id, player) ->
                                 match Map.tryFind id historical with
-                                | Some struct (position, yaw, stance, revision) when revision = player.LifeRevision ->
-                                    { Id = id; Position = position; Yaw = yaw; Stance = stance }
-                                | _ -> { Id = id; Position = player.Position; Yaw = player.Yaw; Stance = player.Stance })
+                                | Some struct (position, yaw, stance, animPhase, revision) when revision = player.LifeRevision ->
+                                    { Id = id; Position = position; Yaw = yaw; Stance = stance; AnimPhase = animPhase }
+                                | _ -> { Id = id; Position = player.Position; Yaw = player.Yaw; Stance = player.Stance; AnimPhase = player.AnimPhase })
                         let meleeCanHit (candidate: MeleeTarget) =
                             match Map.tryFind candidate.Id combatState.Players with
                             | Some target ->
@@ -554,12 +557,15 @@ type MatchHost(mode: GameMode, ?matchLevel: Level, ?disconnectGrace: TimeSpan, ?
                                 emitOnly hit.Victim (PlayerHurt(direction, health))
                                 if lethal then
                                     let victimPose = meleeTargets |> Array.find (fun target -> target.Id = hit.Victim)
-                                    let cut = Melee.makeCut before.LifeRevision victimPose.Position victimPose.Yaw attack (int (lifecycleState.Tick ^^^ int64 before.Deaths)) hit
+                                    let cut = Melee.tryMakeCut before.LifeRevision victimPose.Position victimPose.Yaw attack (int (lifecycleState.Tick ^^^ int64 before.Deaths)) hit
                                     combatState <- Multiplayer.recordKill shooterId hit.Victim combatState
-                                    match Map.tryFind hit.Victim combatState.Players with
-                                    | Some dead -> combatState <- { combatState with Players = Map.add hit.Victim { dead with Cut = Some cut } combatState.Players }
+                                    match cut with
+                                    | Some descriptor ->
+                                        match Map.tryFind hit.Victim combatState.Players with
+                                        | Some dead -> combatState <- { combatState with Players = Map.add hit.Victim { dead with Cut = Some descriptor } combatState.Players }
+                                        | None -> ()
+                                        emit (Dismembered(hit.Victim, hit.Point, descriptor))
                                     | None -> ()
-                                    emit (Dismembered(hit.Victim, hit.Point, cut))
                                     emit (Kill(Some shooterId, hit.Victim, weaponName, hit.Part = BodyHead))
                             | _ -> ()
                     | None ->
@@ -630,7 +636,7 @@ type MatchHost(mode: GameMode, ?matchLevel: Level, ?disconnectGrace: TimeSpan, ?
                     NextEventId = finalState.NextEventId + int64 newEvents.Length }
             let positions =
                 state.Players
-                |> Map.map (fun _ player -> struct (player.Position, player.Yaw, player.Stance, player.LifeRevision))
+                |> Map.map (fun _ player -> struct (player.Position, player.Yaw, player.Stance, player.AnimPhase, player.LifeRevision))
             positionHistory <-
                 positionHistory
                 |> Map.add nextTick positions

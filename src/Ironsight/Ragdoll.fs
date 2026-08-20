@@ -9,28 +9,19 @@ open Ironsight.ProcGen
 /// Client-side cosmetic ragdolls for dead soldiers. Pure presentation: never
 /// touches World, the sim, or the network — same tier as Particles.
 module Ragdoll =
-    // Joint order for the flat arrays. Mirrors Skeleton's fields.
-    let private jointCount = 16
-
-    let private fromSkeleton (s: Skeleton) =
-        [| s.Pelvis; s.Chest; s.Neck; s.Head
-           s.LeftHip; s.RightHip; s.LeftKnee; s.RightKnee; s.LeftAnkle; s.RightAnkle
-           s.LeftShoulder; s.RightShoulder; s.LeftElbow; s.RightElbow; s.LeftHand; s.RightHand |]
-
-    let private toSkeleton (j: Vector3[]) =
-        { Pelvis = j[0]; Chest = j[1]; Neck = j[2]; Head = j[3]
-          LeftHip = j[4]; RightHip = j[5]; LeftKnee = j[6]; RightKnee = j[7]
-          LeftAnkle = j[8]; RightAnkle = j[9]
-          LeftShoulder = j[10]; RightShoulder = j[11]; LeftElbow = j[12]; RightElbow = j[13]
-          LeftHand = j[14]; RightHand = j[15] }
+    let private jointCount = Anatomy.jointCount
 
     // Bone graph: anatomical chains plus stiffeners that keep the torso from
     // folding like cloth (hip/shoulder bars, spine, torso shear diagonals).
     let private bones =
-        [| 0, 1; 1, 2; 2, 3
-           0, 4; 0, 5; 4, 6; 6, 8; 5, 7; 7, 9
-           1, 10; 1, 11; 10, 12; 12, 14; 11, 13; 13, 15
-           4, 5; 10, 11; 0, 2; 0, 10; 0, 11 |]
+        let stiffeners =
+            [| JointId.LeftHip, JointId.RightHip
+               JointId.LeftShoulder, JointId.RightShoulder
+               JointId.Pelvis, JointId.Neck
+               JointId.Pelvis, JointId.LeftShoulder
+               JointId.Pelvis, JointId.RightShoulder |]
+        Array.append Anatomy.treeEdges stiffeners
+        |> Array.map (fun (first, second) -> Anatomy.index first, Anatomy.index second)
 
     // Heavier torso joints take the kill impulse fully; extremities lag and get
     // whipped around by the constraints instead.
@@ -70,20 +61,17 @@ module Ragdoll =
                         |> Seq.sortBy (fun pair -> (not pair.Value.Settled), pair.Value.Order)
                         |> Seq.head
                     bodies.Remove victim.Key |> ignore
-                let baseJoints = fromSkeleton skeleton
+                let baseJoints = Anatomy.toArray skeleton
                 let assumedStep = 1.0f / 60.0f
                 let cutRelation, distal =
-                    match cut |> Option.map _.Site with
-                    | Some CutNeck -> Some(2, 3), set [ 3 ]
-                    | Some CutWaist -> Some(0, 1), set [ 1; 2; 3; 10; 11; 12; 13; 14; 15 ]
-                    | Some CutLeftUpperArm -> Some(10, 12), set [ 12; 14 ]
-                    | Some CutLeftLowerArm -> Some(12, 14), set [ 14 ]
-                    | Some CutRightUpperArm -> Some(11, 13), set [ 13; 15 ]
-                    | Some CutRightLowerArm -> Some(13, 15), set [ 15 ]
-                    | Some CutLeftUpperLeg -> Some(4, 6), set [ 6; 8 ]
-                    | Some CutLeftLowerLeg -> Some(6, 8), set [ 8 ]
-                    | Some CutRightUpperLeg -> Some(5, 7), set [ 7; 9 ]
-                    | Some CutRightLowerLeg -> Some(7, 9), set [ 9 ]
+                    match cut with
+                    | Some descriptor ->
+                        let first, second = Anatomy.cutRelation descriptor.Site
+                        let relation = Anatomy.index first, Anatomy.index second
+                        let detached =
+                            Anatomy.detachedJoints descriptor.Site
+                            |> Set.map Anatomy.index
+                        Some relation, detached
                     | None -> None, Set.empty
                 let cutPoint =
                     match cutRelation, cut with
@@ -203,7 +191,7 @@ module Ragdoll =
 
         member _.TryGet id =
             match bodies.TryGetValue id with
-            | true, body -> Some(toSkeleton body.Joints)
+            | true, body -> Some(Anatomy.ofArray body.Joints)
             | _ -> None
 
         /// Exact duplicate cut anchors, one constrained to each new body.

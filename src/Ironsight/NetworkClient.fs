@@ -29,6 +29,7 @@ type OnlinePlayer =
       Yaw: float32
       Pitch: float32
       Stance: Stance
+      AnimPhase: float32
       Health: float32
       Alive: bool
       Ready: bool
@@ -141,7 +142,9 @@ module SnapshotWire =
                           Site = site
                           Fraction = getFloat "cutFraction" value
                           LocalPoint = Vector3(getFloat "cutX" value, getFloat "cutY" value, getFloat "cutZ" value)
-                          LocalNormal = Vector3(getFloat "cutNx" value, getFloat "cutNy" value, getFloat "cutNz" value)
+                          LocalPlaneNormal = Vector3(getFloat "cutNx" value, getFloat "cutNy" value, getFloat "cutNz" value)
+                          LocalBladeTangent = Vector3(getFloat "cutBx" value, getFloat "cutBy" value, getFloat "cutBz" value)
+                          LocalSweepDirection = Vector3(getFloat "cutSx" value, getFloat "cutSy" value, getFloat "cutSz" value)
                           Impulse = Vector3(getFloat "cutImpulseX" value, getFloat "cutImpulseY" value, getFloat "cutImpulseZ" value)
                           CosmeticSeed = getInt "cutSeed" value })
                 { Id = getInt "id" value
@@ -152,6 +155,7 @@ module SnapshotWire =
                   Yaw = getFloat "yaw" value
                   Pitch = getFloat "pitch" value
                   Stance = getString "stance" value |> parseStance
+                  AnimPhase = getFloat "animPhase" value
                   Health = getFloat "health" value
                   Alive = getBool "alive" value
                   Ready = getBool "ready" value
@@ -343,6 +347,7 @@ type OnlineClient(serverUri: Uri, playerName: string, requestedMode: GameMode, w
             Position = Vector3.Lerp(first.Position, second.Position, amount)
             Yaw = MathEx.lerpAngle first.Yaw second.Yaw amount
             Pitch = first.Pitch + (second.Pitch - first.Pitch) * amount
+            AnimPhase = first.AnimPhase + (second.AnimPhase - first.AnimPhase) * amount
             DrawCharge = first.DrawCharge + (second.DrawCharge - first.DrawCharge) * amount }
 
     member _.ServerUri = serverUri

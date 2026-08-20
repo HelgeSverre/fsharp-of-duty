@@ -799,7 +799,8 @@ module CombatTests =
                     Map.ofList
                         [ EntityId 99,
                           { DeathRevision = 1L; Site = CutLeftLowerArm; Fraction = 0.5f
-                            LocalPoint = Vector3.Zero; LocalNormal = Vector3.UnitX
+                            LocalPoint = Vector3.Zero; LocalPlaneNormal = Vector3.UnitX
+                            LocalBladeTangent = Vector3.UnitZ; LocalSweepDirection = Vector3.UnitX
                             Impulse = Vector3.UnitX; CosmeticSeed = 1 } ]
                 Round = Some { world.Round.Value with ResetIn = Some(Units.seconds 0.0f) } }
         let struct (reset, _) = Sim.step (TestKit.input 1L InputButtons.None Vector2.Zero) dirty
@@ -814,9 +815,9 @@ module CombatTests =
     [<Fact>]
     let ``katana left to right sweep reaches far deduplicates and can cleave three targets`` () =
         let targets =
-            [| { Id = EntityId 71; Position = Vector3(-0.55f, 0.0f, -0.75f); Yaw = MathF.PI; Stance = Standing }
-               { Id = EntityId 72; Position = Vector3(0.0f, 0.0f, -0.95f); Yaw = MathF.PI; Stance = Standing }
-               { Id = EntityId 73; Position = Vector3(0.55f, 0.0f, -0.75f); Yaw = MathF.PI; Stance = Standing } |]
+            [| { Id = EntityId 71; Position = Vector3(-0.55f, 0.0f, -0.75f); Yaw = MathF.PI; Stance = Standing; AnimPhase = 0.0f }
+               { Id = EntityId 72; Position = Vector3(0.0f, 0.0f, -0.95f); Yaw = MathF.PI; Stance = Standing; AnimPhase = 0.0f }
+               { Id = EntityId 73; Position = Vector3(0.55f, 0.0f, -0.75f); Yaw = MathF.PI; Stance = Standing; AnimPhase = 0.0f } |]
         let hits = Melee.resolve KatanaSweep Vector3.Zero 0.0f 0.0f (fun _ -> true) openLevel targets
         Assert.Equal(3, hits.Length)
         Assert.Equal(3, hits |> Array.map _.Victim |> Array.distinct |> Array.length)
@@ -827,8 +828,53 @@ module CombatTests =
             { Id = EntityId 75
               Position = Vector3(0.0f, 0.0f, -1.82f)
               Yaw = MathF.PI
-              Stance = Standing }
+              Stance = Standing
+              AnimPhase = 0.0f }
         Assert.Single(Melee.resolve KatanaSweep Vector3.Zero 0.0f 0.0f (fun _ -> true) openLevel [| longRange |])
+
+    [<Fact>]
+    let ``katana contact retains ordered blade motion and a real cutting plane`` () =
+        let target =
+            { Id = EntityId 751
+              Position = Vector3(0.0f, 0.0f, -0.82f)
+              Yaw = MathF.PI
+              Stance = Standing
+              AnimPhase = 0.7f }
+        let hit = Assert.Single(Melee.resolve KatanaSweep Vector3.Zero 0.0f 0.0f (fun _ -> true) openLevel [| target |])
+        Assert.True(hit.Site.IsSome)
+        Assert.InRange(hit.SwingTime, 0.0f, 1.0f)
+        Assert.InRange(hit.BladeTangent.Length(), 0.999f, 1.001f)
+        Assert.InRange(hit.SweepDirection.Length(), 0.999f, 1.001f)
+        Assert.InRange(hit.CutPlaneNormal.Length(), 0.999f, 1.001f)
+        Assert.InRange(MathF.Abs(Vector3.Dot(hit.CutPlaneNormal, hit.BladeTangent)), 0.0f, 0.001f)
+        Assert.InRange(MathF.Abs(Vector3.Dot(hit.CutPlaneNormal, hit.SweepDirection)), 0.0f, 0.001f)
+
+    [<Fact>]
+    let ``katana look height selects authored waist and leg sever bands`` () =
+        let target =
+            { Id = EntityId 752
+              Position = Vector3(0.0f, 0.0f, -0.82f)
+              Yaw = MathF.PI
+              Stance = Standing
+              AnimPhase = 0.0f }
+        let hitAt pitch = Assert.Single(Melee.resolve KatanaSweep Vector3.Zero 0.0f pitch (fun _ -> true) openLevel [| target |])
+        Assert.Equal(Some CutWaist, (hitAt -0.75f).Site)
+        Assert.Contains(
+            (hitAt -1.15f).Site,
+            [ Some CutLeftUpperLeg; Some CutRightUpperLeg; Some CutLeftLowerLeg; Some CutRightLowerLeg ])
+
+    [<Fact>]
+    let ``shared anatomy pose moves leg proxies and derives detached components from the cut graph`` () =
+        let still = Anatomy.localSkeleton Standing 0.0f
+        let stepping = Anatomy.localSkeleton Standing (MathF.PI * 0.5f)
+        let stillLeg = Anatomy.segments still |> Array.find (fun segment -> segment.Part = BodyLeftUpperLeg)
+        let steppingLeg = Anatomy.segments stepping |> Array.find (fun segment -> segment.Part = BodyLeftUpperLeg)
+        Assert.NotEqual(stillLeg.EndPoint.Z, steppingLeg.EndPoint.Z)
+        let neckMatches = (Anatomy.detachedJoints CutNeck) = Set.ofList [ JointId.Head ]
+        Assert.True(neckMatches)
+        let detachedArm = Anatomy.detachedJoints CutLeftUpperArm
+        let armMatches = detachedArm = Set.ofList [ JointId.LeftElbow; JointId.LeftHand ]
+        Assert.True(armMatches)
 
     [<Fact>]
     let ``katana secondary is a top down sweep without entering ADS`` () =

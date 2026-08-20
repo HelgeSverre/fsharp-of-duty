@@ -63,15 +63,18 @@ type CutSite =
     | CutRightUpperLeg
     | CutRightLowerLeg
 
-/// Immutable server/offline result of a lethal melee contact. LocalPoint is
-/// relative to the victim's feet; Fraction is along the named anatomical
-/// segment and lets presentation split between joints instead of only at them.
+/// Immutable server/offline result of a lethal melee contact. Geometry is
+/// victim-local so snapshots can recreate the same sever after the corpse has
+/// entered a client-local ragdoll. Fraction selects the point along the named
+/// anatomical segment; the three directions retain the real blade plane.
 type CutDescriptor =
     { DeathRevision: int64
       Site: CutSite
       Fraction: float32
       LocalPoint: Vector3
-      LocalNormal: Vector3
+      LocalPlaneNormal: Vector3
+      LocalBladeTangent: Vector3
+      LocalSweepDirection: Vector3
       Impulse: Vector3
       CosmeticSeed: int }
 

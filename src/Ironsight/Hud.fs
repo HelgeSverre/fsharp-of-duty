@@ -293,7 +293,7 @@ type Hud(gl: GL) =
             meter { X = healthPanelX + 14.0f; Y = healthPanelY + 30.0f; W = healthPanelWidth - 28.0f; H = 9.0f } healthRatio
                 (Vector4(0.10f, 0.12f, 0.10f, 0.9f)) healthFill
         let drawDebugLabel () =
-            addText 22.0f 8.0f 1.0f (Vector4(1.0f, 0.74f, 0.30f, 0.95f)) "DEBUG VIEW [F3]  GREEN: CLEAR LOS  RED: BLOCKED"
+            addText 22.0f 8.0f 1.0f (Vector4(1.0f, 0.74f, 0.30f, 0.95f)) "DEBUG [F3]  LOS + ANATOMY/SEVER BANDS + KATANA SWEEP"
         let drawCompass () =
             let heading = ((world.Player.Yaw * 180.0f / MathF.PI) % 360.0f + 360.0f) % 360.0f
             let directions = [| "N"; "NE"; "E"; "SE"; "S"; "SW"; "W"; "NW" |]

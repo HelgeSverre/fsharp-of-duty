@@ -717,16 +717,34 @@ module ClientTests =
     let ``dismembered ragdoll creates two independently simulated cut anchors`` () =
         let world = Sim.createPaintballWorld 191UL
         let soldier = { world.Soldiers[0] with Behavior = Dying(Units.seconds 0.0f) }
+        let localPose = Anatomy.localSkeleton soldier.Stance soldier.AnimPhase
+        let localArmAxis =
+            Anatomy.point JointId.LeftElbow localPose - Anatomy.point JointId.LeftShoulder localPose
+            |> MathEx.normalizedOrZero
+        let localPlane = MathEx.normalizedOrZero (localArmAxis + Vector3.UnitY * 0.38f)
         let cut =
             { DeathRevision = 4L
               Site = CutLeftUpperArm
               Fraction = 0.47f
               LocalPoint = Vector3.Zero
-              LocalNormal = Vector3.UnitX
+              LocalPlaneNormal = localPlane
+              LocalBladeTangent = Vector3.UnitZ
+              LocalSweepDirection = Vector3.UnitX
               Impulse = Vector3(-7.0f, 2.0f, 0.0f)
               CosmeticSeed = 44 }
         let ragdolls = Ragdoll.System()
         ragdolls.Spawn(soldier.Id, Humanoid.worldSkeleton soldier, Vector3.Zero, cut = cut)
+        let initialDescriptor, initialProximal, initialDistal = (ragdolls.TryGetCut soldier.Id).Value
+        Assert.Equal(initialProximal, initialDistal)
+        let initialSkeleton = (ragdolls.TryGet soldier.Id).Value
+        let cutMesh = Humanoid.poseFromSkeletonCut soldier initialSkeleton initialDescriptor initialProximal initialDistal
+        let gore = cutMesh.Vertices |> Array.filter (fun vertex -> vertex.MaterialId = Materials.id PaintRed)
+        Assert.NotEmpty gore
+        let worldPlane =
+            Vector3.TransformNormal(localPlane, Matrix4x4.CreateRotationY(-soldier.Facing))
+            |> MathEx.normalizedOrZero
+        Assert.All(gore, fun vertex ->
+            Assert.InRange(MathF.Abs(Vector3.Dot(vertex.Position - initialProximal, worldPlane)), 0.0f, 0.0001f))
         for _ in 1..45 do ragdolls.Step(1.0f / 60.0f, world.Level)
         let descriptor, proximal, distal = (ragdolls.TryGetCut soldier.Id).Value
         Assert.Equal(cut, descriptor)
@@ -735,3 +753,38 @@ module ClientTests =
         let mesh = Humanoid.poseFromSkeletonCut soldier skeleton descriptor proximal distal
         Assert.NotEmpty mesh.Vertices
         Assert.NotEmpty mesh.Indices
+
+    [<Fact>]
+    let ``every authored sever site generates finite capped corpse geometry`` () =
+        let world = Sim.createPaintballWorld 192UL
+        let baseline = { world.Soldiers[0] with Behavior = Dying(Units.seconds 0.0f) }
+        let sites =
+            [ CutNeck; CutWaist
+              CutLeftUpperArm; CutLeftLowerArm; CutRightUpperArm; CutRightLowerArm
+              CutLeftUpperLeg; CutLeftLowerLeg; CutRightUpperLeg; CutRightLowerLeg ]
+        for index, site in sites |> List.indexed do
+            let soldier = { baseline with Id = EntityId(900 + index) }
+            let localPose = Anatomy.localSkeleton soldier.Stance soldier.AnimPhase
+            let first, second = Anatomy.cutRelation site
+            let axis = Anatomy.point second localPose - Anatomy.point first localPose |> MathEx.normalizedOrZero
+            let plane = MathEx.normalizedOrZero (axis + Vector3(0.25f, 0.18f, -0.12f))
+            let descriptor =
+                { DeathRevision = int64 index
+                  Site = site
+                  Fraction = 0.43f
+                  LocalPoint = Vector3.Lerp(Anatomy.point first localPose, Anatomy.point second localPose, 0.43f)
+                  LocalPlaneNormal = plane
+                  LocalBladeTangent = Vector3.UnitZ
+                  LocalSweepDirection = Vector3.UnitX
+                  Impulse = Vector3.UnitX
+                  CosmeticSeed = index }
+            let ragdolls = Ragdoll.System()
+            ragdolls.Spawn(soldier.Id, Humanoid.worldSkeleton soldier, Vector3.Zero, cut = descriptor)
+            let _, proximal, distal = (ragdolls.TryGetCut soldier.Id).Value
+            let skeleton = (ragdolls.TryGet soldier.Id).Value
+            let mesh = Humanoid.poseFromSkeletonCut soldier skeleton descriptor proximal distal
+            let finite (value: Vector3) = Single.IsFinite value.X && Single.IsFinite value.Y && Single.IsFinite value.Z
+            Assert.NotEmpty(mesh.Vertices)
+            Assert.NotEmpty(mesh.Indices)
+            Assert.All(mesh.Vertices, fun vertex -> Assert.True(finite vertex.Position && finite vertex.Normal, $"{site} generated a non-finite vertex"))
+            Assert.Contains(mesh.Vertices, fun vertex -> vertex.MaterialId = Materials.id PaintRed)

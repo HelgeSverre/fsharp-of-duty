@@ -46,6 +46,7 @@ type PlayerSnapshot =
       yaw: float32
       pitch: float32
       stance: string
+      animPhase: float32
       health: float32
       alive: bool
       ready: bool
@@ -69,6 +70,12 @@ type PlayerSnapshot =
       cutNx: float32
       cutNy: float32
       cutNz: float32
+      cutBx: float32
+      cutBy: float32
+      cutBz: float32
+      cutSx: float32
+      cutSy: float32
+      cutSz: float32
       cutImpulseX: float32
       cutImpulseY: float32
       cutImpulseZ: float32
@@ -257,6 +264,7 @@ module Protocol =
                   yaw = player.Yaw
                   pitch = player.Pitch
                   stance = string player.Stance
+                  animPhase = player.AnimPhase
                   health = Units.raw player.Health
                   alive = player.Alive
                   ready = player.Ready
@@ -279,9 +287,15 @@ module Protocol =
                   cutX = player.Cut |> Option.map (fun cut -> cut.LocalPoint.X) |> Option.defaultValue 0.0f
                   cutY = player.Cut |> Option.map (fun cut -> cut.LocalPoint.Y) |> Option.defaultValue 0.0f
                   cutZ = player.Cut |> Option.map (fun cut -> cut.LocalPoint.Z) |> Option.defaultValue 0.0f
-                  cutNx = player.Cut |> Option.map (fun cut -> cut.LocalNormal.X) |> Option.defaultValue 0.0f
-                  cutNy = player.Cut |> Option.map (fun cut -> cut.LocalNormal.Y) |> Option.defaultValue 0.0f
-                  cutNz = player.Cut |> Option.map (fun cut -> cut.LocalNormal.Z) |> Option.defaultValue 0.0f
+                  cutNx = player.Cut |> Option.map (fun cut -> cut.LocalPlaneNormal.X) |> Option.defaultValue 0.0f
+                  cutNy = player.Cut |> Option.map (fun cut -> cut.LocalPlaneNormal.Y) |> Option.defaultValue 0.0f
+                  cutNz = player.Cut |> Option.map (fun cut -> cut.LocalPlaneNormal.Z) |> Option.defaultValue 0.0f
+                  cutBx = player.Cut |> Option.map (fun cut -> cut.LocalBladeTangent.X) |> Option.defaultValue 0.0f
+                  cutBy = player.Cut |> Option.map (fun cut -> cut.LocalBladeTangent.Y) |> Option.defaultValue 0.0f
+                  cutBz = player.Cut |> Option.map (fun cut -> cut.LocalBladeTangent.Z) |> Option.defaultValue 0.0f
+                  cutSx = player.Cut |> Option.map (fun cut -> cut.LocalSweepDirection.X) |> Option.defaultValue 0.0f
+                  cutSy = player.Cut |> Option.map (fun cut -> cut.LocalSweepDirection.Y) |> Option.defaultValue 0.0f
+                  cutSz = player.Cut |> Option.map (fun cut -> cut.LocalSweepDirection.Z) |> Option.defaultValue 0.0f
                   cutImpulseX = player.Cut |> Option.map (fun cut -> cut.Impulse.X) |> Option.defaultValue 0.0f
                   cutImpulseY = player.Cut |> Option.map (fun cut -> cut.Impulse.Y) |> Option.defaultValue 0.0f
                   cutImpulseZ = player.Cut |> Option.map (fun cut -> cut.Impulse.Z) |> Option.defaultValue 0.0f

@@ -317,7 +317,11 @@ module Sim =
                     let targets =
                         soldiers
                         |> Array.map (fun soldier ->
-                            { Id = soldier.Id; Position = soldier.Position; Yaw = soldier.Facing; Stance = soldier.Stance })
+                            { Id = soldier.Id
+                              Position = soldier.Position
+                              Yaw = soldier.Facing
+                              Stance = Anatomy.effectiveStance soldier
+                              AnimPhase = soldier.AnimPhase })
                     let hits =
                         Melee.resolve attack armedPlayer.Position armedPlayer.Yaw armedPlayer.Pitch
                             (fun target ->
@@ -339,15 +343,22 @@ module Sim =
                                     { before with
                                         Health = health
                                         Behavior = if lethal then Dying(Units.seconds 0.0f) else before.Behavior
+                                        // InCover carries the AI crouch outside
+                                        // Soldier.Stance. Preserve that pose as
+                                        // the behavior changes to Dying so the
+                                        // corpse cut does not pop upward.
+                                        Stance = if lethal then Anatomy.effectiveStance before else before.Stance
                                         Suppression = if lethal then before.Suppression else min 3.0f (before.Suppression + 0.5f) }
                                 soldiers <- updated
                                 let travel = Ballistics.directionFromAngles armedPlayer.Yaw armedPlayer.Pitch Vector2.Zero
                                 shotEvents.Add(BloodImpact(hit.Point, travel, hit.Part = BodyHead))
                                 shotEvents.Add(HitConfirmed(hit.Victim, lethal))
                                 if lethal then
-                                    let cut = Melee.makeCut world.Tick before.Position before.Facing attack (int (world.Tick ^^^ int64 index)) hit
-                                    dismemberments <- Map.add hit.Victim cut dismemberments
-                                    shotEvents.Add(Dismembered(hit.Victim, hit.Point, cut))
+                                    match Melee.tryMakeCut world.Tick before.Position before.Facing attack (int (world.Tick ^^^ int64 index)) hit with
+                                    | Some cut ->
+                                        dismemberments <- Map.add hit.Victim cut dismemberments
+                                        shotEvents.Add(Dismembered(hit.Victim, hit.Point, cut))
+                                    | None -> ()
                                     shotEvents.Add(Kill(Some armedPlayer.Id, hit.Victim, result.Weapon.Class.Name, hit.Part = BodyHead))
             | Hitscan ->
               let hitSoldiers, hitEvents =

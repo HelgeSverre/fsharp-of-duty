@@ -431,7 +431,7 @@ module CoreTests =
 
     let private makePlayer id team : NetworkPlayer =
         { Id = EntityId id; Name = string id; Team = team; Position = Vector3.Zero; Velocity = Vector3.Zero
-          Yaw = 0.0f; Pitch = 0.0f; Stance = Standing; Sprinting = false; Ads = 0.0f
+          Yaw = 0.0f; Pitch = 0.0f; Stance = Standing; AnimPhase = 0.0f; Sprinting = false; Ads = 0.0f
           Health = Units.health 100.0f; RegenIn = Units.seconds 0.0f
           Slots = [| Tuning.weaponSlot Tuning.kar98k 2; Tuning.weaponSlot (Tuning.sidearm team) 2 |]; Active = 0; RequestedWeapon = None
           Grenade = GrenadeIdle 3; Connected = true; Ready = true; Alive = true; RespawnIn = Units.seconds 0.0f; SpawnProtection = Units.seconds 0.0f

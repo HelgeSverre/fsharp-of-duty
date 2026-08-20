@@ -98,6 +98,7 @@ module TestKit =
           Yaw = 0.0f
           Pitch = 0.0f
           Stance = Standing
+          AnimPhase = 0.0f
           Health = 100.0f
           Alive = true
           Ready = true

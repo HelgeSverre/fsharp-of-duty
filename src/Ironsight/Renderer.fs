@@ -562,6 +562,38 @@ type Renderer(gl: GL) =
                         particles.SubmitDebugLine(feet, feet + MathEx.yawRight soldier.Facing * 0.6f, Vector4(1.0f, 0.15f, 0.15f, 0.95f))
                         particles.SubmitDebugLine(feet, feet + Vector3.UnitY * 0.6f, Vector4(0.15f, 1.0f, 0.15f, 0.95f))
                         particles.SubmitDebugLine(feet, feet + MathEx.yawForward soldier.Facing * 0.6f, Vector4(0.25f, 0.4f, 1.0f, 0.95f))
+                        // Pose-matched melee proxies and their eligible sever
+                        // bands. F3 therefore exposes exactly what the server's
+                        // shared resolver sees instead of an unrelated bbox.
+                        let target =
+                            { Id = soldier.Id
+                              Position = soldier.Position
+                              Yaw = soldier.Facing
+                              Stance = Anatomy.effectiveStance soldier
+                              AnimPhase = soldier.AnimPhase }
+                        for segment in Melee.anatomy target do
+                            let proxyColor =
+                                match segment.Part with
+                                | BodyHead -> Vector4(1.0f, 0.25f, 0.75f, 0.95f)
+                                | BodyTorso -> Vector4(1.0f, 0.62f, 0.12f, 0.90f)
+                                | _ -> Vector4(0.95f, 0.90f, 0.16f, 0.82f)
+                            particles.SubmitDebugLine(segment.StartPoint, segment.EndPoint, proxyColor)
+                            let bandStart = Vector3.Lerp(segment.StartPoint, segment.EndPoint, segment.MinSeverFraction)
+                            let bandEnd = Vector3.Lerp(segment.StartPoint, segment.EndPoint, segment.MaxSeverFraction)
+                            particles.SubmitDebugLine(bandStart, bandEnd, Vector4(1.0f, 0.08f, 0.04f, 1.0f))
+                let activeSlot = world.Player.Slots[world.Player.Active]
+                if activeSlot.Class.Mechanism = Katana then
+                    let attack = defaultArg activeSlot.LastMelee KatanaSweep
+                    let trajectory = Melee.bladeTrajectory attack world.Player.Position world.Player.Yaw world.Player.Pitch
+                    for pose in trajectory do
+                        particles.SubmitDebugLine(pose.Base, pose.Tip, Vector4(0.20f, 0.88f, 1.0f, 0.42f))
+                    for index in 0..trajectory.Length - 2 do
+                        let previous, current = trajectory[index], trajectory[index + 1]
+                        for station in [ 0.35f; 0.68f; 1.0f ] do
+                            particles.SubmitDebugLine(
+                                Vector3.Lerp(previous.Base, previous.Tip, station),
+                                Vector3.Lerp(current.Base, current.Tip, station),
+                                Vector4(0.15f, 1.0f, 0.72f, 0.76f))
             // Re-predicted every frame so the arc tracks the crosshair. Two
             // seconds of ticks covers any throw the player can make before the
             // grenade settles.
