@@ -81,6 +81,22 @@ module ClientTests =
         Assert.Contains(shot.Samples, fun sample -> abs (int sample) > 1000)
 
     [<Fact>]
+    let ``the gun registry covers the arsenal without being hand-checked`` () =
+        // Guns.names and Tuning.onlineWeapons are two hand-kept lists of the
+        // same set, and meshFor silently falls back to the Kar98k for anything
+        // missing — so adding a weapon and forgetting its mesh looks like a
+        // working gun that is secretly someone else's model.
+        let registered = Set.ofArray Guns.names
+        for weapon in Tuning.onlineWeapons do
+            Assert.True(
+                Set.contains weapon.Name registered,
+                $"{weapon.Name} is selectable but has no entry in Guns.names")
+        // And nothing lingers in the registry that no longer exists.
+        let selectable = Tuning.onlineWeapons |> Array.map _.Name |> Set.ofArray |> Set.add Tuning.mg42.Name
+        for name in Guns.names do
+            Assert.True(Set.contains name selectable, $"Guns.names lists {name}, which is not a weapon any more")
+
+    [<Fact>]
     let ``every weapon mesh is one connected lump`` () =
         // Voxelise each triangle's bounding box and flood fill. A part that
         // floats clear of the gun body shows up as a second component — the

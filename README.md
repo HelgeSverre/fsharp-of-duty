@@ -25,9 +25,9 @@ unions model gameplay.
 - Maps are data: a versioned binary `.ironmap` format (spec, not geometry),
   hash-verified map download from servers, and custom maps via
   `IRONSIGHT_LEVEL=/path/map.ironmap` or `--map`.
-- Twelve player weapons — Kar98k, M1 Garand, Lee-Enfield, Thompson, STG-44,
-  MP40, M1911, Luger P08, Kar98k Sniper, FG42, M1897 Trench Gun, and BAR —
-  plus mounted MG42s.
+- Thirteen player weapons — Kar98k, M1 Garand, Lee-Enfield, Thompson, STG-44,
+  MP40, M1911, Luger P08, Kar98k Sniper, FG42, M1897 Trench Gun, BAR, and the
+  gleefully overpowered M134 Minigun — plus mounted MG42s.
 - ADS, sprinting, stances with crouch/prone accuracy bonuses, recoil,
   penetration, grenades, regeneration, blood, headshot gibs, and reload
   feedback.

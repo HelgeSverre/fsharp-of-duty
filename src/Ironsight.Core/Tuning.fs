@@ -298,9 +298,34 @@ module Tuning =
           HeadshotMultiplier = 1.5f
           MuzzleDistance = 1.12f }
 
+    /// Rambo's answer to cover. Deliberately overpowered on paper — 60 rounds
+    /// a second, a full second of sustained fire in the box — and paid for by
+    /// everything around the trigger: it takes a third of a second to bring up,
+    /// hoses rather than aims even sighted, and reloads for six seconds.
+    ///
+    /// 3600 rpm is the engine's ceiling, not a flourish: the weapon clock is
+    /// stepped once per 60Hz tick, so one round per tick is as fast as anything
+    /// can fire. Asking for 3000 would quantise *down* to 1800.
+    let minigun =
+        { Name = "M134 Minigun"
+          Mode = FullAuto
+          Kind = MachineGun
+          Damage = Units.health 20.0f
+          RoundsPerMin = 3600.0f
+          MagSize = 300
+          ReloadTime = Units.seconds 6.0f
+          Pellets = 1
+          AdsTime = Units.seconds 0.34f
+          HipSpread = 0.072f
+          AdsSpread = 0.030f
+          Recoil = [| Vector2(0.006f, 0.010f); Vector2(-0.008f, 0.011f); Vector2(0.009f, 0.012f) |]
+          Penetration = 16.0f
+          HeadshotMultiplier = 1.5f
+          MuzzleDistance = 1.30f }
+
     // Appended in this order on purpose: existing indices are load-bearing for
     // the online loadout menu and its tests.
-    let onlineWeapons = [| kar98k; thompson; m1911; kar98kSniper; m1897; m1Garand; stg44; mp40; leeEnfield; fg42; bar; luger |]
+    let onlineWeapons = [| kar98k; thompson; m1911; kar98kSniper; m1897; m1Garand; stg44; mp40; leeEnfield; fg42; bar; luger; minigun |]
 
     let defaultWeapon = function Allies -> thompson | Axis -> kar98k
 

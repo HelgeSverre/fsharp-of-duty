@@ -287,11 +287,39 @@ module Guns =
                // Rear sight ladder.
                MeshGen.box (Vector3(0.06f, 0.06f, 0.03f)) Metal |> placed (Vector3(0.0f, 0.155f, -0.24f)) |]
 
+    let private minigun =
+        // Six barrels on a ring around the spin axis, a slab receiver, a
+        // feed chute to the hip box, and spade grips at the back.
+        let barrel index =
+            let angle = float32 index * MathF.Tau / 6.0f
+            MeshGen.cylinder 8 0.026f 0.86f Metal
+            |> placed (Vector3(MathF.Cos angle * 0.075f, 0.06f + MathF.Sin angle * 0.075f, -0.92f))
+        MeshGen.union
+            [| yield! [ for index in 0..5 -> barrel index ]
+               // Barrel clamp rings, fore and aft of the cluster.
+               yield MeshGen.lathe 12 [| Vector2(0.088f, -0.04f); Vector2(0.105f, 0.0f); Vector2(0.088f, 0.04f) |] Metal
+                     |> placed (Vector3(0.0f, 0.06f, -1.28f))
+               yield MeshGen.lathe 12 [| Vector2(0.086f, -0.04f); Vector2(0.100f, 0.0f); Vector2(0.086f, 0.04f) |] Metal
+                     |> placed (Vector3(0.0f, 0.06f, -0.62f))
+               // Receiver housing the rotor, and the motor bulge on its flank.
+               yield MeshGen.box (Vector3(0.24f, 0.26f, 0.44f)) Metal |> placed (Vector3(0.0f, 0.05f, -0.28f))
+               yield MeshGen.box (Vector3(0.14f, 0.16f, 0.22f)) Metal |> placed (Vector3(0.15f, 0.05f, -0.30f))
+               // Flexible feed chute down into the ammo box on the hip.
+               yield MeshGen.box (Vector3(0.09f, 0.09f, 0.26f)) Metal |> MeshGen.rotateX -0.55f
+                     |> placed (Vector3(-0.13f, -0.10f, -0.16f))
+               yield MeshGen.box (Vector3(0.22f, 0.24f, 0.20f)) Metal |> placed (Vector3(-0.17f, -0.24f, -0.02f))
+               // Spade grips: crossbar with a handle at each end.
+               yield MeshGen.box (Vector3(0.30f, 0.05f, 0.06f)) Metal |> placed (Vector3(0.0f, 0.02f, 0.06f))
+               yield MeshGen.cylinder 8 0.028f 0.20f Wood |> MeshGen.rotateX (MathF.PI * 0.5f)
+                     |> placed (Vector3(0.13f, -0.04f, 0.12f))
+               yield MeshGen.cylinder 8 0.028f 0.20f Wood |> MeshGen.rotateX (MathF.PI * 0.5f)
+                     |> placed (Vector3(-0.13f, -0.04f, 0.12f)) |]
+
     /// Every weapon by name, so callers can iterate the set without repeating
     /// the list. `forWeapon` falls back to the Kar98k for anything unlisted.
     let names =
         [| "Thompson"; "M1911"; "Luger P08"; "M1897 Trench Gun"; "Kar98k"; "Kar98k Sniper"
-           "M1 Garand"; "STG-44"; "MP40"; "Lee-Enfield"; "FG42"; "BAR" |]
+           "M1 Garand"; "STG-44"; "MP40"; "Lee-Enfield"; "FG42"; "BAR"; "M134 Minigun" |]
 
     /// The gun alone, without the arms holding it — what the geometry preview
     /// in tools/GunPreview.fsx inspects.
@@ -308,6 +336,7 @@ module Guns =
         | "Lee-Enfield" -> leeEnfield
         | "FG42" -> fg42
         | "BAR" -> bar
+        | "M134 Minigun" -> minigun
         | _ -> kar98k
 
     let forWeapon name =
