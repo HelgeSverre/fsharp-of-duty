@@ -93,6 +93,9 @@ module Guns =
         // built off this so the blade and the notch cannot drift apart.
         let axis = 0.06f
         let sightLine = 0.165f
+        // The blade tops out just above the eye line so it is framed by the
+        // rear ears rather than sitting below them.
+        let bladeTop = 0.20f
         MeshGen.union
             [| // Receiver with the flat bolt housing on top.
                MeshGen.box (Vector3(0.17f, 0.18f, 0.42f)) Metal |> placed (Vector3(0.0f, 0.03f, -0.32f))
@@ -108,10 +111,11 @@ module Guns =
                MeshGen.box (Vector3(0.11f, 0.10f, 0.40f)) Wood |> placed (Vector3(0.0f, axis - 0.015f, -0.84f))
                // Sling swivel hanging under the handguard.
                MeshGen.box (Vector3(0.04f, 0.04f, 0.03f)) Metal |> placed (Vector3(0.0f, axis - 0.075f, -0.98f))
-               // Front blade, topping out exactly on the sight line, with two
-               // short wings either side of it.
-               MeshGen.box (Vector3(0.016f, sightLine - axis - 0.02f, 0.018f)) Metal
-               |> placed (Vector3(0.0f, (axis + 0.02f + sightLine) * 0.5f, -1.09f))
+               // Front blade. Tall enough to stand up inside the rear
+               // aperture: a blade that stops at the sight line disappears
+               // behind the receiver and leaves nothing to line up.
+               MeshGen.box (Vector3(0.016f, bladeTop - axis - 0.02f, 0.018f)) Metal
+               |> placed (Vector3(0.0f, (axis + 0.02f + bladeTop) * 0.5f, -1.09f))
                MeshGen.box (Vector3(0.012f, 0.05f, 0.016f)) Metal |> placed (Vector3(0.032f, axis + 0.055f, -1.09f))
                MeshGen.box (Vector3(0.012f, 0.05f, 0.016f)) Metal |> placed (Vector3(-0.032f, axis + 0.055f, -1.09f))
                // Rear aperture: a low base with an ear either side, so the notch
