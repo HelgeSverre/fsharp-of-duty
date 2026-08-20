@@ -22,6 +22,30 @@ module Program =
 
         let forSoldier (id: int) = roster[((id % roster.Length) + roster.Length) % roster.Length]
 
+    /// Client-side prediction reconciliation. Pure so it stays testable
+    /// without a window or a socket.
+    [<RequireQualifiedAccess>]
+    module Prediction =
+        /// How far a sprinting player could legitimately have travelled since
+        /// the last authoritative update, plus a margin for stance and slope.
+        /// Clamped because the tick delta is meaningless before the first
+        /// snapshot of a session, and because a long stall must not buy an
+        /// unbounded budget that would smooth away a real teleport.
+        let teleportBudget (ticksSinceAuthoritative: int64) =
+            let clamped = Math.Clamp(ticksSinceAuthoritative, 1L, int64 Tuning.TickRate / 2L)
+            Tuning.WalkSpeed * Tuning.SprintMultiplier * (float32 clamped / float32 Tuning.TickRate) + 0.5f
+
+        /// Error to carry into the render offset: kept and eased out over the
+        /// following frames, or dropped when the server plainly teleported the
+        /// player (respawn, round reset).
+        ///
+        /// A flat threshold cannot tell those apart from a stalled connection.
+        /// Snapshots ride TCP, so one retransmit is a ~400ms gap — over three
+        /// metres at sprint speed, which read as a teleport and yanked the
+        /// player back on every hiccup.
+        let carry (error: Vector3) (ticksSinceAuthoritative: int64) =
+            if error.Length() > teleportBudget ticksSinceAuthoritative then Vector3.Zero else error
+
     let private argumentValue name (args: string array) =
         args
         |> Array.tryFindIndex ((=) name)
@@ -664,9 +688,7 @@ module Program =
                         let beforeReconcile = current.Player.Position
                         let reconciled, remaining = OnlineWorld.reconcile current.Level (pendingInputs |> Seq.toList) client.PlayerId current snapshot
                         let error = predictionError + (beforeReconcile - reconciled.Player.Position)
-                        // Large errors are teleports (respawn, round
-                        // reset): snapping is correct there.
-                        predictionError <- if error.Length() > 1.0f then Vector3.Zero else error
+                        predictionError <- Prediction.carry error (snapshot.Tick - reconciledTick)
                         current <- reconciled
                         pendingInputs.Clear()
                         remaining |> List.iter pendingInputs.Enqueue

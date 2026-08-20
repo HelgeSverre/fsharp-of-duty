@@ -229,6 +229,29 @@ module ClientTests =
         Assert.Equal(0, menuStepped.Selected)
 
     [<Fact>]
+    let ``a stalled connection smooths instead of snapping the player back`` () =
+        // Measured against the deployed server: snapshot gaps are p50 54ms but
+        // p99 125ms and max 391ms, because snapshots ride TCP and one
+        // retransmit blocks the stream. The old flat 1m threshold called every
+        // one of those a teleport.
+        let sprint = Tuning.WalkSpeed * Tuning.SprintMultiplier
+        let ticks seconds = int64 (seconds * float32 Tuning.TickRate)
+        // One snapshot apart (~50ms): a normal correction is carried, not snapped.
+        Assert.NotEqual(Vector3.Zero, Program.Prediction.carry (Vector3(0.3f, 0.0f, 0.0f)) (ticks 0.05f))
+        // A 125ms stall at sprint speed is ~1.05m — over the old 1m threshold,
+        // and exactly the hiccup that used to yank the player back.
+        let drift = Vector3(sprint * 0.125f, 0.0f, 0.0f)
+        Assert.True(drift.Length() > 1.0f, "the regression case must exceed the old flat threshold")
+        Assert.NotEqual(Vector3.Zero, Program.Prediction.carry drift (ticks 0.125f))
+        // A real teleport still snaps: a respawn across the map cannot be
+        // explained by any amount of running.
+        Assert.Equal(Vector3.Zero, Program.Prediction.carry (Vector3(60.0f, 0.0f, 0.0f)) (ticks 0.125f))
+        // The budget is bounded, so a long stall does not smooth a teleport.
+        Assert.Equal(Program.Prediction.teleportBudget (ticks 0.5f), Program.Prediction.teleportBudget (ticks 30.0f))
+        // Before the first snapshot of a session the tick delta is meaningless.
+        Assert.True(Program.Prediction.teleportBudget -1L > 0.0f)
+
+    [<Fact>]
     let ``kill feed keeps the newest rows and expires them`` () =
         // Names are baked in when the event arrives: the server retains a kill
         // for ~200ms while the row lives for seconds, so a killer who leaves
