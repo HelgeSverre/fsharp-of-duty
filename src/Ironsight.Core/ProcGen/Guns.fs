@@ -374,9 +374,12 @@ module Guns =
                 // The topmost part is the elevation turret; the eye looks down
                 // the tube below it. (The scope overlay hides this anyway.)
                 | "Kar98k Sniper" -> 0.20f
-                // The protective ears stand proud of the notch you actually
-                // aim through.
-                | "Thompson" -> 0.165f
+                // Between the notch (0.165) and the top of the protective ears
+                // (0.205). Zeroing on the notch itself is technically right and
+                // reads badly: it lifts the whole receiver into the middle of
+                // the screen. Aiming through the upper half of the aperture
+                // sits the gun lower and leaves the sight picture clear.
+                | "Thompson" -> 0.19f
                 | _ -> measured
             name, height)
         |> Map.ofArray
