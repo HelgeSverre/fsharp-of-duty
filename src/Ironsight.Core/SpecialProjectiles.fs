@@ -134,6 +134,25 @@ module SpecialProjectiles =
         | NailMark
         | ArrowMark of direction: Vector3
 
+    /// Everything a shot puts in the air, for one pulled trigger.
+    ///
+    /// Shared by the campaign and the match host so the two cannot disagree
+    /// about what a weapon launches — disagreeing is exactly how the bow ended
+    /// up ballistic offline and hitscan online. Mechanisms that resolve
+    /// instantly (hitscan, flame, laser, a blade) launch nothing and are
+    /// handled by the caller, which is where they differ legitimately.
+    let launch owner color (weapon: WeaponClass) damage position direction (rng: byref<Rng.State>) =
+        match weapon.Mechanism with
+        | Bow ->
+            // Draw power is already folded into the shot's damage, so recover
+            // it to decide how hard the arrow leaves the string.
+            let power = Units.raw damage / max 0.01f (Units.raw weapon.Damage)
+            [| spawnArrow owner damage power position direction |]
+        | WaterJet -> spawnWaterBurst owner position direction &rng
+        | Paintball | FoamDart | Rocket | Nail | Harpoon ->
+            spawn owner color weapon.Mechanism position direction |> Option.toArray
+        | Hitscan | FlameJet | Laser | Katana -> [||]
+
     let private emptyStatus =
         { WetFor = Units.seconds 0.0f
           BurningFor = Units.seconds 0.0f

@@ -264,28 +264,19 @@ module Sim =
             let struct (_, direction, _) = List.head result.Shots
             shotEvents.Add(ShotFired(Some armedPlayer.Id, origin, direction, result.Weapon.Class.Name))
         for struct (origin, direction, shot) in result.Shots do
+            let muzzle = Ballistics.playerMuzzleOrigin armedPlayer result.Weapon.Class
+            // What the trigger launches is decided in one place for both the
+            // campaign and the match host; only what resolves instantly differs.
+            spawnedProjectiles.AddRange(
+                SpecialProjectiles.launch armedPlayer.Id world.PaintColor result.Weapon.Class shot.Damage muzzle direction &rng)
             match result.Weapon.Class.Mechanism with
-            | Paintball | FoamDart | Rocket | Nail | Harpoon ->
-                let muzzle = Ballistics.playerMuzzleOrigin armedPlayer result.Weapon.Class
-                match SpecialProjectiles.spawn armedPlayer.Id world.PaintColor result.Weapon.Class.Mechanism muzzle direction with
-                | Some projectile -> spawnedProjectiles.Add projectile
-                | None -> ()
-                if result.Weapon.Class.Mechanism = Rocket then
-                    let nextPlayer, nextSoldiers, backblastEvents =
-                        SpecialProjectiles.applyBackblast muzzle direction world.Level projectilePlayer soldiers
-                    projectilePlayer <- nextPlayer
-                    soldiers <- nextSoldiers
-                    shotEvents.AddRange backblastEvents
-            | Bow ->
-                let muzzle = Ballistics.playerMuzzleOrigin armedPlayer result.Weapon.Class
-                let power = Units.raw shot.Damage / max 0.01f (Units.raw result.Weapon.Class.Damage)
-                spawnedProjectiles.Add(SpecialProjectiles.spawnArrow armedPlayer.Id shot.Damage power muzzle direction)
-            | WaterJet ->
-                let muzzle = Ballistics.playerMuzzleOrigin armedPlayer result.Weapon.Class
-                SpecialProjectiles.spawnWaterBurst armedPlayer.Id muzzle direction &rng
-                |> spawnedProjectiles.AddRange
+            | Rocket ->
+                let nextPlayer, nextSoldiers, backblastEvents =
+                    SpecialProjectiles.applyBackblast muzzle direction world.Level projectilePlayer soldiers
+                projectilePlayer <- nextPlayer
+                soldiers <- nextSoldiers
+                shotEvents.AddRange backblastEvents
             | FlameJet ->
-                let muzzle = Ballistics.playerMuzzleOrigin armedPlayer result.Weapon.Class
                 let nextPlayer, nextSoldiers, nextStatus, flameEvents =
                     SpecialProjectiles.applyFlameJet armedPlayer.Id muzzle direction world.Level projectilePlayer soldiers elementalStatus
                 projectilePlayer <- nextPlayer
@@ -293,7 +284,6 @@ module Sim =
                 elementalStatus <- nextStatus
                 shotEvents.AddRange flameEvents
             | Laser ->
-                let muzzle = Ballistics.playerMuzzleOrigin armedPlayer result.Weapon.Class
                 let hitSoldiers, endpoint, hitEvents =
                     Ballistics.applyLaserFiltered (fun soldier -> soldier.Team = Axis) muzzle direction shot.Damage world.Level soldiers
                 soldiers <- hitSoldiers
@@ -354,6 +344,8 @@ module Sim =
                                         shotEvents.Add(Dismembered(hit.Victim, hit.Point, cut))
                                     | None -> ()
                                     shotEvents.Add(Kill(Some armedPlayer.Id, hit.Victim, result.Weapon.Class.Name, hit.Part = BodyHead))
+            // Already launched above, and nothing resolves this tick.
+            | Paintball | FoamDart | Nail | Harpoon | Bow | WaterJet -> ()
             | Hitscan ->
               let hitSoldiers, hitEvents =
                   Ballistics.applyShotFiltered (fun soldier -> soldier.Team = Axis) origin direction shot.Damage shot.Penetration shot.HeadshotMultiplier shot.Kind world.Level soldiers

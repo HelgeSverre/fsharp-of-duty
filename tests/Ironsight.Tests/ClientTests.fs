@@ -75,6 +75,21 @@ module ClientTests =
         Assert.Equal(1.0f, HudLayout.uiScale -2560 1280)
 
     [<Fact>]
+    let ``render interpolation carries projectiles forward on their velocity`` () =
+        // Online, projectiles only move when a snapshot lands. Without this an
+        // arrow at 88 m/s steps four metres at a time between frames.
+        let world = Sim.createTrainingWorld 907UL
+        let arrow =
+            SpecialProjectiles.spawnArrow (EntityId 1) (Units.health 90.0f) 1.0f Vector3.Zero -Vector3.UnitZ
+        let flying = { world with SpecialProjectiles = [| arrow |] }
+        let at alpha = (RenderInterpolation.world alpha flying flying).SpecialProjectiles[0].Position.Z
+        Assert.Equal(arrow.Position.Z, at 0.0f)
+        Assert.True(at 0.5f < at 0.0f, "half a frame moved the arrow nowhere")
+        Assert.True(at 1.0f < at 0.5f, "the carry is not monotonic")
+        // A whole frame of carry is one tick of travel, no more.
+        Assert.InRange(arrow.Position.Z - at 1.0f, 0.0f, arrow.Velocity.Length() * Units.raw Tuning.TickDuration * 1.01f)
+
+    [<Fact>]
     let ``render interpolation blends transforms without changing current gameplay state`` () =
         let previous = Sim.createTrainingWorld 4UL
         let movedPlayer = { previous.Player with Position = Vector3(10.0f, 2.0f, -4.0f); Health = Units.health 37.0f; Ads = 1.0f }

@@ -45,4 +45,14 @@ module RenderInterpolation =
                         Facing = MathEx.lerpAngle earlier.Facing soldier.Facing amount
                         AnimPhase = earlier.AnimPhase + (soldier.AnimPhase - earlier.AnimPhase) * amount }
                 | None -> soldier)
-        { current with Player = player; Soldiers = soldiers }
+        // Projectiles are dead-reckoned on their own velocity rather than
+        // lerped between two states: they spawn and are consumed too fast to
+        // pair up by index, and a wrong pairing drags an arrow across the map.
+        // Online they only move when a snapshot lands, so without this an arrow
+        // at 88 m/s steps four metres at a time.
+        let projectiles =
+            current.SpecialProjectiles
+            |> Array.map (fun projectile ->
+                { projectile with
+                    Position = projectile.Position + projectile.Velocity * (amount * Units.raw Tuning.TickDuration) })
+        { current with Player = player; Soldiers = soldiers; SpecialProjectiles = projectiles }

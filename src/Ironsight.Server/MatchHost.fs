@@ -507,6 +507,17 @@ type MatchHost(mode: GameMode, ?matchLevel: Level, ?disconnectGrace: TimeSpan, ?
             pendingInputs <- leftoverInputs
             inputCredits <- nextCredits
             let mutable combatState = { lifecycleState with Players = movedPlayers; Rng = rng }
+            // One rule for who may be hurt by whom, used by bullets, blades and
+            // projectiles alike. A disconnected player is a reserved identity,
+            // not a body: invisible to clients, and it must neither block a shot
+            // nor hand out a free kill.
+            let hostileTo: SpecialProjectiles.Hostility =
+                fun ownerId targetId ->
+                    match Map.tryFind ownerId combatState.Players, Map.tryFind targetId combatState.Players with
+                    | Some owner, Some target ->
+                        target.Connected && target.Alive && target.SpawnProtection <= Units.seconds 0.0f
+                        && Multiplayer.areHostile combatState.Mode owner target
+                    | _ -> false
             let authoritativeShots = if lifecycleState.Phase = Playing then shots :> seq<_> else Seq.empty
             let spawnedProjectiles = ResizeArray<SpecialProjectile>()
             for shooterId, origin, direction, damage, penetration, headshotMultiplier, kind, melee, attackPosition, attackYaw, attackPitch, weaponClass, estimatedTick in authoritativeShots do
@@ -523,22 +534,7 @@ type MatchHost(mode: GameMode, ?matchLevel: Level, ?disconnectGrace: TimeSpan, ?
                             | Some struct (position, yaw, stance, animPhase, revision) when revision = player.LifeRevision ->
                                 { soldier with Position = position; Facing = yaw; Stance = stance; AnimPhase = animPhase }
                             | _ -> soldier)
-                    let canHit (candidate: Soldier) =
-                        match Map.tryFind candidate.Id combatState.Players with
-                        | Some target ->
-                            // Disconnected players are reserved identities, not
-                            // bodies: they are invisible to clients and must not
-                            // block shots or hand out free kills.
-                            target.Connected && target.Alive && target.SpawnProtection <= Units.seconds 0.0f
-                            && Multiplayer.areHostile combatState.Mode shooter target
-                        | None -> false
-                    // Hostility is the server's, not a team comparison: a
-                    // free-for-all room has no teams to compare.
-                    let hostility: SpecialProjectiles.Hostility =
-                        fun _ targetId ->
-                            match Map.tryFind targetId combatState.Players with
-                            | Some target -> canHit (asSoldier target)
-                            | None -> false
+                    let canHit (candidate: Soldier) = hostileTo shooterId candidate.Id
                     // Write a stepped soldier view back onto the players it came
                     // from. Shared by every damage source that speaks Soldier —
                     // bullets, flame, laser — so they cannot drift apart.
@@ -553,31 +549,28 @@ type MatchHost(mode: GameMode, ?matchLevel: Level, ?disconnectGrace: TimeSpan, ?
                                 if after.IsDead then
                                     combatState <- Multiplayer.recordKill shooterId targetId combatState
                                     emit (Kill(Some shooterId, targetId, weaponName, (match after.Behavior with DyingHeadshot _ -> true | _ -> false)))
+                    // Whatever the trigger launches, decided in the one place
+                    // the campaign decides it, then simulated by the server's own
+                    // projectile tick — so an arrow flies, drops and takes time
+                    // to arrive online exactly as it does offline. Paint is
+                    // coloured per shooter: a server has no single "player
+                    // colour" the way a campaign world does.
+                    let (EntityId shooterNumber) = shooterId
+                    let paint =
+                        SpecialProjectiles.paintPalette[abs shooterNumber % SpecialProjectiles.paintPalette.Length]
+                    spawnedProjectiles.AddRange(
+                        SpecialProjectiles.launch shooterId paint weaponClass damage origin direction &rng)
                     match weaponClass.Mechanism with
-                    // Everything that puts a physical object in the air is spawned
-                    // here and simulated by the server's own projectile tick, so
-                    // an arrow flies and drops online exactly as it does offline.
-                    | Paintball | FoamDart | Rocket | Nail | Harpoon ->
-                        SpecialProjectiles.spawn shooterId PaintRed weaponClass.Mechanism origin direction
-                        |> Option.iter spawnedProjectiles.Add
-                        if weaponClass.Mechanism = Rocket then
-                            let hitPlayer, hitSoldiers, backblast =
-                                SpecialProjectiles.applyBackblast origin direction level (toPlayer shooter) soldiers
-                            ignore hitPlayer
-                            applySoldierDamage hitSoldiers
-                            for event in backblast do emit event
-                    | Bow ->
-                        // Draw power is already in the shot's damage; recover it
-                        // so the arrow flies as far as it was pulled.
-                        let power = Units.raw damage / max 0.01f (Units.raw weaponClass.Damage)
-                        spawnedProjectiles.Add(SpecialProjectiles.spawnArrow shooterId damage power origin direction)
-                    | WaterJet ->
-                        SpecialProjectiles.spawnWaterBurst shooterId origin direction &rng
-                        |> spawnedProjectiles.AddRange
+                    | Rocket ->
+                        let _, hitSoldiers, backblast =
+                            SpecialProjectiles.applyBackblast origin direction level (toPlayer shooter) soldiers
+                        applySoldierDamage hitSoldiers
+                        for event in backblast do emit event
+                    | Paintball | FoamDart | Nail | Harpoon | Bow | WaterJet -> ()
                     | FlameJet ->
                         let _, burned, statuses, flameEvents =
                             SpecialProjectiles.applyFlameJetWith
-                                hostility shooterId origin direction level (toPlayer shooter) soldiers combatState.Elemental
+                                hostileTo shooterId origin direction level (toPlayer shooter) soldiers combatState.Elemental
                         applySoldierDamage burned
                         combatState <- { combatState with Elemental = statuses }
                         for event in flameEvents do
@@ -654,68 +647,62 @@ type MatchHost(mode: GameMode, ?matchLevel: Level, ?disconnectGrace: TimeSpan, ?
                                         combatState <- Multiplayer.recordKill shooterId targetId combatState
                                         emit (Kill(Some shooterId, targetId, weaponName, (match after.Behavior with DyingHeadshot _ -> true | _ -> false)))
                 | _ -> ()
-            // Projectiles the server owns, stepped exactly where grenades are.
-            // The soldier view is the live one, not the lag-compensated one: an
-            // arrow already in flight is resolved against where people are now,
-            // the same as a grenade.
-            let projectileSet = Array.append combatState.Projectiles (spawnedProjectiles.ToArray())
-            if lifecycleState.Phase = Playing && (projectileSet.Length > 0 || not combatState.Elemental.IsEmpty) then
-                let ordered = combatState.Players |> Map.toArray
-                let view = ordered |> Array.map (snd >> asSoldier)
-                let hostility: SpecialProjectiles.Hostility =
-                    fun ownerId targetId ->
-                        match Map.tryFind ownerId combatState.Players, Map.tryFind targetId combatState.Players with
-                        | Some owner, Some target ->
-                            target.Connected && target.Alive && target.SpawnProtection <= Units.seconds 0.0f
-                            && Multiplayer.areHostile combatState.Mode owner target
-                        | _ -> false
-                // A dead stand-in for the campaign's local player: the server has
-                // no such thing, and a corpse is never traced against.
-                let noLocalPlayer = { toPlayer (snd ordered[0]) with Id = EntityId -1; Health = Units.health 0.0f }
-                let active, _, _, stepped, statuses, events =
-                    SpecialProjectiles.stepWith
-                        hostility Tuning.TickDuration level noLocalPlayer view projectileSet [||] combatState.Elemental
-                combatState <- { combatState with Projectiles = active; Elemental = statuses }
-                // The step reports who was hurt but not by which projectile, so
-                // attribute each hit to the nearest one that was in flight when
-                // the tick began. With projectiles this fast that is the one
-                // that landed; it decides the killer's hitmarker and the
-                // victim's damage arrow, not the damage itself.
-                let culprit (victim: Vector3) =
-                    projectileSet
-                    |> Array.sortBy (fun projectile -> Vector3.DistanceSquared(projectile.Position, victim))
-                    |> Array.tryHead
-                for index in 0 .. ordered.Length - 1 do
-                    let targetId, before = ordered[index]
-                    let after = stepped[index]
-                    if after.Health < before.Health then
-                        match Map.tryFind targetId combatState.Players with
-                        | Some current ->
-                            combatState <-
-                                { combatState with
-                                    Players = Map.add targetId { current with Health = after.Health; RegenIn = Tuning.RegenDelay } combatState.Players }
-                            match culprit current.Position with
-                            | Some projectile ->
-                                emitOnly current.Id (PlayerHurt(MathEx.normalizedOrZero (projectile.Position - current.Position), after.Health))
-                                emitOnly projectile.Owner (HitConfirmed(targetId, after.IsDead))
+            // Projectiles the server owns, stepped exactly where grenades
+            // are. Named rather than inlined: AdvanceTick is long enough that
+            // its phases should be readable at a glance.
+            let stepProjectiles () =
+                let projectileSet = Array.append combatState.Projectiles (spawnedProjectiles.ToArray())
+                if lifecycleState.Phase = Playing && (projectileSet.Length > 0 || not combatState.Elemental.IsEmpty) then
+                    let ordered = combatState.Players |> Map.toArray
+                    let view = ordered |> Array.map (snd >> asSoldier)
+                    // A dead stand-in for the campaign's local player: the server has
+                    // no such thing, and a corpse is never traced against.
+                    let noLocalPlayer = { toPlayer (snd ordered[0]) with Id = EntityId -1; Health = Units.health 0.0f }
+                    let active, _, _, stepped, statuses, events =
+                        SpecialProjectiles.stepWith
+                            hostileTo Tuning.TickDuration level noLocalPlayer view projectileSet [||] combatState.Elemental
+                    combatState <- { combatState with Projectiles = active; Elemental = statuses }
+                    // The step reports who was hurt but not by which projectile, so
+                    // attribute each hit to the nearest one that was in flight when
+                    // the tick began. With projectiles this fast that is the one
+                    // that landed; it decides the killer's hitmarker and the
+                    // victim's damage arrow, not the damage itself.
+                    let culprit (victim: Vector3) =
+                        projectileSet
+                        |> Array.sortBy (fun projectile -> Vector3.DistanceSquared(projectile.Position, victim))
+                        |> Array.tryHead
+                    for index in 0 .. ordered.Length - 1 do
+                        let targetId, before = ordered[index]
+                        let after = stepped[index]
+                        if after.Health < before.Health then
+                            match Map.tryFind targetId combatState.Players with
+                            | Some current ->
+                                combatState <-
+                                    { combatState with
+                                        Players = Map.add targetId { current with Health = after.Health; RegenIn = Tuning.RegenDelay } combatState.Players }
+                                match culprit current.Position with
+                                | Some projectile ->
+                                    emitOnly current.Id (PlayerHurt(MathEx.normalizedOrZero (projectile.Position - current.Position), after.Health))
+                                    emitOnly projectile.Owner (HitConfirmed(targetId, after.IsDead))
+                                | None -> ()
                             | None -> ()
-                        | None -> ()
-                for event in events do
-                    match event with
-                    // Both are re-issued above with an owner attached; the step
-                    // cannot know one because it never sees who fired.
-                    | HitConfirmed _ | PlayerHurt _ -> ()
-                    | Kill(_, victim, weapon, headshot) ->
-                        let killer =
-                            ordered
-                            |> Array.tryFind (fun (id, _) -> id = victim)
-                            |> Option.bind (fun (_, player) -> culprit player.Position)
-                            |> Option.map _.Owner
-                        killer |> Option.iter (fun owner -> combatState <- Multiplayer.recordKill owner victim combatState)
-                        emit (Kill(killer, victim, weapon, headshot))
-                    | _ -> emit event
-            else
-                combatState <- { combatState with Projectiles = projectileSet }
+                    for event in events do
+                        match event with
+                        // Both are re-issued above with an owner attached; the step
+                        // cannot know one because it never sees who fired.
+                        | HitConfirmed _ | PlayerHurt _ -> ()
+                        | Kill(_, victim, weapon, headshot) ->
+                            let killer =
+                                ordered
+                                |> Array.tryFind (fun (id, _) -> id = victim)
+                                |> Option.bind (fun (_, player) -> culprit player.Position)
+                                |> Option.map _.Owner
+                            killer |> Option.iter (fun owner -> combatState <- Multiplayer.recordKill owner victim combatState)
+                            emit (Kill(killer, victim, weapon, headshot))
+                        | _ -> emit event
+                else
+                    combatState <- { combatState with Projectiles = projectileSet }
+            stepProjectiles ()
             let grenadeSet = Array.append lifecycleState.Grenades (thrownGrenades.ToArray())
             let activeGrenades, explosions =
                 if lifecycleState.Phase = Playing then Grenades.stepProjectilesOwned Tuning.TickDuration level grenadeSet
