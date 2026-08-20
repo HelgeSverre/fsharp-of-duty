@@ -491,11 +491,31 @@ module Tuning =
           HeadshotMultiplier = 1.5f
           MuzzleDistance = 0.92f }
 
+    let laserPointer =
+        { Name = "Laser Pointer"
+          Mode = FullAuto
+          Kind = Pistol
+          Mechanism = Laser
+          Damage = Units.health 20.0f
+          RoundsPerMin = 300.0f
+          MagSize = 300
+          ReloadTime = Units.seconds 2.0f
+          Pellets = 1
+          AdsTime = Units.seconds 0.08f
+          HipSpread = 0.0f
+          AdsSpread = 0.0f
+          Recoil = [| Vector2.Zero |]
+          Penetration = 0.0f
+          HeadshotMultiplier = 1.0f
+          // Calibrated to the small viewmodel so the world-space beam begins
+          // at the centre of its black emitter instead of beside the hand.
+          MuzzleDistance = 0.59f }
+
     // Appended in this order on purpose: existing indices are load-bearing for
     // the online loadout menu and its tests.
     let onlineWeapons = [| kar98k; thompson; m1911; kar98kSniper; m1897; m1Garand; stg44; mp40; leeEnfield; fg42; bar; luger; bow |]
 
-    let specialWeapons = [| paintballMarker; nerfBlaster; bazooka; flamethrower; superSoaker; nailgun; harpoonGun; bow |]
+    let specialWeapons = [| paintballMarker; nerfBlaster; bazooka; flamethrower; superSoaker; nailgun; harpoonGun; bow; laserPointer |]
 
     let defaultWeapon = function Allies -> thompson | Axis -> kar98k
 
@@ -505,7 +525,7 @@ module Tuning =
 
     /// Which number key holds a weapon: 0 = key 1, 4 = key 5. Derived from the
     /// weapon's own stats rather than a table of inventory indices, so it works
-    /// for any loadout — the twenty-slot offline sandbox and the two-slot
+    /// for any loadout — the twenty-one-slot offline sandbox and the two-slot
     /// online kit alike.
     ///
     /// Arm order is load-bearing. The FG42 is a full-auto SniperRifle but
@@ -513,7 +533,7 @@ module Tuning =
     /// belongs with the heavies, so Kind is matched before Mode.
     let categoryOf (weapon: WeaponClass) =
         match weapon.Mechanism with
-        | Paintball | FoamDart | Rocket | FlameJet | WaterJet | Nail | Harpoon | Bow -> 4
+        | Paintball | FoamDart | Rocket | FlameJet | WaterJet | Nail | Harpoon | Bow | Laser -> 4
         | Hitscan ->
             match weapon.Kind with
             | Pistol -> 2

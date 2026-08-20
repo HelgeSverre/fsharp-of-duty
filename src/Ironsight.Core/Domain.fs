@@ -26,6 +26,7 @@ type WeaponMechanism =
     | Nail
     | Harpoon
     | Bow
+    | Laser
 
 type WeaponClass =
     { Name: string
@@ -294,6 +295,7 @@ type GameEvent =
     | RocketDud of position: Vector3 * normal: Vector3
     | Backblast of position: Vector3 * direction: Vector3
     | FlameStream of origin: Vector3 * endpoint: Vector3
+    | LaserBeam of origin: Vector3 * endpoint: Vector3
     | FlameImpact of position: Vector3 * normal: Vector3
     | WaterImpact of position: Vector3 * normal: Vector3
     | NailImpact of position: Vector3 * normal: Vector3 * stuck: bool

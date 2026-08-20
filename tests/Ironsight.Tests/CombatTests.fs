@@ -261,6 +261,7 @@ module CombatTests =
         Assert.DoesNotContain(Tuning.superSoaker.Name, online)
         Assert.DoesNotContain(Tuning.nailgun.Name, online)
         Assert.DoesNotContain(Tuning.harpoonGun.Name, online)
+        Assert.DoesNotContain(Tuning.laserPointer.Name, online)
         Assert.Contains(Tuning.bow.Name, online)
         Assert.All(Tuning.onlineWeapons |> Array.filter (fun weapon -> weapon.Name <> Tuning.bow.Name), fun weapon -> Assert.Equal(Hitscan, weapon.Mechanism))
         Assert.Equal(Bow, Tuning.bow.Mechanism)
@@ -393,6 +394,60 @@ module CombatTests =
         Assert.True(bounds.Z < 1.0f && bounds.Y < 0.8f, $"nailgun bounds were {bounds}")
 
     [<Fact>]
+    let ``laser pointer is literal keychain geometry rather than a pistol`` () =
+        let mesh = Guns.meshFor "Laser Pointer"
+        let positions = mesh.Vertices |> Array.map _.Position
+        let bounds =
+            (positions |> Array.reduce (fun left right -> Vector3.Max(left, right)))
+            - (positions |> Array.reduce (fun left right -> Vector3.Min(left, right)))
+        let materials = mesh.Vertices |> Array.map _.MaterialId |> Set.ofArray
+        Assert.True(bounds.X < 0.11f && bounds.Z < 0.70f, $"pointer body/keychain bounds were {bounds}")
+        Assert.True(bounds.Y > 0.32f, "the dangling keyring should define the silhouette")
+        Assert.Contains(Materials.id Metal, materials)
+        Assert.Contains(Materials.id Plaster, materials)
+        Assert.Contains(Materials.id PaintRed, materials)
+        Assert.Contains(Materials.id ToolBlack, materials)
+
+    [<Fact>]
+    let ``laser is perfectly accurate flat damage and stops at the first hit`` () =
+        Assert.Equal(Laser, Tuning.laserPointer.Mechanism)
+        Assert.Equal(Units.health 20.0f, Tuning.laserPointer.Damage)
+        Assert.Equal(0.0f, Tuning.laserPointer.HipSpread)
+        Assert.Equal(0.0f, Tuning.laserPointer.AdsSpread)
+        Assert.Equal(0.0f, Tuning.laserPointer.Penetration)
+        Assert.All(Tuning.laserPointer.Recoil, fun recoil -> Assert.Equal(Vector2.Zero, recoil))
+
+        let origin = Vector3(0.0f, 1.1f, 5.0f)
+        let targets = [| soldierAt 91 Vector3.Zero; soldierAt 92 (Vector3(0.0f, 0.0f, -4.0f)) |]
+        let updated, endpoint, events =
+            Ballistics.applyLaserFiltered (fun _ -> true) origin -Vector3.UnitZ Tuning.laserPointer.Damage openLevel targets
+        Assert.Equal(Units.health 80.0f, updated[0].Health)
+        Assert.Equal(Units.health 100.0f, updated[1].Health)
+        Assert.Contains(HitConfirmed(EntityId 91, false), events)
+        Assert.DoesNotContain(events, function HitConfirmed(EntityId 92, _) -> true | _ -> false)
+        Assert.True(endpoint.Z > -1.0f, "beam continued through its first target")
+
+        // It is a 10 km gameplay ray, well beyond any map, and does not inherit
+        // the pistol damage falloff even after kilometres of travel.
+        let farTarget = soldierAt 93 Vector3.Zero
+        let farUpdated, _, _ =
+            Ballistics.applyLaserFiltered (fun _ -> true) (Vector3(0.0f, 1.1f, 5000.0f)) -Vector3.UnitZ Tuning.laserPointer.Damage openLevel [| farTarget |]
+        Assert.Equal(Units.health 80.0f, farUpdated[0].Health)
+        let _, clearEndpoint, _ =
+            Ballistics.applyLaserFiltered (fun _ -> true) origin -Vector3.UnitZ Tuning.laserPointer.Damage openLevel [||]
+        Assert.InRange(Vector3.Distance(origin, clearEndpoint), Ballistics.LaserRange - 0.01f, Ballistics.LaserRange + 0.01f)
+
+        let blockedLevel =
+            LevelDsl.level "Blocked laser"
+                [ LevelDsl.street 30.0f 10.0f Mud
+                  LevelDsl.block (Vector3(0.0f, 1.0f, 2.0f)) (Vector3(2.0f, 2.0f, 0.20f)) Metal ]
+            |> LevelCompile.compile
+        let blocked, wallEndpoint, _ =
+            Ballistics.applyLaserFiltered (fun _ -> true) origin -Vector3.UnitZ Tuning.laserPointer.Damage blockedLevel [| soldierAt 94 Vector3.Zero |]
+        Assert.Equal(Units.health 100.0f, blocked[0].Health)
+        Assert.InRange(wallEndpoint.Z, 1.89f, 2.11f)
+
+    [<Fact>]
     let ``bow limbs flex inward and its single sight pin is centred for ADS`` () =
         let rest = Guns.bowForDraw 0.0f
         let drawn = Guns.bowForDraw 1.0f
@@ -455,6 +510,10 @@ module CombatTests =
         let harpoonWorld, _ = fire 18
         Assert.Single harpoonWorld.SpecialProjectiles |> ignore
         Assert.Equal(HarpoonRound [], harpoonWorld.SpecialProjectiles[0].Kind)
+
+        let laserWorld, laserEvents = fire 20
+        Assert.Empty laserWorld.SpecialProjectiles
+        Assert.Contains(laserEvents, function LaserBeam(origin, endpoint) -> Vector3.Distance(origin, endpoint) > 1.0f | _ -> false)
 
     [<Fact>]
     let ``flame stream deals contact damage then ignites and burns a dry target`` () =

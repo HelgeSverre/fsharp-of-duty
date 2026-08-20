@@ -26,7 +26,8 @@ module Sim =
            Tuning.weaponSlot Tuning.superSoaker 1
            Tuning.weaponSlot Tuning.nailgun 3
            Tuning.weaponSlot Tuning.harpoonGun 4
-           Tuning.weaponSlot Tuning.bow 3 |]
+           Tuning.weaponSlot Tuning.bow 3
+           Tuning.weaponSlot Tuning.laserPointer 1 |]
 
     /// The paintball round loadout opens on the Thompson.
     let private thompsonSlot = 3
@@ -292,6 +293,18 @@ module Sim =
                 soldiers <- nextSoldiers
                 elementalStatus <- nextStatus
                 shotEvents.AddRange flameEvents
+            | Laser ->
+                let muzzle = Ballistics.playerMuzzleOrigin armedPlayer result.Weapon.Class
+                let hitSoldiers, endpoint, hitEvents =
+                    Ballistics.applyLaserFiltered (fun soldier -> soldier.Team = Axis) muzzle direction shot.Damage world.Level soldiers
+                soldiers <- hitSoldiers
+                shotEvents.Add(LaserBeam(muzzle, endpoint))
+                shotEvents.AddRange hitEvents
+                for event in hitEvents do
+                    match event with
+                    | HitConfirmed(victim, true) ->
+                        shotEvents.Add(Kill(Some armedPlayer.Id, victim, result.Weapon.Class.Name, false))
+                    | _ -> ()
             | Hitscan ->
               let hitSoldiers, hitEvents =
                   Ballistics.applyShotFiltered (fun soldier -> soldier.Team = Axis) origin direction shot.Damage shot.Penetration shot.HeadshotMultiplier shot.Kind world.Level soldiers

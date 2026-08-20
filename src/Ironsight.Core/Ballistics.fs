@@ -103,17 +103,17 @@ module Ballistics =
                     else Legs
                 Some(SoldierHit(distance, index, region))
 
-    let traceFilteredExcluding canHit excludeIndexes origin direction (level: Level) (soldiers: Soldier array) =
+    let private traceFilteredExcludingWithin maxDistance canHit excludeIndexes origin direction (level: Level) (soldiers: Soldier array) =
         // Triangle soup has no notion of "a solid", so thickness is recovered by
         // pairing the nearest front face with the next back face along the ray.
         // A front face with no matching exit — an open terrain surface — is
         // treated as unpenetrable rather than infinitely thin.
         let surfaceHits =
             let ordered =
-                LevelCompile.trianglesAlongRay origin direction 200.0f level
+                LevelCompile.trianglesAlongRay origin direction maxDistance level
                 |> Array.choose (fun triangle ->
                     match MathEx.rayTriangle origin direction triangle.A triangle.B triangle.C with
-                    | ValueSome distance when distance <= 200.0f -> Some(struct (distance, triangle))
+                    | ValueSome distance when distance <= maxDistance -> Some(struct (distance, triangle))
                     | _ -> None)
                 |> Array.sortBy (fun struct (distance, _) -> distance)
             let entry =
@@ -139,6 +139,8 @@ module Ballistics =
             | [||] -> None
             | hits -> Some(Array.minBy (function SurfaceHit(distance, _, _, _) | SoldierHit(distance, _, _) -> distance) hits)
 
+    let traceFilteredExcluding canHit excludeIndexes origin direction level soldiers =
+        traceFilteredExcludingWithin 200.0f canHit excludeIndexes origin direction level soldiers
 
     let applyShotFiltered canHit (origin: Vector3) (direction: Vector3) (damage: float32<hp>) (penetration: float32) (headshotMultiplier: float32) (kind: WeaponKind) (level: Level) (soldiers: Soldier array) =
         let mutable currentOrigin = origin
@@ -175,6 +177,7 @@ module Ballistics =
                     penetrations <- penetrations + 1
                     passedThrough <- Set.add index passedThrough
                 else tracing <- false
+
             | Some(SurfaceHit(distance, exitDistance, normal, material)) when distance <= remainingRange ->
                 let impactPosition = currentOrigin + direction * distance
                 events.Add(Impact(impactPosition, normal, material))
@@ -190,6 +193,31 @@ module Ballistics =
                 else tracing <- false
             | _ -> tracing <- false
         updated, List.ofSeq events
+
+    [<Literal>]
+    let LaserRange = 10000.0f
+
+    /// Resolves the toy laser as a single, perfectly straight ray. Damage is
+    /// deliberately flat at any distance and the first soldier or surface
+    /// always terminates the beam, so it can never penetrate.
+    let applyLaserFiltered canHit (origin: Vector3) (direction: Vector3) (damage: float32<hp>) (level: Level) (soldiers: Soldier array) =
+        let direction = MathEx.normalizedOrZero direction
+        let noHitEndpoint = origin + direction * LaserRange
+        match traceFilteredExcludingWithin LaserRange canHit Set.empty origin direction level soldiers with
+        | Some(SoldierHit(distance, index, _)) when distance <= LaserRange ->
+            let updated = Array.copy soldiers
+            let victim = updated[index]
+            let health = max (Units.health 0.0f) (victim.Health - damage)
+            let lethal = health <= Units.health 0.0f
+            updated[index] <-
+                { victim with
+                    Health = health
+                    Behavior = if lethal then Dying(Units.seconds 0.0f) else victim.Behavior }
+            let endpoint = origin + direction * distance
+            updated, endpoint, [ HitConfirmed(victim.Id, lethal); BloodImpact(endpoint, direction, false) ]
+        | Some(SurfaceHit(distance, _, _, _)) when distance <= LaserRange ->
+            Array.copy soldiers, origin + direction * distance, []
+        | _ -> Array.copy soldiers, noHitEndpoint, []
 
     let applyShot origin direction damage penetration headshotMultiplier kind level soldiers =
         applyShotFiltered (fun _ -> true) origin direction damage penetration headshotMultiplier kind level soldiers

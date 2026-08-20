@@ -14,6 +14,7 @@ type AudioSystem() =
     let al = AL.GetApi()
     let sources = Array.init 24 (fun _ -> al.GenSource())
     let mutable sourceIndex = 1
+    let mutable lastLaserPulse = 0L
 
     let upload sound =
         let buffer = al.GenBuffer()
@@ -32,6 +33,7 @@ type AudioSystem() =
     let harpoon = upload (AudioSynth.harpoonLaunch ())
     let harpoonHit = upload (AudioSynth.harpoonImpact ())
     let bow = upload (AudioSynth.bowRelease ())
+    let laser = upload (AudioSynth.laserClick ())
     let arrowHit = upload (AudioSynth.arrowImpact ())
     let blast = upload (AudioSynth.explosion ())
     let step = upload (AudioSynth.footstep ())
@@ -40,7 +42,7 @@ type AudioSystem() =
     let heartbeat = upload (AudioSynth.heartbeat ())
     let radio = upload (AudioSynth.radio ())
     let wind = upload (AudioSynth.wind ())
-    let buffers = [| rifle; smg; marker; foam; rocket; flame; flameHit; water; nail; harpoon; harpoonHit; bow; arrowHit; blast; step; reload; ping; heartbeat; radio; wind |]
+    let buffers = [| rifle; smg; marker; foam; rocket; flame; flameHit; water; nail; harpoon; harpoonHit; bow; laser; arrowHit; blast; step; reload; ping; heartbeat; radio; wind |]
 
     // Conventional guns share two synthesized samples; the special weapons
     // use bespoke pneumatic, spring and rocket-launch transients.
@@ -54,6 +56,7 @@ type AudioSystem() =
         | "Nailgun" -> nail
         | "Harpoon Gun" -> harpoon
         | "Bow" -> bow
+        | "Laser Pointer" -> laser
         | "Thompson" | "MG42" | "MP40" | "STG-44" | "FG42" | "BAR" -> smg
         | _ -> rifle
 
@@ -67,6 +70,7 @@ type AudioSystem() =
         | "Nailgun" -> 1.0f
         | "Harpoon Gun" -> 0.88f
         | "Bow" -> 1.0f
+        | "Laser Pointer" -> 1.0f
         | "M1911" -> 1.18f
         | "Luger P08" -> 1.26f
         | "MP40" -> 1.10f
@@ -112,6 +116,15 @@ type AudioSystem() =
     member _.Handle(events: GameEvent list) =
         for event in events do
             match event with
+            | ShotFired(_, position, _, "Laser Pointer") ->
+                // Damage pulses repeat while the button is held, but the real
+                // keychain switch clicks only once per press. A pulse gap marks
+                // the next press without needing input state in the audio layer.
+                let now = Diagnostics.Stopwatch.GetTimestamp()
+                let gap = float32 (now - lastLaserPulse) / float32 Diagnostics.Stopwatch.Frequency
+                if lastLaserPulse = 0L || gap > 0.32f then
+                    play laser position 0.64f 1.0f
+                lastLaserPulse <- now
             | ShotFired(_, position, _, weapon) ->
                 play (shotSample weapon) position 0.88f (shotPitch weapon * (0.97f + float32 sourceIndex * 0.004f))
             | Explosion(position, _) ->

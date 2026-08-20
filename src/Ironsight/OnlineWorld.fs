@@ -32,6 +32,7 @@ module OnlineWorld =
         | "rocket-dud" -> Some(RocketDud(event.Position, event.Direction))
         | "backblast" -> Some(Backblast(event.Position, event.Direction))
         | "flame-stream" -> Some(FlameStream(event.Position, event.Position + event.Direction * event.Value))
+        | "laser-beam" -> Some(LaserBeam(event.Position, event.Position + event.Direction * event.Value))
         | "flame-impact" -> Some(FlameImpact(event.Position, event.Direction))
         | "water-impact" -> Some(WaterImpact(event.Position, event.Direction))
         | "nail-impact" -> Some(NailImpact(event.Position, event.Direction, event.Value > 0.5f))

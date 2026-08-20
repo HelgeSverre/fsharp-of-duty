@@ -82,6 +82,12 @@ module AudioSynth =
             let body = MathF.Sin(MathF.Tau * 210.0f * time) * MathF.Exp(-time * 45.0f)
             MathF.Tanh(snap * 0.62f + body * 0.30f) * 0.62f)
 
+    let laserClick () =
+        render 0.045f 6217 (fun time white ->
+            let switch = white * MathF.Exp(-time * 150.0f)
+            let casing = MathF.Sin(MathF.Tau * 680.0f * time) * MathF.Exp(-time * 105.0f)
+            (switch * 0.11f + casing * 0.045f) * 0.50f)
+
     let harpoonLaunch () =
         let mutable low = 0.0f
         render 0.46f 6673 (fun time white ->

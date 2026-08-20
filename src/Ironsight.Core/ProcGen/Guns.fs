@@ -13,6 +13,14 @@ module Guns =
         MeshGen.cylinder 9 radius (max 0.01f (delta.Length())) material
         |> MeshGen.transform (Matrix4x4.CreateFromQuaternion(MathEx.rotationFromZ delta) * Matrix4x4.CreateTranslation((startPoint + endPoint) * 0.5f))
 
+    let private hoopYZ segments radius thickness material (centre: Vector3) =
+        Array.init segments (fun index ->
+            let angle = MathF.Tau * float32 index / float32 segments
+            let nextAngle = MathF.Tau * float32 (index + 1) / float32 segments
+            let point value = centre + Vector3(0.0f, MathF.Cos(value) * radius, MathF.Sin(value) * radius)
+            limb thickness material (point angle) (point nextAngle))
+        |> MeshGen.union
+
     /// Four triangular cutting fins around the shaft. The point is local Z=0,
     /// the ferrule/shaft connection is at +Z, and the 45-degree clocking makes
     /// the blades read as an X when viewed head-on.
@@ -425,7 +433,7 @@ module Guns =
                MeshGen.box (Vector3(0.16f, 0.42f, 0.15f)) ToolBlack |> placed (Vector3(0.0f, -0.13f, -0.66f))
                MeshGen.box (Vector3(0.10f, 0.18f, 0.10f)) Metal |> placed (Vector3(0.0f, -0.42f, -0.67f))
                MeshGen.box (Vector3(0.15f, 0.07f, 0.12f)) PaintYellow |> placed (Vector3(0.0f, -0.53f, -0.67f)) |]
-        |> MeshGen.scale (Vector3(0.72f, 0.72f, 0.72f))
+        |> MeshGen.scale (Vector3(0.58f, 0.70f, 0.70f))
 
     // Long rail-style diver speargun: laminated central stock, twin black
     // rubber power bands, compact pistol grip, muzzle bridge and a spear riding
@@ -558,6 +566,37 @@ module Guns =
 
     let private bow = bowForDraw 0.0f
 
+    /// Literal bargain-bin keychain laser pointer: a slim silver tube with a
+    /// wraparound warning label, proud push button, black emitter and the
+    /// oversized split ring that makes these things unmistakable.
+    let private laserPointer =
+        let chainStart = Vector3(0.0f, -0.015f, 0.165f)
+        let chainMiddle = Vector3(0.0f, -0.105f, 0.225f)
+        let ringCentre = Vector3(0.0f, -0.245f, 0.305f)
+        MeshGen.union
+            [| // Aluminium barrel and stepped end caps.
+               MeshGen.cylinder 18 0.052f 0.46f Metal |> placed (Vector3(0.0f, 0.0f, -0.09f))
+               MeshGen.cylinder 18 0.058f 0.055f Metal |> placed (Vector3(0.0f, 0.0f, -0.347f))
+               MeshGen.cylinder 18 0.034f 0.010f ToolBlack |> placed (Vector3(0.0f, 0.0f, -0.380f))
+               MeshGen.cylinder 18 0.058f 0.035f Metal |> placed (Vector3(0.0f, 0.0f, 0.158f))
+               // Paper safety label and the familiar red DANGER stripe.
+               MeshGen.cylinder 18 0.0535f 0.135f Plaster |> placed (Vector3(0.0f, 0.0f, 0.040f))
+               MeshGen.cylinder 18 0.055f 0.025f PaintRed |> placed (Vector3(0.0f, 0.0f, -0.012f))
+               MeshGen.cylinder 18 0.055f 0.010f ToolBlack |> placed (Vector3(0.0f, 0.0f, 0.025f))
+               // Chrome push button standing proud of the tube.
+               MeshGen.cylinder 12 0.024f 0.020f Metal
+               |> MeshGen.rotateX (MathF.PI * 0.5f)
+               |> placed (Vector3(0.0f, 0.061f, -0.125f))
+               // Rear eyelet, two chunky chain links, and split keyring.
+               hoopYZ 10 0.031f 0.010f Metal chainStart
+               limb 0.010f Metal (chainStart + Vector3(0.0f, -0.025f, 0.020f)) chainMiddle
+               hoopYZ 10 0.038f 0.010f Metal chainMiddle
+               limb 0.010f Metal (chainMiddle + Vector3(0.0f, -0.030f, 0.025f)) (ringCentre + Vector3(0.0f, 0.100f, -0.025f))
+               hoopYZ 18 0.105f 0.011f Metal ringCentre
+               // A second, slightly offset hoop reads as a real split ring.
+               hoopYZ 18 0.099f 0.006f Metal (ringCentre + Vector3(0.008f, 0.0f, 0.0f)) |]
+        |> MeshGen.scale (Vector3(0.82f, 0.82f, 0.82f))
+
     /// Small world meshes reused by the renderer for physical special ammo.
     let paintballMesh color =
         MeshGen.lathe 10
@@ -621,7 +660,7 @@ module Guns =
     let names =
         [| "Thompson"; "M1911"; "Luger P08"; "M1897 Trench Gun"; "Kar98k"; "Kar98k Sniper"
            "M1 Garand"; "STG-44"; "MP40"; "Lee-Enfield"; "FG42"; "BAR"
-           "Paintball Marker"; "Nerf Blaster"; "Bazooka"; "Flamethrower"; "Super Soaker"; "Nailgun"; "Harpoon Gun"; "Bow" |]
+           "Paintball Marker"; "Nerf Blaster"; "Bazooka"; "Flamethrower"; "Super Soaker"; "Nailgun"; "Harpoon Gun"; "Bow"; "Laser Pointer" |]
 
     /// The gun alone, without the arms holding it — what the geometry preview
     /// in tools/GunPreview.fsx inspects.
@@ -646,6 +685,7 @@ module Guns =
         | "Nailgun" -> nailgun
         | "Harpoon Gun" -> harpoonGun
         | "Bow" -> bow
+        | "Laser Pointer" -> laserPointer
         | _ -> kar98k
 
     /// Gun-only pose variant used by previews and geometry inspection.
@@ -656,11 +696,11 @@ module Guns =
         | _ -> meshFor name
 
     let forWeapon name =
-        let arms = if name = "M1911" || name = "Luger P08" then pistolArms else rifleArms
+        let arms = if name = "M1911" || name = "Luger P08" || name = "Laser Pointer" then pistolArms else rifleArms
         MeshGen.union [| meshFor name; arms |]
 
     /// Runtime viewmodel variant used for mechanisms with moving geometry.
     let forWeaponPose name pose =
-        let arms = if name = "M1911" || name = "Luger P08" then pistolArms else rifleArms
+        let arms = if name = "M1911" || name = "Luger P08" || name = "Laser Pointer" then pistolArms else rifleArms
         let gun = meshForPose name pose
         MeshGen.union [| gun; arms |]

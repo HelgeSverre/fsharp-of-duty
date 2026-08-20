@@ -126,6 +126,8 @@ void main() {
                     addGrowingPuff (origin + direction * 0.18f) (direction * 1.6f + side) (Vector4(0.68f, 0.70f, 0.72f, 0.48f)) 15.0f 0.55f 0.0f 22.0f
             | ShotFired(_, origin, direction, "Bow") ->
                 addLine origin (origin + direction * 2.2f) (Vector4(0.72f, 0.48f, 0.22f, 0.72f)) 0.10f
+            | ShotFired(_, origin, direction, "Laser Pointer") ->
+                addPuff (origin + direction * 0.03f) Vector3.Zero (Vector4(1.0f, 0.04f, 0.02f, 0.92f)) 8.0f 0.12f 0.0f
             | ShotFired(_, origin, direction, _) ->
                 addLine (origin + direction * 0.35f) (origin + direction * 32.0f) (Vector4(1.0f, 0.78f, 0.28f, 0.8f)) 0.08f
                 addPuff (origin + direction * 0.45f) (direction * 0.4f) (Vector4(1.0f, 0.55f, 0.10f, 0.9f)) 18.0f 0.12f 0.28f
@@ -262,6 +264,20 @@ void main() {
                     let position = Vector3.Lerp(origin, endpoint, t) + radial * (0.03f + t * 0.20f)
                     let color = if index % 3 = 0 then Vector4(1.0f, 0.82f, 0.20f, 0.86f) else Vector4(1.0f, 0.25f, 0.02f, 0.78f)
                     addGrowingPuff position (direction * (1.2f + t * 2.0f) + Vector3.UnitY * (0.4f + t)) color (11.0f + t * 22.0f) 0.22f 1.8f 18.0f
+            | LaserBeam(origin, endpoint) ->
+                // Slightly longer than the 300-RPM pulse interval, so holding
+                // the button reads as one continuous laser instead of tracers.
+                let direction = MathEx.normalizedOrZero (endpoint - origin)
+                let reference = if abs direction.Y < 0.9f then Vector3.UnitY else Vector3.UnitX
+                let tangent = Vector3.Cross(direction, reference) |> MathEx.normalizedOrZero
+                let bitangent = Vector3.Cross(direction, tangent) |> MathEx.normalizedOrZero
+                let outerStart = origin + direction * 0.015f
+                let glow = Vector4(1.0f, 0.05f, 0.025f, 0.68f)
+                for offset in [ tangent * 0.006f; tangent * -0.006f; bitangent * 0.006f; bitangent * -0.006f ] do
+                    addLine (outerStart + offset) (endpoint + offset) glow 0.22f
+                // The saturated core is the authoritative ray and starts at
+                // the exact centre of the emitter; glow lines bloom around it.
+                addLine origin endpoint (Vector4(1.0f, 0.01f, 0.005f, 1.0f)) 0.22f
             | FlameImpact(position, normal) ->
                 let tangent = Vector3.Cross(normal, if abs normal.Y < 0.8f then Vector3.UnitY else Vector3.UnitX) |> MathEx.normalizedOrZero
                 let bitangent = Vector3.Cross(normal, tangent) |> MathEx.normalizedOrZero

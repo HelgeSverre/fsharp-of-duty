@@ -301,6 +301,9 @@ module Protocol =
             | FlameStream(origin, endpoint) ->
                 let delta = endpoint - origin
                 make "flame-stream" (EntityId 0) origin (MathEx.normalizedOrZero delta) (delta.Length()) ""
+            | LaserBeam(origin, endpoint) ->
+                let delta = endpoint - origin
+                make "laser-beam" (EntityId 0) origin (MathEx.normalizedOrZero delta) (delta.Length()) ""
             | FlameImpact(position, normal) -> make "flame-impact" (EntityId 0) position normal 0.0f ""
             | WaterImpact(position, normal) -> make "water-impact" (EntityId 0) position normal 0.0f ""
             | NailImpact(position, normal, stuck) -> make "nail-impact" (EntityId 0) position normal (if stuck then 1.0f else 0.0f) ""
