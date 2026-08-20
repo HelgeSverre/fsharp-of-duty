@@ -5,6 +5,29 @@ open System.Numerics
 open System.Text.Json
 open Ironsight
 
+/// One resolved trigger pull, handed from the per-player input pass to the
+/// authoritative pass that resolves it. A record because the tuple this
+/// replaced carried three consecutive Vector3s — origin, direction, muzzle —
+/// so getting two of them the wrong way round type-checked.
+type private AuthoritativeShot =
+    { Shooter: EntityId
+      /// The eye the shot is traced from; the reticle belongs to this point.
+      Origin: Vector3
+      Direction: Vector3
+      /// Where a projectile is launched from, which is not the eye.
+      Muzzle: Vector3
+      Damage: float32<hp>
+      Penetration: float32
+      HeadshotMultiplier: float32
+      Kind: WeaponKind
+      Melee: MeleeAttack option
+      AttackPosition: Vector3
+      AttackYaw: float32
+      AttackPitch: float32
+      Weapon: WeaponClass
+      /// The client's estimated server tick, for lag compensation.
+      EstimatedTick: int64 }
+
 type MatchHost(mode: GameMode, ?matchLevel: Level, ?disconnectGrace: TimeSpan, ?opKey: string,
                ?scoreLimit: int, ?timeLimit: float32<s>, ?maxPlayers: int) =
     let gate = obj ()
@@ -422,7 +445,7 @@ type MatchHost(mode: GameMode, ?matchLevel: Level, ?disconnectGrace: TimeSpan, ?
             if lifecycleState.Phase <> state.Phase then
                 emit (PhaseChanged(string lifecycleState.Phase))
             let mutable rng = state.Rng
-            let shots = ResizeArray<EntityId * Vector3 * Vector3 * Vector3 * float32<hp> * float32 * float32 * WeaponKind * MeleeAttack option * Vector3 * float32 * float32 * WeaponClass * int64>()
+            let shots = ResizeArray<AuthoritativeShot>()
             let thrownGrenades = ResizeArray<Grenade>()
             let respawnedPlayers =
                 lifecycleState.Players
@@ -457,7 +480,21 @@ type MatchHost(mode: GameMode, ?matchLevel: Level, ?disconnectGrace: TimeSpan, ?
                         request.Melee
                         |> Option.iter (fun attack ->
                             emit (MeleeTrace(id, result.Player.Position + Vector3.UnitY * 1.15f, Melee.traceEndpoint attack result.Player.Position result.Player.Yaw result.Player.Pitch, attack)))
-                        shots.Add(id, origin, direction, muzzle, request.Damage, request.Penetration, request.HeadshotMultiplier, request.Kind, request.Melee, result.Player.Position, result.Player.Yaw, result.Player.Pitch, result.Weapon.Class, estimatedTick)
+                        shots.Add
+                            { Shooter = id
+                              Origin = origin
+                              Direction = direction
+                              Muzzle = muzzle
+                              Damage = request.Damage
+                              Penetration = request.Penetration
+                              HeadshotMultiplier = request.HeadshotMultiplier
+                              Kind = request.Kind
+                              Melee = request.Melee
+                              AttackPosition = result.Player.Position
+                              AttackYaw = result.Player.Yaw
+                              AttackPitch = result.Player.Pitch
+                              Weapon = result.Weapon.Class
+                              EstimatedTick = estimatedTick }
                 let handPlayer = result.Player
                 // stepLocomotion returns only the active slot; writing back the
                 // whole array with Active is what lets a switch survive the
@@ -534,7 +571,17 @@ type MatchHost(mode: GameMode, ?matchLevel: Level, ?disconnectGrace: TimeSpan, ?
                     | _ -> false
             let authoritativeShots = if lifecycleState.Phase = Playing then shots :> seq<_> else Seq.empty
             let spawnedProjectiles = ResizeArray<SpecialProjectile>()
-            for shooterId, origin, direction, muzzle, damage, penetration, headshotMultiplier, kind, melee, attackPosition, attackYaw, attackPitch, weaponClass, estimatedTick in authoritativeShots do
+            for shot in authoritativeShots do
+                // Named rather than destructured: the tuple this replaced put
+                // origin, direction and muzzle side by side, all Vector3, so
+                // transposing two of them compiled and silently mis-aimed every
+                // shot on the server.
+                let shooterId = shot.Shooter
+                let origin, direction, muzzle = shot.Origin, shot.Direction, shot.Muzzle
+                let damage, penetration = shot.Damage, shot.Penetration
+                let headshotMultiplier, kind, melee = shot.HeadshotMultiplier, shot.Kind, shot.Melee
+                let attackPosition, attackYaw, attackPitch = shot.AttackPosition, shot.AttackYaw, shot.AttackPitch
+                let weaponClass, estimatedTick = shot.Weapon, shot.EstimatedTick
                 let weaponName = weaponClass.Name
                 match Map.tryFind shooterId combatState.Players with
                 | Some shooter when shooter.Alive ->

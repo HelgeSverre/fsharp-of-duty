@@ -35,7 +35,7 @@ module AiBrain =
             // many equal-cost paths.
             let heap =
                 Array.create
-                    (2 + (level.Nav |> Seq.sumBy (fun node -> node.Neighbours.Length)))
+                    (2 + (level.Nav |> Array.sumBy (fun node -> node.Neighbours.Length)))
                     (struct (0.0f, -1))
             let mutable heapSize = 0
             let heapAdd f node =

@@ -173,6 +173,21 @@ module ClientTests =
             Assert.True(Set.contains name selectable, $"Guns.names lists {name}, which is not a weapon any more")
 
     [<Fact>]
+    let ``the shader has a branch for every material, by index`` () =
+        // Materials.all is the index, and the shader matches those indices as
+        // bare numbers in GLSL — a second hand-kept table with a silent
+        // fallback, which is this codebase's recurring bug shape. Appending a
+        // material or reordering the array renders the new one flat grey
+        // instead of failing, and adding one to the shader that no material
+        // uses is dead code nobody notices.
+        let branches =
+            Text.RegularExpressions.Regex.Matches(Shaders.levelFragment, @"vMaterial == (\d+)")
+            |> Seq.map (fun found -> int found.Groups[1].Value)
+            |> Set.ofSeq
+        let expected = Set.ofList [ 0 .. Materials.all.Length - 1 ]
+        Assert.Equal<Set<int>>(expected, branches)
+
+    [<Fact>]
     let ``every weapon aims from a sight line near its bore`` () =
         // The aim pose lifts the viewmodel by exactly this height, so a value
         // that is not on the gun aims through the receiver or above the sights.
