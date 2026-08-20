@@ -347,6 +347,34 @@ module CombatTests =
         Assert.Equal(2, Tuning.categoryOf Tuning.katana)
 
     [<Fact>]
+    let ``a launched projectile is zeroed on the crosshair, not the muzzle`` () =
+        // Projectiles leave the muzzle, which sits below the eye the reticle
+        // belongs to. Fired parallel they landed that offset low at every range,
+        // and the arrow's own drop was added on top of it.
+        let level = TestKit.streetArenaSized "Range" 200.0f 40.0f
+        let world = Sim.createTrainingWorld 41UL
+        let player = { world.Player with Position = Vector3.Zero; Yaw = 0.0f; Pitch = 0.0f; Ads = 1.0f }
+        let eye = Ballistics.playerEyeOrigin player
+        let aim = Ballistics.directionFromAngles player.Yaw player.Pitch Vector2.Zero
+        let muzzle = Ballistics.playerMuzzleOrigin player Tuning.bow
+        Assert.True(muzzle.Y < eye.Y, "this test is pointless if the muzzle is not below the eye")
+        let mutable rng = Rng.create 7UL
+        let mutable flying =
+            SpecialProjectiles.launch (EntityId 1) PaintRed Tuning.bow Tuning.bow.Damage eye aim muzzle &rng
+        let mutable worstMiss = 0.0f
+        // Out to the convergence range the shot must land on the reticle, not
+        // under it. A hand's width over twenty-five metres is the budget.
+        let mutable travelled = 0.0f
+        while flying.Length > 0 && travelled < SpecialProjectiles.ConvergeDistance do
+            let active, _, _, _, _, _ =
+                SpecialProjectiles.stepWith (fun _ _ -> false) Tuning.TickDuration level player [||] flying [||] Map.empty
+            flying <- active
+            if flying.Length > 0 then
+                travelled <- -flying[0].Position.Z
+                worstMiss <- max worstMiss (abs (flying[0].Position.Y - eye.Y))
+        Assert.InRange(worstMiss, 0.0f, 0.12f)
+
+    [<Fact>]
     let ``bow draw power rises holds and fatigues back to minimum`` () =
         let power seconds = Tuning.drawPower (Units.seconds seconds)
         Assert.Equal(Tuning.MinimumDrawPower, power 0.0f)

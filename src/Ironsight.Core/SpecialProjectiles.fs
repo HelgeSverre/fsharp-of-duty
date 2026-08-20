@@ -134,6 +134,19 @@ module SpecialProjectiles =
         | NailMark
         | ArrowMark of direction: Vector3
 
+    /// How hard gravity pulls on a projectile, relative to a falling body. An
+    /// arrow is fletched and a harpoon is heavy and fast; a paintball is not.
+    let gravityScale kind =
+        match kind with
+        | HarpoonRound _ -> 0.15f
+        | ArrowRound _ -> 0.55f
+        | _ -> 1.0f
+
+    /// Range at which a launched projectile's path crosses the line the
+    /// crosshair follows. Past it a shot rides fractionally high before gravity
+    /// takes over; the common engagement is well inside it.
+    let ConvergeDistance = 25.0f
+
     /// Everything a shot puts in the air, for one pulled trigger.
     ///
     /// Shared by the campaign and the match host so the two cannot disagree
@@ -141,17 +154,38 @@ module SpecialProjectiles =
     /// up ballistic offline and hitscan online. Mechanisms that resolve
     /// instantly (hitscan, flame, laser, a blade) launch nothing and are
     /// handled by the caller, which is where they differ legitimately.
-    let launch owner color (weapon: WeaponClass) damage position direction (rng: byref<Rng.State>) =
-        match weapon.Mechanism with
-        | Bow ->
-            // Draw power is already folded into the shot's damage, so recover
-            // it to decide how hard the arrow leaves the string.
-            let power = Units.raw damage / max 0.01f (Units.raw weapon.Damage)
-            [| spawnArrow owner damage power position direction |]
-        | WaterJet -> spawnWaterBurst owner position direction &rng
-        | Paintball | FoamDart | Rocket | Nail | Harpoon ->
-            spawn owner color weapon.Mechanism position direction |> Option.toArray
-        | Hitscan | FlameJet | Laser | Katana -> [||]
+    let launch owner color (weapon: WeaponClass) damage (eye: Vector3) (aim: Vector3) (muzzle: Vector3) (rng: byref<Rng.State>) =
+        // A projectile leaves the muzzle, which sits below and to the side of
+        // the eye the reticle belongs to. Fired parallel to the aim ray it
+        // lands that offset low at every range — a constant miss that is not
+        // gravity and does not read as one. Aiming it at a point on the ray
+        // instead puts the shot where the crosshair is, and leaves only the
+        // drop a bow is supposed to have.
+        let position = muzzle
+        let direction = MathEx.normalizedOrZero (eye + MathEx.normalizedOrZero aim * ConvergeDistance - muzzle)
+        // Zeroed rather than merely converged: a projectile also falls on the
+        // way, so it is launched high by exactly what it will lose crossing the
+        // convergence range. Applied as added lift per projectile, so a spray
+        // keeps its spread instead of collapsing onto one point.
+        let zero (projectile: SpecialProjectile) =
+            let speed = projectile.Velocity.Length()
+            if speed < 0.01f then projectile
+            else
+                let flight = ConvergeDistance / speed
+                let lift = 0.5f * Tuning.Gravity * gravityScale projectile.Kind * flight
+                { projectile with Velocity = projectile.Velocity + Vector3.UnitY * lift }
+        let launched =
+            match weapon.Mechanism with
+            | Bow ->
+                // Draw power is already folded into the shot's damage, so
+                // recover it to decide how hard the arrow leaves the string.
+                let power = Units.raw damage / max 0.01f (Units.raw weapon.Damage)
+                [| spawnArrow owner damage power position direction |]
+            | WaterJet -> spawnWaterBurst owner position direction &rng
+            | Paintball | FoamDart | Rocket | Nail | Harpoon ->
+                spawn owner color weapon.Mechanism position direction |> Option.toArray
+            | Hitscan | FlameJet | Laser | Katana -> [||]
+        launched |> Array.map zero
 
     let private emptyStatus =
         { WetFor = Units.seconds 0.0f
@@ -486,12 +520,8 @@ module SpecialProjectiles =
             else false
 
         for projectile in projectiles do
-            let gravityScale =
-                match projectile.Kind with
-                | HarpoonRound _ -> 0.15f
-                | ArrowRound _ -> 0.55f
-                | _ -> 1.0f
-            let velocity = projectile.Velocity + Vector3(0.0f, -Tuning.Gravity * gravityScale * seconds, 0.0f)
+            let velocity =
+                projectile.Velocity + Vector3(0.0f, -Tuning.Gravity * gravityScale projectile.Kind * seconds, 0.0f)
             let travel = velocity * seconds
             let distance = travel.Length()
             let direction = if distance < 0.00001f then Vector3.UnitZ else travel / distance

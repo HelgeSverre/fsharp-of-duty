@@ -408,7 +408,7 @@ type MatchHost(mode: GameMode, ?matchLevel: Level, ?disconnectGrace: TimeSpan, ?
             if lifecycleState.Phase <> state.Phase then
                 emit (PhaseChanged(string lifecycleState.Phase))
             let mutable rng = state.Rng
-            let shots = ResizeArray<EntityId * Vector3 * Vector3 * float32<hp> * float32 * float32 * WeaponKind * MeleeAttack option * Vector3 * float32 * float32 * WeaponClass * int64>()
+            let shots = ResizeArray<EntityId * Vector3 * Vector3 * Vector3 * float32<hp> * float32 * float32 * WeaponKind * MeleeAttack option * Vector3 * float32 * float32 * WeaponClass * int64>()
             let thrownGrenades = ResizeArray<Grenade>()
             let respawnedPlayers =
                 lifecycleState.Players
@@ -443,7 +443,7 @@ type MatchHost(mode: GameMode, ?matchLevel: Level, ?disconnectGrace: TimeSpan, ?
                         request.Melee
                         |> Option.iter (fun attack ->
                             emit (MeleeTrace(id, result.Player.Position + Vector3.UnitY * 1.15f, Melee.traceEndpoint attack result.Player.Position result.Player.Yaw result.Player.Pitch, attack)))
-                        shots.Add(id, origin, direction, request.Damage, request.Penetration, request.HeadshotMultiplier, request.Kind, request.Melee, result.Player.Position, result.Player.Yaw, result.Player.Pitch, result.Weapon.Class, estimatedTick)
+                        shots.Add(id, origin, direction, muzzle, request.Damage, request.Penetration, request.HeadshotMultiplier, request.Kind, request.Melee, result.Player.Position, result.Player.Yaw, result.Player.Pitch, result.Weapon.Class, estimatedTick)
                 let handPlayer = result.Player
                 // stepLocomotion returns only the active slot; writing back the
                 // whole array with Active is what lets a switch survive the
@@ -520,7 +520,7 @@ type MatchHost(mode: GameMode, ?matchLevel: Level, ?disconnectGrace: TimeSpan, ?
                     | _ -> false
             let authoritativeShots = if lifecycleState.Phase = Playing then shots :> seq<_> else Seq.empty
             let spawnedProjectiles = ResizeArray<SpecialProjectile>()
-            for shooterId, origin, direction, damage, penetration, headshotMultiplier, kind, melee, attackPosition, attackYaw, attackPitch, weaponClass, estimatedTick in authoritativeShots do
+            for shooterId, origin, direction, muzzle, damage, penetration, headshotMultiplier, kind, melee, attackPosition, attackYaw, attackPitch, weaponClass, estimatedTick in authoritativeShots do
                 let weaponName = weaponClass.Name
                 match Map.tryFind shooterId combatState.Players with
                 | Some shooter when shooter.Alive ->
@@ -559,7 +559,7 @@ type MatchHost(mode: GameMode, ?matchLevel: Level, ?disconnectGrace: TimeSpan, ?
                     let paint =
                         SpecialProjectiles.paintPalette[abs shooterNumber % SpecialProjectiles.paintPalette.Length]
                     spawnedProjectiles.AddRange(
-                        SpecialProjectiles.launch shooterId paint weaponClass damage origin direction &rng)
+                        SpecialProjectiles.launch shooterId paint weaponClass damage origin direction muzzle &rng)
                     match weaponClass.Mechanism with
                     | Rocket ->
                         let _, hitSoldiers, backblast =

@@ -268,7 +268,8 @@ module Sim =
             // What the trigger launches is decided in one place for both the
             // campaign and the match host; only what resolves instantly differs.
             spawnedProjectiles.AddRange(
-                SpecialProjectiles.launch armedPlayer.Id world.PaintColor result.Weapon.Class shot.Damage muzzle direction &rng)
+                SpecialProjectiles.launch
+                    armedPlayer.Id world.PaintColor result.Weapon.Class shot.Damage origin direction muzzle &rng)
             match result.Weapon.Class.Mechanism with
             | Rocket ->
                 let nextPlayer, nextSoldiers, backblastEvents =
