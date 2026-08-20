@@ -777,23 +777,27 @@ module Guns =
     /// Measured off the model rather than tabulated: on every one of these guns
     /// the topmost part is the rear sight, so a new weapon aims correctly the
     /// day it is added. Only the two exceptions are named.
+    /// The aim lift every viewmodel was posed against before sight heights
+    /// were measured per weapon: `-0.31 + ads * 0.10`, fully aimed.
+    let private AuthoredLift = 0.205f
+
+    let private specialNames = Tuning.specialWeapons |> Array.map _.Name |> Set.ofArray
+
     let private sightHeights =
         names
         |> Array.map (fun name ->
             let measured = (meshFor name).Vertices |> Array.map (fun vertex -> vertex.Position.Y) |> Array.max
             let height =
                 match name with
-                // The measured rule assumes the topmost part of a gun is its
-                // rear sight. That holds for rifles and fails for anything
-                // carrying a tank, a hopper or a limb above the bore — the bow
-                // measured 0.857 (its upper limb tip) and the paintball marker
-                // 0.530 (the top of its hopper), which would have aimed both of
-                // them most of a metre off.
-                | "Bow" | "Katana" -> 0.0f
-                | "Paintball Marker" | "Nerf Blaster" -> 0.16f
-                | "Bazooka" -> 0.10f
-                | "Flamethrower" -> 0.12f
-                | "Super Soaker" | "Nailgun" -> 0.14f
+                // A blade has no sights at all, and aiming one is a wind-up
+                // rather than a sight picture. Kept inside its own silhouette.
+                | "Katana" -> 0.12f
+                // The special weapons were modelled against the fixed aim lift
+                // this function replaced, so their sight line is that lift by
+                // construction — measuring them instead aims a bow from its
+                // upper limb tip (0.857) and a paintball marker from the top of
+                // its hopper (0.530), which lifts the arms into view.
+                | name when specialNames.Contains name -> AuthoredLift
                 // The topmost part is the elevation turret; the eye looks down
                 // the tube below it. (The scope overlay hides this anyway.)
                 | "Kar98k Sniper" -> 0.20f

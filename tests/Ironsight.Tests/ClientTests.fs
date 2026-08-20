@@ -173,16 +173,18 @@ module ClientTests =
             Assert.True(Set.contains name selectable, $"Guns.names lists {name}, which is not a weapon any more")
 
     [<Fact>]
-    let ``every weapon aims along a sight line that exists on the model`` () =
+    let ``every weapon aims from a sight line near its bore`` () =
         // The aim pose lifts the viewmodel by exactly this height, so a value
         // that is not on the gun aims through the receiver or above the sights.
         for name in Guns.names do
-            let ys = (Guns.meshFor name).Vertices |> Array.map (fun vertex -> vertex.Position.Y)
             let sight = Guns.sightHeight name
-            Assert.InRange(sight, Array.min ys, Array.max ys)
-            // Never below the bore, and never far above it. "Somewhere on the
-            // model" is too weak a claim: it accepted the bow aiming from its
-            // upper limb tip, 0.86 above the arrow it fires.
+            // Never below the bore, and never far above it.
+            //
+            // Not "a point on the model": you sight a bow along the arrow,
+            // which is not part of the bow, and a harpoon gun's authored aim
+            // sits a centimetre over its own topmost part. The band is the
+            // invariant that matters, and the one that catches a real mistake —
+            // the bow briefly aimed from its upper limb tip at 0.857.
             Assert.InRange(sight, 0.0f, 0.35f)
 
     [<Fact>]
