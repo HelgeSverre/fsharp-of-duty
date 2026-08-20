@@ -11,6 +11,9 @@
 #                          is what the in-game browser needs (it wants wss://)
 #   --port 8080            listen port (default 8080)
 #   --version v0.0.4       pin a release instead of taking the latest
+#   --url http://host/x.tar.gz
+#                          install this tarball instead of a GitHub release,
+#                          for a local build or an air-gapped box
 set -euo pipefail
 
 REPO="HelgeSverre/fsharp-of-duty"
@@ -20,13 +23,15 @@ SERVICE_USER="ironsight"
 PORT=8080
 DOMAIN=""
 VERSION="latest"
+URL=""
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --domain) DOMAIN="${2:?--domain needs a hostname}"; shift 2 ;;
         --port) PORT="${2:?--port needs a number}"; shift 2 ;;
         --version) VERSION="${2:?--version needs a tag}"; shift 2 ;;
-        -h|--help) sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+        --url) URL="${2:?--url needs a URL}"; shift 2 ;;
+        -h|--help) sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
         *) echo "unknown option: $1" >&2; exit 2 ;;
     esac
 done
@@ -36,11 +41,15 @@ step() { echo; echo "==> $*"; }
 
 [[ $EUID -eq 0 ]] || die "run as root (sudo bash deploy.sh)"
 command -v systemctl >/dev/null || die "no systemd; use the Dockerfile instead (see docs/MULTIPLAYER.md)"
-[[ "$(uname -m)" == "x86_64" ]] || die "the published server build is linux-x64; this box is $(uname -m)"
+# Only the published release is x64-only; --url means the operator brought
+# their own build and knows what architecture it is for.
+[[ -n "$URL" || "$(uname -m)" == "x86_64" ]] || die "the published server build is linux-x64; this box is $(uname -m)"
 command -v curl >/dev/null || die "curl is required"
 command -v tar >/dev/null || die "tar is required"
 
-if [[ "$VERSION" == "latest" ]]; then
+if [[ -n "$URL" ]]; then
+    :
+elif [[ "$VERSION" == "latest" ]]; then
     URL="https://github.com/$REPO/releases/latest/download/ironsight-server-linux-x64.tar.gz"
 else
     URL="https://github.com/$REPO/releases/download/$VERSION/ironsight-server-linux-x64.tar.gz"
