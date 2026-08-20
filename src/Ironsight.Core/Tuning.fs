@@ -46,8 +46,10 @@ module Tuning =
     let BloomMax = 0.045f
     let BloomPerShot = 0.32f
 
-    /// Rounds a belt-fed gun puts out to go from cold to glowing.
-    let OverheatShots = 100.0f
+    /// Rounds a belt-fed gun puts out to go from cold to glowing. Two hundred
+    /// is a bit over three seconds of held trigger before the rate has properly
+    /// collapsed, and about three quarters of a second at the full rated rate.
+    let OverheatShots = 200.0f
     /// Fraction of full heat shed per second while not firing.
     let HeatCoolPerSecond = 0.08f
     /// Ticks of extra dwell between rounds at full heat. The weapon clock runs
