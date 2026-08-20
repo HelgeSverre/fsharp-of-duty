@@ -13,14 +13,6 @@ module Guns =
         MeshGen.cylinder 9 radius (max 0.01f (delta.Length())) material
         |> MeshGen.transform (Matrix4x4.CreateFromQuaternion(MathEx.rotationFromZ delta) * Matrix4x4.CreateTranslation((startPoint + endPoint) * 0.5f))
 
-    let private hoopXY segments radius thickness material (centre: Vector3) =
-        Array.init segments (fun index ->
-            let point step =
-                let angle = float32 step / float32 segments * MathF.Tau
-                centre + Vector3(MathF.Cos angle * radius, MathF.Sin angle * radius, 0.0f)
-            limb thickness material (point index) (point (index + 1)))
-        |> MeshGen.union
-
     /// Four triangular cutting fins around the shaft. The point is local Z=0,
     /// the ferrule/shaft connection is at +Z, and the 45-degree clocking makes
     /// the blades read as an X when viewed head-on.
@@ -514,14 +506,15 @@ module Guns =
         // At brace height the nock shares the tips' Z plane, so the resting
         // string is straight. Pulling it toward +Z creates the draw triangle.
         let nock = Vector3(0.0f, 0.0f, topTip.Z + draw * 0.43f)
-        let sightCentre = Vector3(-0.18f, 0.17f, -0.255f)
-        let sightPin y color =
+        // Renderer ADS offsets are the exact inverse in X/Y, putting this
+        // single distance pin on screen centre at rest.
+        let sightCentre = Vector3(-0.18f, 0.21f, -0.255f)
+        let sightPin =
             MeshGen.union
-                [| limb 0.0045f Metal
-                       (Vector3(sightCentre.X + 0.064f, y, sightCentre.Z))
-                       (Vector3(sightCentre.X + 0.012f, y, sightCentre.Z))
-                   MeshGen.cylinder 8 0.009f 0.016f color
-                   |> placed (Vector3(sightCentre.X + 0.006f, y, sightCentre.Z)) |]
+                [| limb 0.0035f Metal
+                       (Vector3(sightCentre.X + 0.072f, sightCentre.Y, sightCentre.Z))
+                       (Vector3(sightCentre.X + 0.010f, sightCentre.Y, sightCentre.Z))
+                   MeshGen.cylinder 8 0.006f 0.014f PaintGreen |> placed sightCentre |]
         MeshGen.union
             [| // Laminated working limbs sweep downrange, then the short
                // recurved ends hook back behind the riser to meet the string.
@@ -533,24 +526,29 @@ module Guns =
                limb 0.026f Wood (inner -1.0f) (belly -1.0f)
                limb 0.022f Wood (belly -1.0f) (recurve -1.0f)
                limb 0.018f Metal (recurve -1.0f) bottomTip
-               MeshGen.box (Vector3(0.12f, 0.30f, 0.10f)) ToolBlack |> placed centre
+               // Rounded rubber grip: circular in cross-section with tapered
+               // ends where it meets the limb roots, rather than a gun-like
+               // rectangular receiver block.
+               MeshGen.lathe 14
+                   [| Vector2(0.044f, -0.15f); Vector2(0.062f, -0.12f)
+                      Vector2(0.070f, -0.045f); Vector2(0.070f, 0.045f)
+                      Vector2(0.062f, 0.12f); Vector2(0.044f, 0.15f) |]
+                   ToolBlack
+               |> MeshGen.rotateX (MathF.PI * 0.5f)
+               |> placed centre
                // String and small metal nocking loop.
                limb 0.008f ToolBlack topTip nock
                limb 0.008f ToolBlack nock bottomTip
                MeshGen.cylinder 8 0.016f 0.06f Metal |> MeshGen.rotateY (MathF.PI * 0.5f) |> placed nock
-               // Right-handed recurve sight: the aperture sits left of the
-               // riser so ADS can put its centre on screen while the bow stays
-               // visibly offset. A rail, bracket, guard and three fibre pins
-               // make it read as bow hardware rather than a floating red dot.
-               MeshGen.box (Vector3(0.022f, 0.30f, 0.026f)) Metal
-               |> placed (Vector3(-0.078f, sightCentre.Y, sightCentre.Z))
+               // Right-handed recurve sight: a slim adjustment rail and one
+               // distance pin sit left of the riser, with no enclosing guard
+               // to clutter the sight picture.
+               MeshGen.box (Vector3(0.018f, 0.22f, 0.022f)) Metal
+               |> placed (Vector3(-0.078f, 0.17f, sightCentre.Z))
                limb 0.009f Metal
                    (Vector3(-0.078f, sightCentre.Y, sightCentre.Z))
-                   (Vector3(sightCentre.X + 0.07f, sightCentre.Y, sightCentre.Z))
-               hoopXY 18 0.072f 0.009f ToolBlack sightCentre
-               sightPin (sightCentre.Y + 0.026f) PaintRed
-               sightPin sightCentre.Y PaintGreen
-               sightPin (sightCentre.Y - 0.026f) PaintYellow
+                   (Vector3(sightCentre.X + 0.072f, sightCentre.Y, sightCentre.Z))
+               sightPin
                // Loaded arrow. It shifts back with the nock while its point
                // stays aimed down -Z, making the draw obvious in first person.
                MeshGen.cylinder 8 0.0075f 1.10f Wood |> placed (Vector3(0.0f, 0.015f, nock.Z - 0.49f))

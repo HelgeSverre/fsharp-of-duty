@@ -368,15 +368,22 @@ module CombatTests =
         Assert.True(bounds.Z < 1.0f && bounds.Y < 0.8f, $"nailgun bounds were {bounds}")
 
     [<Fact>]
-    let ``bow limbs flex inward under draw and sight sits left of the riser`` () =
+    let ``bow limbs flex inward and its single sight pin is centred for ADS`` () =
         let rest = Guns.bowForDraw 0.0f
         let drawn = Guns.bowForDraw 1.0f
         let verticalSpan mesh =
             let ys = mesh.Vertices |> Array.map (fun vertex -> vertex.Position.Y)
             Array.max ys - Array.min ys
-        let leftmost = rest.Vertices |> Array.map (fun vertex -> vertex.Position.X) |> Array.min
+        let pin =
+            rest.Vertices
+            |> Array.filter (fun vertex -> vertex.MaterialId = Materials.id PaintGreen)
+            |> Array.map _.Position
+        let pinLo = pin |> Array.reduce (fun left right -> Vector3.Min(left, right))
+        let pinHi = pin |> Array.reduce (fun left right -> Vector3.Max(left, right))
+        let pinCentre = (pinLo + pinHi) * 0.5f
         Assert.True(verticalSpan drawn < verticalSpan rest - 0.10f, "draw should pull both limb tips inward")
-        Assert.True(leftmost < -0.24f, "the recurve aperture should sit left of the riser")
+        Assert.InRange(pinCentre.X, -0.1801f, -0.1799f)
+        Assert.InRange(pinCentre.Y, 0.2099f, 0.2101f)
 
     [<Fact>]
     let ``offline trigger pulls spawn each special projectile and consume its ammo`` () =
