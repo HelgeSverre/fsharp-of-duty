@@ -213,6 +213,18 @@ module AiBrain =
                             (request.Damage * damageScale) request.Penetration request.HeadshotMultiplier request.Kind level soldiers
                     soldiers <- hitSoldiers
                     events.AddRange(hitEvents |> List.filter (function HitConfirmed _ -> false | _ -> true))
+                    // HitConfirmed is the shooter's own marker and is dropped
+                    // above, but a lethal one is still what tells the feed the
+                    // AI killed someone.
+                    for event in hitEvents do
+                        match event with
+                        | HitConfirmed(victim, true) ->
+                            let headshot =
+                                hitSoldiers
+                                |> Array.tryFind (fun soldier -> soldier.Id = victim)
+                                |> Option.exists (fun soldier -> match soldier.Behavior with DyingHeadshot _ -> true | _ -> false)
+                            events.Add(Kill(Some positioned.Id, victim, weapon.Class.Name, headshot))
+                        | _ -> ()
                 soldiers, true
 
     /// Behaviour half of the Axis brain: movement, cover, and flanking against

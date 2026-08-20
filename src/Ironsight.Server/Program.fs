@@ -101,10 +101,25 @@ module Program =
                         | _ -> matches.TeamDeathmatch
                     let resumeToken = Protocol.tryString "sessionToken" root
                     let weaponName = Protocol.tryString "weapon" root
+                    let header name =
+                        match context.Request.Headers.TryGetValue(name: string) with
+                        | true, values -> string values
+                        | _ -> ""
+                    let address =
+                        Bans.clientAddress
+                            (header "Fly-Client-IP")
+                            (header "X-Forwarded-For")
+                            (if isNull context.Connection.RemoteIpAddress then "" else string context.Connection.RemoteIpAddress)
+                    if Bans.isBanned address then
+                        do! socket.CloseAsync(WebSocketCloseStatus.PolicyViolation, "You are banned from this server.", cancellationToken)
+                    else
                     match host.TryAddPlayer(name, ?weaponName = weaponName, ?sessionToken = resumeToken) with
                     | None ->
                         do! socket.CloseAsync(WebSocketCloseStatus.PolicyViolation, "The match is full.", cancellationToken)
                     | Some(playerId, token) ->
+                    // Known for as long as the connection lives, so /ban can
+                    // turn a name into an address to refuse.
+                    Bans.remember playerId address
                     try
                         try
                             do! send (Protocol.welcomeFor playerId token matches.LevelName matches.MapHash (host.Snapshot())) socket cancellationToken
@@ -146,6 +161,7 @@ module Program =
                         | :? OperationCanceledException -> ()
                     finally
                         host.RemovePlayer playerId
+                        Bans.forget playerId
                 | _ ->
                     do! socket.CloseAsync(WebSocketCloseStatus.PolicyViolation, "First message must be a compatible hello.", cancellationToken)
     }
@@ -182,8 +198,20 @@ module Program =
                     // A sim fault must not stop the other match, or the host:
                     // an unhandled BackgroundService exception shuts the
                     // process down (StopHost is the default).
+                    // Extension hooks share the isolation: a faulty hook is a
+                    // logged line, never a dead room. OnEvent runs outside the
+                    // gate (Snapshot has already returned) so a hook is free to
+                    // call back into the host.
                     let tickSafely name (host: MatchHost) =
-                        try host.AdvanceTick()
+                        try
+                            host.AdvanceTick()
+                            let state = host.Snapshot()
+                            for extension in extensions do
+                                extension.OnEvent
+                                |> Option.iter (fun hook ->
+                                    for event in state.Events do
+                                        if event.Tick = state.Tick then hook host event)
+                                extension.OnTick |> Option.iter (fun hook -> hook host state)
                         with ex -> eprintfn $"[{name}] AdvanceTick failed: {ex}"
                     use timer = new PeriodicTimer(TimeSpan.FromSeconds(1.0 / float Tuning.TickRate))
                     while! timer.WaitForNextTickAsync cancellationToken do
@@ -264,5 +292,5 @@ module Program =
                 |> Option.ofObj
                 |> Option.bind (fun value -> match Int32.TryParse value with true, parsed -> Some parsed | _ -> None)
                 |> Option.defaultValue 8080
-            (build args port [ Commands.builtins ]).Run()
+            (build args port [ Commands.builtins; ChatLog.extension ]).Run()
             0

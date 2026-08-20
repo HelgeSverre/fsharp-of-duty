@@ -98,9 +98,25 @@ adding one is a list entry rather than a new message type.
 | `/help` | everyone | Lists only the commands the caller may run |
 | `/op <key>` | everyone | Elevates on a match with `IRONSIGHT_OP_KEY` |
 | `/say <text>` | op | Broadcasts a highlighted server line |
-| `/kick <name>` | op | Drops a connected player |
+| `/kick <name>` | op | Drops a connected player, who may rejoin |
+| `/ban <name>` | op | Drops a player and refuses his address from then on |
 | `/map <alias>` | op | Queues a builtin map for the next round |
 | `/restart` | op | Ends the round now and clears scores |
+
+`/kick` is deliberately soft — it ends the session now and nothing stops a
+rejoin. `/ban` is the durable one, and an address is the only durable identity
+the server has: names are free to pick and session tokens only resume a slot.
+
+Behind a proxy the socket's peer is the proxy, so a naive ban would refuse
+every player at once. The address is taken from `Fly-Client-IP` when present
+(the edge sets it and a client cannot forge it), otherwise the first hop of
+`X-Forwarded-For`, otherwise the socket peer. A shared or carrier-NAT address
+bans everyone behind it and a residential lease eventually moves, so this stops
+a specific nuisance now rather than a determined one forever.
+
+Bans live in memory and, if `IRONSIGHT_BAN_LIST` names a file, are appended to
+it and reloaded at start. On Fly the filesystem is ephemeral without a volume,
+so a ban list there does not survive a deploy.
 
 `IRONSIGHT_OP_KEY` is a single shared secret read at server start. If it is
 unset or empty, `/op` always fails — there is no default-op path. Elevation is
@@ -109,6 +125,27 @@ throttled to one per second. The tradeoffs are deliberate: no per-person audit
 trail, revocation means changing the variable and restarting, and the key
 travels in plaintext like the rest of the protocol (fine behind `wss`). Good
 enough for a small dedicated server, not for per-op accountability.
+
+Chat is transcribed to stdout as `<timestamp> [<mode>] <name>: <line>`, which is
+the sink that survives on Fly. Setting `IRONSIGHT_CHAT_LOG` adds a file copy for
+hosts with somewhere durable to write. Command lines are never transcribed —
+they are whispered back to the caller, and `/op` carries the key.
+
+### Extensions
+
+A server extension is a plain record, registered by passing it to `build`:
+
+```fsharp
+{ ServerExtension.empty "name" with
+    Commands = [ ... ]                       // routed by /verb, gated by level
+    OnEvent = Some(fun host event -> ...)    // each replicated event, after its tick
+    OnTick  = Some(fun host state -> ...) }  // once per room, per tick
+```
+
+`OnEvent` runs outside the room gate, so a hook may call back into the host.
+Both hooks run inside the tick loop's fault isolation: a throwing hook logs and
+the room keeps ticking. The chat transcript is itself an extension (`ChatLog`),
+which is the shape to copy.
 
 `/kick` sets a flag the victim's own receive loop polls; nothing prevents an
 immediate rejoin, because there is no durable identity to ban against. `/map`

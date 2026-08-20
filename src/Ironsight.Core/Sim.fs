@@ -259,6 +259,18 @@ module Sim =
                             Contacts = Map.add armedPlayer.Id (struct (armedPlayer.Position, Units.seconds 0.0f)) soldier.Contacts }
                     else soldier)
             shotEvents.AddRange hitEvents
+            // Offline kills feed the same HUD row online ones do. The headshot
+            // flag rides on the dead soldier's behaviour rather than being
+            // re-derived from the event order.
+            for event in hitEvents do
+                match event with
+                | HitConfirmed(victim, true) ->
+                    let headshot =
+                        hitSoldiers
+                        |> Array.tryFind (fun soldier -> soldier.Id = victim)
+                        |> Option.exists (fun soldier -> match soldier.Behavior with DyingHeadshot _ -> true | _ -> false)
+                    shotEvents.Add(Kill(Some armedPlayer.Id, victim, result.Weapon.Class.Name, headshot))
+                | _ -> ()
         let grenades = match result.Thrown with Some grenade -> Array.append world.Grenades [| grenade |] | None -> world.Grenades
         let activeGrenades, explosions = Grenades.stepProjectiles Tuning.TickDuration world.Level grenades
         let explodedSoldiers, explosionEvents = Grenades.applyExplosions world.Level explosions soldiers

@@ -213,12 +213,70 @@ module ServerTests =
 
     /// Whispered command output, oldest first. Events are only pruned by
     /// AdvanceTick, so a test that does not tick sees the whole conversation.
+    [<Fact>]
+    let ``the banned address is the client's, not the proxy's`` () =
+        // Behind Fly every socket's peer is the edge proxy. Banning that would
+        // ban every player at once, so Fly-Client-IP wins whenever it is set.
+        Assert.Equal("203.0.113.7", Bans.clientAddress "203.0.113.7" "198.51.100.9" "172.16.0.1")
+        // Other proxies: first hop of X-Forwarded-For, the client end of the chain.
+        Assert.Equal("198.51.100.9", Bans.clientAddress "" "198.51.100.9, 172.16.0.1" "172.16.0.1")
+        Assert.Equal("198.51.100.9", Bans.clientAddress "  " " 198.51.100.9 " "172.16.0.1")
+        // Direct connection: the socket's peer is genuinely the client.
+        Assert.Equal("172.16.0.1", Bans.clientAddress "" "" "172.16.0.1")
+        // Nothing at all must not become a ban that matches everyone.
+        Assert.False(Bans.isBanned (Bans.clientAddress "" "" ""))
+
+    [<Fact>]
+    let ``chat log formats a transcript line per room`` () =
+        let stamp = DateTimeOffset(2026, 8, 20, 8, 40, 7, TimeSpan.Zero)
+        Assert.Equal("2026-08-20T08:40:07Z [TeamDeathmatch] Ally: on your left", ChatLog.format stamp TeamDeathmatch "Ally" "on your left")
+        // Server lines carry no sender; they must still be attributable.
+        Assert.Equal("2026-08-20T08:40:07Z [FreeForAll] *: the server is going down", ChatLog.format stamp FreeForAll "" "the server is going down")
+
+    [<Fact>]
+    let ``extension hooks are optional and carried through the registry`` () =
+        // The hooks exist for future use, so the contract worth pinning is that
+        // an extension without them is still a valid registration.
+        let bare = ServerExtension.empty "bare"
+        Assert.True(bare.OnEvent.IsNone && bare.OnTick.IsNone && bare.Commands.IsEmpty)
+        let seen = ResizeArray<string>()
+        let hooked =
+            { ServerExtension.empty "hooked" with
+                OnEvent = Some(fun _ event -> match event.Event with Chat(_, name, _) -> seen.Add name | _ -> ())
+                OnTick = Some(fun _ state -> seen.Add $"tick:{state.Tick}") }
+        let host = MatchHost TeamDeathmatch
+        let playerId, _ = host.TryAddPlayer("Ally").Value
+        host.Chat(playerId, "on your left")
+        let state = host.Snapshot()
+        for event in state.Events do hooked.OnEvent |> Option.iter (fun hook -> hook host event)
+        hooked.OnTick |> Option.iter (fun hook -> hook host state)
+        Assert.Contains("Ally", seen)
+        Assert.Contains($"tick:{state.Tick}", seen)
+
     let private repliesTo (host: MatchHost) playerId =
         host.Snapshot().Events
         |> List.choose (fun event ->
             match event.Recipient, event.Event with
             | Some target, Chat(None, "", text) when target = playerId -> Some text
             | _ -> None)
+
+    [<Fact>]
+    let ``ban resolves the address before the kick drops it`` () =
+        // The address table is keyed by live connection, so reading it after
+        // the disconnect would find nothing left to ban.
+        let host = MatchHost(TeamDeathmatch, opKey = "hunter2")
+        let opId, _ = host.TryAddPlayer("Ally").Value
+        let targetId, _ = host.TryAddPlayer("Griefer").Value
+        Bans.remember targetId "203.0.113.50"
+        Assert.True(host.TryElevate(opId, "hunter2"))
+        waitOutCooldown host
+        Commands.handleChat [ Commands.builtins ] host opId "/ban Griefer"
+        Assert.Contains("Banned Griefer (203.0.113.50).", repliesTo host opId)
+        Assert.True(host.IsKicked targetId)
+        Assert.True(Bans.isBanned "203.0.113.50")
+        // An address nobody banned still connects.
+        Assert.False(Bans.isBanned "203.0.113.51")
+        Bans.forget targetId
 
     [<Fact>]
     let ``help lists only the commands the caller may run`` () =

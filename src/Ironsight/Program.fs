@@ -10,6 +10,18 @@ open Silk.NET.OpenGL
 open Silk.NET.Windowing
 
 module Program =
+    /// Offline soldiers are anonymous in the sim — `Soldier` has no name field,
+    /// since nothing but the feed ever needed to say who died. Indexing a fixed
+    /// table by entity id gives each one a stable callsign for the round
+    /// without inventing state the simulation would have to carry.
+    [<RequireQualifiedAccess>]
+    module Callsigns =
+        let private roster =
+            [| "BRANDT"; "KELLER"; "HOFFMAN"; "RICHTER"; "WERNER"; "SCHMIDT"
+               "BAUER"; "FISCHER"; "VOGEL"; "KRAUS"; "LORENZ"; "STEIN" |]
+
+        let forSoldier (id: int) = roster[((id % roster.Length) + roster.Length) % roster.Length]
+
     let private argumentValue name (args: string array) =
         args
         |> Array.tryFindIndex ((=) name)
@@ -602,6 +614,11 @@ module Program =
                                     renderer |> Option.iter (fun value -> value.KickWeapon())
                                 audio |> Option.iter (fun value -> value.Handle events)
                                 feedback <- Feedback.applyEvents events feedback
+                                // Offline soldiers carry no name, so the feed
+                                // gives each a stable callsign from its id.
+                                let nameOf (EntityId id) =
+                                    if EntityId id = current.Player.Id then playerName else Callsigns.forSoldier id
+                                feedback <- Feedback.applyFeed nameOf events feedback
                 | None -> ()
                 // The receive half of the online session runs on every screen,
                 // so the match keeps flowing behind the pause menu and a

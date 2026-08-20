@@ -301,6 +301,44 @@ module CoreTests =
         let struct (_, events) = Sim.step (input 1L InputButtons.None Vector2.UnitY) world
         Assert.Contains(events, fun event -> match event with FootStep(_, Mud) -> true | _ -> false)
 
+    [<Fact>]
+    let ``an offline kill emits the same Kill event the feed reads online`` () =
+        // The offline feed was the last consumer with no source: kills happened
+        // in the sim but never became events, so nothing could render them.
+        let world = Sim.createTrainingWorld 7UL
+        // Stand an Axis soldier five metres dead ahead (yaw 0 faces -Z) rather
+        // than hunting for one across the map: this is a test of the emission,
+        // not of whether the player can win a firefight.
+        let targetIndex = world.Soldiers |> Array.findIndex (fun soldier -> soldier.Team = Axis)
+        let targetId = world.Soldiers[targetIndex].Id
+        let soldiers = Array.copy world.Soldiers
+        soldiers[targetIndex] <-
+            { soldiers[targetIndex] with Position = world.Player.Position + Vector3(0.0f, 0.0f, -5.0f) }
+        let aimed =
+            { world with
+                Player = { world.Player with Yaw = 0.0f; Pitch = 0.0f }
+                Soldiers = soldiers }
+        let mutable current = aimed
+        let mutable kills = []
+        for sequence in 1L .. 60L do
+            let struct (next, events) = Sim.step (input sequence InputButtons.Fire Vector2.Zero) current
+            current <- next
+            kills <- kills @ (events |> List.filter (function Kill _ -> true | _ -> false))
+        Assert.NotEmpty kills
+        // Both directions emit: the AI shoots back, so pick out the player's
+        // own kill rather than whichever landed first.
+        let playerKill =
+            kills
+            |> List.tryPick (function
+                | Kill(Some killer, victim, weapon, _) when killer = world.Player.Id -> Some(victim, weapon)
+                | _ -> None)
+        match playerKill with
+        | Some(victim, weapon) ->
+            Assert.Equal(targetId, victim)
+            Assert.False(String.IsNullOrEmpty weapon)
+            Assert.True(current.Soldiers |> Array.exists (fun soldier -> soldier.Id = victim && soldier.IsDead))
+        | None -> failwith $"no kill credited to the player; got {kills}"
+
     let private makePlayer id team : NetworkPlayer =
         { Id = EntityId id; Name = string id; Team = team; Position = Vector3.Zero; Velocity = Vector3.Zero
           Yaw = 0.0f; Pitch = 0.0f; Stance = Standing; Sprinting = false; Ads = 0.0f

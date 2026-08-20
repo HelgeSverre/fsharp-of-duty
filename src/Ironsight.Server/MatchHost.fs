@@ -593,6 +593,15 @@ type MatchHost(mode: GameMode, ?matchLevel: Level, ?disconnectGrace: TimeSpan, ?
 
     member _.IsKicked(id: EntityId) = lock gate (fun () -> Set.contains id kicked)
 
+    /// Case-insensitive name lookup over connected players, so a command can
+    /// act on a player's identity before dropping him.
+    member _.FindConnected(name: string) =
+        lock gate (fun () ->
+            state.Players
+            |> Map.tryPick (fun id player ->
+                if player.Connected && String.Equals(player.Name, name, StringComparison.OrdinalIgnoreCase) then Some(id, player.Name)
+                else None))
+
     /// Queues a level swap for the next Warmup. Builtin levels only: the
     /// client resolves an unknown LevelName through Levels.byName.
     member _.RequestLevel(next: Level) = lock gate (fun () -> pendingLevel <- Some next)
