@@ -306,7 +306,7 @@ module CoreTests =
           Yaw = 0.0f; Pitch = 0.0f; Stance = Standing; Sprinting = false; Ads = 0.0f
           Health = Units.health 100.0f; RegenIn = Units.seconds 0.0f; Weapon = Tuning.weaponSlot Tuning.kar98k 2; RequestedWeapon = None
           Grenade = GrenadeIdle 3; Connected = true; Ready = true; Alive = true; RespawnIn = Units.seconds 0.0f; SpawnProtection = Units.seconds 0.0f
-          Kills = 0; Deaths = 0; LastInputSequence = 0L }
+          Kills = 0; Deaths = 0; Streak = 0; BestStreak = 0; LastInputSequence = 0L }
 
     [<Fact>]
     let ``friendly kill does not score in team deathmatch`` () =
@@ -328,10 +328,56 @@ module CoreTests =
         Assert.False(result.Players[EntityId 2].Alive)
 
     [<Fact>]
+    let ``consecutive kills build a streak that dying resets`` () =
+        let state =
+            { Multiplayer.create TeamDeathmatch with
+                Players = [ EntityId 1, makePlayer 1 Allies; EntityId 2, makePlayer 2 Axis; EntityId 3, makePlayer 3 Axis ] |> Map.ofList }
+        let onARoll =
+            state
+            |> Multiplayer.recordKill (EntityId 1) (EntityId 2)
+            |> Multiplayer.recordKill (EntityId 1) (EntityId 3)
+        Assert.Equal(2, onARoll.Players[EntityId 1].Streak)
+        Assert.Equal(2, onARoll.Players[EntityId 1].BestStreak)
+        // The reset lives in markDead, the one place a player is marked dead,
+        // so a grenade suicide ends a streak just like being fragged does.
+        let died = Multiplayer.markDead (EntityId 1) onARoll
+        Assert.Equal(0, died.Players[EntityId 1].Streak)
+        Assert.Equal(2, died.Players[EntityId 1].BestStreak)
+        let fragged = Multiplayer.recordKill (EntityId 2) (EntityId 1) onARoll
+        Assert.Equal(0, fragged.Players[EntityId 1].Streak)
+        Assert.Equal(2, fragged.Players[EntityId 1].BestStreak)
+        // A grenade thrown before the owner was shot detonates later in the
+        // same tick: the kill still counts, but a corpse has no streak.
+        let posthumous = Multiplayer.recordKill (EntityId 1) (EntityId 3) (Multiplayer.markDead (EntityId 1) onARoll)
+        Assert.Equal(0, posthumous.Players[EntityId 1].Streak)
+        Assert.Equal(2, posthumous.Players[EntityId 1].BestStreak)
+        Assert.Equal(3, posthumous.Players[EntityId 1].Kills)
+
+    [<Fact>]
+    let ``dying cancels an interrupted reload`` () =
+        // Nothing steps a dead player's weapon, so a live Reloading timer would
+        // freeze the replicated HUD's reload bar for the whole respawn wait.
+        let reloading = { makePlayer 1 Allies with Weapon = { Tuning.weaponSlot Tuning.kar98k 2 with State = Reloading(Units.seconds 1.4f) } }
+        let state = { Multiplayer.create TeamDeathmatch with Players = Map.ofList [ EntityId 1, reloading ] }
+        Assert.Equal(Ready, (Multiplayer.markDead (EntityId 1) state).Players[EntityId 1].Weapon.State)
+
+    [<Fact>]
     let ``names are trimmed and limited to 24 unicode scalars`` () =
         let name = "  " + String.replicate 30 "⚙" + "  "
         let sanitized = Multiplayer.sanitizeName name
         Assert.Equal(24, sanitized.EnumerateRunes() |> Seq.length)
+
+    [<Fact>]
+    let ``sanitized text is trimmed truncated and stripped of control characters`` () =
+        // Chat lands unescaped in every other player's HUD and the tab doubles
+        // as the chat wire separator, so no control scalar may survive.
+        Assert.Equal("fragout", Multiplayer.sanitizeText 120 "  frag\tout\n  ")
+        Assert.Equal("", Multiplayer.sanitizeText 120 "\r\n ")
+        Assert.Equal("", Multiplayer.sanitizeText 120 null)
+        // Control characters are dropped before the cap, so they cannot eat the
+        // budget a real message needs.
+        Assert.Equal("abcde", Multiplayer.sanitizeText 5 (String.replicate 10 "\u0007" + "abcdefgh"))
+        Assert.Equal(6, (Multiplayer.sanitizeText 6 (String.replicate 30 "⚙")).EnumerateRunes() |> Seq.length)
 
     [<Fact>]
     let ``every online weapon has sane firing tuning`` () =

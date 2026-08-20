@@ -37,8 +37,15 @@ type PlayerSnapshot =
       ammo: int
       reserve: int
       weapon: string
+      // Seconds left on the reload, 0 when not reloading. Without it the client
+      // rebuilds every online weapon slot as Ready and the reload bar, the
+      // viewmodel and the reload SFX all go missing.
+      reloadRemaining: float32
       kills: int
       deaths: int
+      // Round high-water mark only; the live streak stays server-side because
+      // nothing on the client renders it.
+      bestStreak: int
       acknowledgedInput: int64 }
 
 [<CLIMutable>]
@@ -171,6 +178,14 @@ module Protocol =
           level = levelName
           mapHash = mapHash }
 
+    /// One joiner's welcome. The level must be the one that host runs *now*,
+    /// not the one the process booted with: /map swaps it per host. A swapped
+    /// level is always a builtin the client resolves by name, so it needs no
+    /// hash — and only the boot map's bytes are served by /maps/{hash}, so
+    /// advertising its hash would send the joiner downloading the wrong map.
+    let welcomeFor playerId token (bootLevel: string) (bootHash: string) (state: MatchState) =
+        welcome playerId token state.LevelName (if state.LevelName = bootLevel then bootHash else "")
+
     let snapshot state =
         let players =
             state.Players
@@ -200,8 +215,10 @@ module Protocol =
                   ammo = player.Weapon.InMag
                   reserve = player.Weapon.Reserve
                   weapon = player.Weapon.Class.Name
+                  reloadRemaining = (match player.Weapon.State with Reloading remaining -> Units.raw remaining | _ -> 0.0f)
                   kills = player.Kills
                   deaths = player.Deaths
+                  bestStreak = player.BestStreak
                   acknowledgedInput = player.LastInputSequence })
         let grenades =
             state.Grenades
@@ -230,6 +247,19 @@ module Protocol =
             | FootStep(position, surface) -> make "footstep" (EntityId 0) position Vector3.Zero 0.0f (string surface)
             | Subtitle(speaker, line) -> make "subtitle" (EntityId 0) Vector3.Zero Vector3.Zero 0.0f $"{speaker}: {line}"
             | ObjectiveUpdated index -> make "objective" (EntityId index) Vector3.Zero Vector3.Zero 0.0f ""
+            // kill: entityId = victim, x = killer id (0 = world/suicide),
+            // value = headshot, text = weapon. Mirrored in OnlineWorld.eventToGameEvent.
+            | Kill(killer, victim, weapon, headshot) ->
+                let (EntityId killerId) = defaultArg killer (EntityId 0)
+                make "kill" victim (Vector3(float32 killerId, 0.0f, 0.0f)) Vector3.Zero (if headshot then 1.0f else 0.0f) weapon
+            | PlayerJoined(player, name) -> make "joined" player Vector3.Zero Vector3.Zero 0.0f name
+            | PlayerLeft(player, name) -> make "left" player Vector3.Zero Vector3.Zero 0.0f name
+            | PhaseChanged phase -> make "phase-change" (EntityId 0) Vector3.Zero Vector3.Zero 0.0f phase
+            // chat: entityId = sender (0 = server/system), text = "{name}\t{line}".
+            // Tab separates safely because Multiplayer.sanitizeText strips control
+            // scalars from both halves. Mirrored in OnlineWorld.eventToGameEvent.
+            | Chat(sender, name, line) ->
+                make "chat" (defaultArg sender (EntityId 0)) Vector3.Zero Vector3.Zero 0.0f $"{name}\t{line}"
         let events = state.Events |> List.map eventSnapshot |> List.toArray
         { ``type`` = "snapshot"
           version = Version
@@ -242,6 +272,12 @@ module Protocol =
           players = players
           grenades = grenades
           events = events }
+
+    /// One viewer's wire snapshot. A recipient tag is a routing hint, not a
+    /// secret, once it is serialized: whispers addressed to anyone else are
+    /// dropped here rather than merely hidden by the client.
+    let snapshotFor viewer state =
+        snapshot { state with Events = state.Events |> List.filter (fun event -> event.Recipient = None || event.Recipient = Some viewer) }
 
     let leaderboard states =
         let rooms =

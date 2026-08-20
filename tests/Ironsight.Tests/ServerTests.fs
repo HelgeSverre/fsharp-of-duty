@@ -11,6 +11,11 @@ module ServerTests =
     let private applyCustom = TestKit.applyCustom
     let private applyInput = TestKit.applyInput
 
+    /// Ticks out the one-per-second chat/command/announce cooldowns. Measured
+    /// in ticks, so no test ever sleeps.
+    let private waitOutCooldown (host: MatchHost) =
+        for _ in 1 .. int Tuning.TickRate do host.AdvanceTick()
+
     [<Fact>]
     let ``burst inputs are buffered and applied at the server tick rate`` () =
         let host = MatchHost TeamDeathmatch
@@ -117,35 +122,309 @@ module ServerTests =
         let axisId, _ = host.TryAddPlayer("Axis").Value
         TestKit.readyUp host [ allyId; axisId ]
         Assert.Equal(Playing, host.Snapshot().Phase)
-        let initial = host.Snapshot()
-        let shooter = initial.Players[axisId]
-        let target = initial.Players[allyId]
-        let direction = Vector3.Normalize(target.Position - shooter.Position)
-        let rawYaw = MathF.Atan2(direction.X, -direction.Z)
-        let desiredYaw = if rawYaw < shooter.Yaw - MathF.PI then rawYaw + MathF.Tau else rawYaw
-        let mutable remainingLook = desiredYaw - shooter.Yaw
-        let mutable sequence = 1L
-        while MathF.Abs remainingLook > 0.0001f do
-            let look = Math.Clamp(remainingLook, -0.25f, 0.25f)
-            applyCustom sequence 0.0f look 2 host axisId
-            host.AdvanceTick()
-            sequence <- sequence + 1L
-            remainingLook <- remainingLook - look
-        for _ in 1..20 do
-            applyCustom sequence 0.0f 0.0f 2 host axisId
-            host.AdvanceTick()
-            sequence <- sequence + 1L
-        // Shots trace from the eye, so a level shot at an equal-height target
-        // lands at head height: one Kar98k headshot is lethal.
-        applyCustom sequence 0.0f 0.0f 3 host axisId
-        host.AdvanceTick()
+        TestKit.rifleShot host 1L axisId allyId |> ignore
         let result = host.Snapshot()
         Assert.Equal(1, result.AxisScore)
         Assert.Equal(1, result.Players[axisId].Kills)
         Assert.False(result.Players[allyId].Alive)
         Assert.Equal(Units.seconds 5.0f, result.Players[allyId].RespawnIn)
         Assert.Contains(result.Events, fun event -> match event.Event with ShotFired _ -> true | _ -> false)
+        // The kill feed's only data source: killer, victim, and the weapon that
+        // did it, broadcast (no recipient) so every client can render the row.
+        let kill =
+            result.Events
+            |> List.pick (fun event -> match event.Event with Kill(killer, victim, weapon, headshot) -> Some(event.Recipient, killer, victim, weapon, headshot) | _ -> None)
+        let recipient, killer, victim, weapon, headshot = kill
+        Assert.Equal(None, recipient)
+        Assert.Equal(Some axisId, killer)
+        Assert.Equal(allyId, victim)
+        Assert.Equal(result.Players[axisId].Weapon.Class.Name, weapon)
+        Assert.True headshot
         Assert.NotEmpty((Protocol.snapshot result).events)
+
+    [<Fact>]
+    let ``joining and leaving emit lifecycle events`` () =
+        let host = MatchHost(TeamDeathmatch, TestKit.streetArenaWithSpawns "Lifecycle range")
+        let allyId, _ = host.TryAddPlayer("Ally").Value
+        let axisId, _ = host.TryAddPlayer("Axis").Value
+        let joins =
+            host.Snapshot().Events
+            |> List.choose (fun event -> match event.Event with PlayerJoined(id, name) -> Some(id, name) | _ -> None)
+        Assert.Equal<(EntityId * string) list>([ allyId, "Ally"; axisId, "Axis" ], joins)
+        // Announced on disconnect rather than on grace expiry, so the feed
+        // matches the moment other players see them drop.
+        waitOutCooldown host
+        host.RemovePlayer axisId
+        Assert.Contains(host.Snapshot().Events, fun event -> event.Event = PlayerLeft(axisId, "Axis"))
+
+    [<Fact>]
+    let ``reconnect cycling cannot flood the feed with lifecycle rows`` () =
+        // A client holding a session token can leave and resume as fast as it
+        // can handshake; each cycle used to broadcast two feed rows into every
+        // other player's kill feed, which holds five rows for five seconds.
+        let host = MatchHost(TeamDeathmatch, TestKit.streetArenaWithSpawns "Churn range")
+        let playerId, token = host.TryAddPlayer("Flooder").Value
+        let lifecycleRows () =
+            host.Snapshot().Events
+            |> List.filter (fun event -> match event.Event with PlayerJoined _ | PlayerLeft _ -> true | _ -> false)
+            |> List.length
+        for _ in 1..20 do
+            host.RemovePlayer playerId
+            Assert.Equal(Some(playerId, token), host.TryAddPlayer("Flooder", sessionToken = token))
+        // The join already spent this second's announcement, so twenty cycles
+        // inside it add nothing. Events are only pruned by AdvanceTick.
+        Assert.Equal(1, lifecycleRows ())
+        waitOutCooldown host
+        host.RemovePlayer playerId
+        Assert.Equal(1, lifecycleRows ())
+
+    [<Fact>]
+    let ``an enqueued event broadcasts unless it names a recipient`` () =
+        let host = MatchHost TeamDeathmatch
+        let playerId, _ = host.TryAddPlayer("Ally").Value
+        host.Enqueue(PhaseChanged "Warmup")
+        host.Enqueue(PhaseChanged "Playing", playerId)
+        let announced =
+            host.Snapshot().Events
+            |> List.choose (fun event -> match event.Event with PhaseChanged phase -> Some(phase, event.Recipient) | _ -> None)
+        Assert.Equal<(string * EntityId option) list>([ "Warmup", None; "Playing", Some playerId ], announced)
+
+    [<Fact>]
+    let ``chat is sanitized and throttled to one line per second`` () =
+        let host = MatchHost TeamDeathmatch
+        let playerId, _ = host.TryAddPlayer("Ally").Value
+        let lines () =
+            host.Snapshot().Events
+            |> List.choose (fun event -> match event.Event with Chat(sender, name, line) -> Some(sender, name, line) | _ -> None)
+        // The tab would otherwise split the wire encoding into a forged name.
+        host.Chat(playerId, "  push \tB  ")
+        // Dropped, not kicked: the socket-level limiter would close the
+        // connection instead, and losing a line beats losing a player.
+        host.Chat(playerId, "and again")
+        Assert.Equal<(EntityId option * string * string) list>([ Some playerId, "Ally", "push B" ], lines ())
+        // Blank once sanitized: nothing to say, nothing to send.
+        host.Chat(playerId, "\r\n")
+        for _ in 1 .. int Tuning.TickRate do host.AdvanceTick()
+        host.Chat(playerId, "reloading")
+        Assert.Equal<(EntityId option * string * string) list>([ Some playerId, "Ally", "reloading" ], lines ())
+        // An unknown id (a player already removed) is a no-op, not a crash.
+        host.Chat(EntityId 999, "ghost")
+        Assert.Single(lines ()) |> ignore
+
+    /// Whispered command output, oldest first. Events are only pruned by
+    /// AdvanceTick, so a test that does not tick sees the whole conversation.
+    let private repliesTo (host: MatchHost) playerId =
+        host.Snapshot().Events
+        |> List.choose (fun event ->
+            match event.Recipient, event.Event with
+            | Some target, Chat(None, "", text) when target = playerId -> Some text
+            | _ -> None)
+
+    [<Fact>]
+    let ``help lists only the commands the caller may run`` () =
+        let host = MatchHost(TeamDeathmatch, opKey = "hunter2")
+        let playerId, _ = host.TryAddPlayer("Ally").Value
+        Commands.handleChat [ Commands.builtins ] host playerId "/help"
+        let listed = repliesTo host playerId
+        Assert.Contains(listed, fun usage -> usage.StartsWith "/op")
+        Assert.DoesNotContain(listed, fun usage -> usage.StartsWith "/kick")
+        // Visibility, not just execution: a verb the caller cannot see is
+        // reported as unknown rather than as forbidden.
+        waitOutCooldown host
+        Commands.handleChat [ Commands.builtins ] host playerId "/kick Ally"
+        Assert.Equal("Unknown command '/kick'. Try /help.", List.last (repliesTo host playerId))
+        Assert.True(host.TryElevate(playerId, "hunter2"))
+        waitOutCooldown host
+        Commands.handleChat [ Commands.builtins ] host playerId "/help"
+        Assert.Contains(repliesTo host playerId, fun usage -> usage.StartsWith "/kick")
+
+    [<Fact>]
+    let ``commands share the chat cooldown instead of bypassing it`` () =
+        // /help was the cheapest amplifier in the game: unthrottled, and each
+        // reply is an O(n) append to the event list every client serializes.
+        let host = MatchHost TeamDeathmatch
+        let playerId, _ = host.TryAddPlayer("Flooder").Value
+        for _ in 1..30 do Commands.handleChat [ Commands.builtins ] host playerId "/help"
+        let oneListing = List.length (repliesTo host playerId)
+        Assert.InRange(oneListing, 1, Commands.builtins.Commands.Length)
+        waitOutCooldown host
+        Commands.handleChat [ Commands.builtins ] host playerId "/help"
+        Assert.Equal(oneListing, List.length (repliesTo host playerId))
+
+    [<Fact>]
+    let ``a command hidden behind a control character is not republished as chat`` () =
+        // TrimStart drops whitespace but not C0 scalars, so this used to miss
+        // the slash test and land in everyone's chat log with the key in it.
+        let host = MatchHost(TeamDeathmatch, opKey = "hunter2")
+        let playerId, _ = host.TryAddPlayer("Ally").Value
+        Commands.handleChat [ Commands.builtins ] host playerId "\u0001/op hunter2"
+        Assert.True(host.IsOp playerId)
+        Assert.DoesNotContain(host.Snapshot().Events, fun event ->
+            match event.Event with
+            | Chat(_, _, text) -> event.Recipient.IsNone && text.Contains "hunter2"
+            | _ -> false)
+
+    [<Fact>]
+    let ``op elevates only on the configured key`` () =
+        let host = MatchHost(TeamDeathmatch, opKey = "hunter2")
+        let playerId, _ = host.TryAddPlayer("Ally").Value
+        Assert.False(host.TryElevate(playerId, "wrong"))
+        Assert.False(host.IsOp playerId)
+        // Guesses are throttled to one per second, so the right key only lands
+        // after the cooldown the wrong one just started.
+        Assert.False(host.TryElevate(playerId, "hunter2"))
+        for _ in 1 .. int Tuning.TickRate do host.AdvanceTick()
+        Assert.True(host.TryElevate(playerId, "hunter2"))
+        Assert.True(host.IsOp playerId)
+        // Elevation is per-connection: a reserved slot comes back unprivileged.
+        host.RemovePlayer playerId
+        Assert.False(host.IsOp playerId)
+
+    [<Fact>]
+    let ``op never elevates when no key is configured`` () =
+        // An unconfigured server has no ops at all — never "everyone is op".
+        let host = MatchHost(TeamDeathmatch, opKey = "")
+        let playerId, _ = host.TryAddPlayer("Ally").Value
+        Assert.False(host.TryElevate(playerId, ""))
+        Assert.False(host.TryElevate(playerId, "hunter2"))
+        Assert.False(host.IsOp playerId)
+
+    [<Fact>]
+    let ``a command answers the caller alone and is never broadcast`` () =
+        let host = MatchHost(TeamDeathmatch, opKey = "hunter2")
+        let playerId, _ = host.TryAddPlayer("Ally").Value
+        Commands.handleChat [ Commands.builtins ] host playerId "/op hunter2"
+        let chatter =
+            host.Snapshot().Events
+            |> List.choose (fun event -> match event.Event with Chat(_, _, text) -> Some(event.Recipient, text) | _ -> None)
+        // The key must never land in anyone else's chat log.
+        Assert.True(chatter |> List.forall (fun (recipient, _) -> recipient = Some playerId))
+        Assert.DoesNotContain(chatter, fun (_, text) -> text.Contains "hunter2")
+        // A plain line still broadcasts, so the slash is doing the routing.
+        waitOutCooldown host
+        Commands.handleChat [ Commands.builtins ] host playerId "regrouping"
+        Assert.Contains(host.Snapshot().Events, fun event -> event.Event = Chat(Some playerId, "Ally", "regrouping"))
+
+    [<Fact>]
+    let ``a chat line comes back to its own sender`` () =
+        // Chat echoes off the server rather than being drawn locally on send,
+        // so the sender's log is ordered and worded identically to everyone
+        // else's. The whisper filter must not mistake the sender for a
+        // recipient and cut the broadcast back out of their own snapshot.
+        let host = MatchHost TeamDeathmatch
+        let allyId, _ = host.TryAddPlayer("Ally").Value
+        let axisId, _ = host.TryAddPlayer("Axis").Value
+        host.Chat(allyId, "on your left")
+        let state = host.Snapshot()
+        let chatOnWire viewer =
+            (Protocol.snapshotFor viewer state).events
+            |> Array.filter (fun event -> event.kind = "chat")
+            |> Array.map (fun event -> event.text)
+        Assert.Equal<string array>(chatOnWire allyId, chatOnWire axisId)
+        Assert.Contains(chatOnWire allyId, fun text -> text.Contains "on your left")
+
+    [<Fact>]
+    let ``a whisper is dropped from every other viewer's wire snapshot`` () =
+        // The recipient tag rides along on the wire, so filtering it only in
+        // the client left /op keys readable to anyone with a patched one.
+        let host = MatchHost(TeamDeathmatch, opKey = "hunter2")
+        let allyId, _ = host.TryAddPlayer("Ally").Value
+        let axisId, _ = host.TryAddPlayer("Axis").Value
+        Commands.handleChat [ Commands.builtins ] host allyId "/op hunter2"
+        let state = host.Snapshot()
+        let chatOnWire viewer =
+            (Protocol.snapshotFor viewer state).events
+            |> Array.filter (fun event -> event.kind = "chat")
+        Assert.Contains(chatOnWire allyId, fun event -> event.text.EndsWith "You are now an op.")
+        Assert.Empty(chatOnWire axisId)
+        // Broadcasts still reach everyone; only the addressed rows are cut.
+        Assert.Contains((Protocol.snapshotFor axisId state).events, fun event -> event.kind = "joined")
+
+    [<Fact>]
+    let ``say broadcasts a server line and restart ends the round`` () =
+        let host = MatchHost(TeamDeathmatch, opKey = "hunter2")
+        let playerId, _ = host.TryAddPlayer("Ally").Value
+        Commands.handleChat [ Commands.builtins ] host playerId "/say the server is going down"
+        // Refused before elevation, and refused as an unknown verb so a
+        // non-op cannot even confirm the command exists.
+        Assert.Equal("Unknown command '/say'. Try /help.", List.last (repliesTo host playerId))
+        Assert.True(host.TryElevate(playerId, "hunter2"))
+        waitOutCooldown host
+        Commands.handleChat [ Commands.builtins ] host playerId "/say the server is going down"
+        // Sender None is what the client renders as a highlighted server line.
+        Assert.Contains(host.Snapshot().Events, fun event ->
+            event.Recipient.IsNone && event.Event = Chat(None, "", "the server is going down"))
+        waitOutCooldown host
+        Commands.handleChat [ Commands.builtins ] host playerId "/restart"
+        Assert.Equal(Warmup, host.Snapshot().Phase)
+        Assert.Contains(host.Snapshot().Events, fun event -> event.Event = PhaseChanged "Warmup")
+
+    [<Fact>]
+    let ``kick flags the named player for his own loop to drop`` () =
+        let host = MatchHost TeamDeathmatch
+        let allyId, _ = host.TryAddPlayer("Ally").Value
+        let axisId, _ = host.TryAddPlayer("Axis").Value
+        Assert.True((host.Kick "nobody").IsNone)
+        Assert.Equal(Some "Axis", host.Kick "axis")
+        Assert.True(host.IsKicked axisId)
+        Assert.False(host.IsKicked allyId)
+        // RemovePlayer runs in handleSocket's finally; the flag must not
+        // survive into a rejoin on the same reserved slot.
+        host.RemovePlayer axisId
+        Assert.False(host.IsKicked axisId)
+
+    [<Fact>]
+    let ``map accepts builtin aliases only and applies between rounds`` () =
+        let host = MatchHost(TeamDeathmatch, Levels.canalYard, opKey = "hunter2")
+        let playerId, _ = host.TryAddPlayer("Ally").Value
+        Assert.True(host.TryElevate(playerId, "hunter2"))
+        Commands.handleChat [ Commands.builtins ] host playerId "/map somebody-elses-map.ironmap"
+        Assert.Equal("Unknown map. Builtins only.", List.last (repliesTo host playerId))
+        waitOutCooldown host
+        Commands.handleChat [ Commands.builtins ] host playerId "/map omaha"
+        // Deferred: swapping the level under a live round would teleport
+        // everyone into different geometry.
+        Assert.Equal(Levels.canalYard.Name, host.Snapshot().LevelName)
+        // Restart is the same warmup reset the Results -> Warmup arm runs.
+        host.Restart()
+        Assert.Equal(Warmup, host.Snapshot().Phase)
+        Assert.Equal(Levels.omahaDraw.Name, host.Snapshot().LevelName)
+
+    [<Fact>]
+    let ``the welcome names the level its host runs now, not the boot one`` () =
+        let host = MatchHost(TeamDeathmatch, Levels.canalYard, opKey = "hunter2")
+        let playerId, token = host.TryAddPlayer("Ally").Value
+        let bootHash = "cafef00d"
+        let atBoot = Protocol.welcomeFor playerId token Levels.canalYard.Name bootHash (host.Snapshot())
+        Assert.Equal(Levels.canalYard.Name, atBoot.level)
+        Assert.Equal(bootHash, atBoot.mapHash)
+        Assert.True(host.TryElevate(playerId, "hunter2"))
+        Commands.handleChat [ Commands.builtins ] host playerId "/map omaha"
+        host.Restart()
+        let afterSwap = Protocol.welcomeFor playerId token Levels.canalYard.Name bootHash (host.Snapshot())
+        Assert.Equal(Levels.omahaDraw.Name, afterSwap.level)
+        // /maps/{hash} only ever serves the boot map's bytes, so the swapped
+        // builtin must travel by name alone rather than by an unreachable hash.
+        Assert.Equal("", afterSwap.mapHash)
+
+    [<Fact>]
+    let ``each phase transition is announced exactly once`` () =
+        // Collected per tick, not from a final snapshot: the server retains an
+        // event for only 12 ticks and warmup alone runs 600.
+        let host = MatchHost(TeamDeathmatch, TestKit.streetArenaWithSpawns "Phase range")
+        let allyId, _ = host.TryAddPlayer("Ally").Value
+        let axisId, _ = host.TryAddPlayer("Axis").Value
+        host.SetReady allyId
+        host.SetReady axisId
+        let seen = ResizeArray<string>()
+        for _ in 1..721 do
+            host.AdvanceTick()
+            for event in host.Snapshot().Events do
+                match event.Event with
+                | PhaseChanged phase when event.Tick = host.Snapshot().Tick -> seen.Add phase
+                | _ -> ()
+        Assert.Equal(Playing, host.Snapshot().Phase)
+        Assert.Equal<string list>([ "Warmup"; "Playing" ], List.ofSeq seen)
 
     [<Fact>]
     let ``player can move again after dying and respawning`` () =
@@ -402,12 +681,88 @@ module ServerTests =
         Assert.Equal(server.Weapon.InMag, wire.Ammo)
         Assert.Equal(server.Weapon.Reserve, wire.Reserve)
         Assert.Equal(server.Weapon.Class.Name, wire.WeaponName)
+        Assert.Equal((match server.Weapon.State with Reloading remaining -> Units.raw remaining | _ -> 0.0f), wire.ReloadRemaining)
         Assert.Equal(server.Kills, wire.Kills)
         Assert.Equal(server.Deaths, wire.Deaths)
+        Assert.Equal(server.BestStreak, wire.BestStreak)
         Assert.Equal(server.LastInputSequence, wire.AcknowledgedInput)
         Assert.NotEmpty parsed.Events
         let shot = parsed.Events |> Array.find (fun event -> event.Kind = "shot")
         Assert.False(String.IsNullOrEmpty shot.Text)
+
+    [<Fact>]
+    let ``pressing reload puts a non-zero reloadRemaining on the wire`` () =
+        // The server always simulated the reload; PlayerSnapshot just never
+        // carried the timer, so the client's reload bar had nothing to draw.
+        let host = MatchHost(TeamDeathmatch, TestKit.streetArenaWithSpawns "Reload range")
+        let allyId, _ = host.TryAddPlayer("Ally").Value
+        let axisId, _ = host.TryAddPlayer("Axis").Value
+        TestKit.readyUp host [ allyId; axisId ]
+        // Reload engages only on a part-empty magazine, and only once the shot's
+        // cooldown has expired.
+        TestKit.applyCustom 1L 0.0f 0.0f 1 host axisId
+        // The Kar98k's bolt cycle runs well over a second, so wait it out.
+        for _ in 1..100 do host.AdvanceTick()
+        TestKit.applyCustom 2L 0.0f 0.0f 8 host axisId
+        host.AdvanceTick()
+        let state = host.Snapshot()
+        use document = System.Text.Json.JsonDocument.Parse(Protocol.serialize (Protocol.snapshot state))
+        let parsed = Ironsight.Shell.SnapshotWire.parseSnapshot document.RootElement
+        let wire = parsed.Players |> Array.find (fun player -> player.Name = "Axis")
+        Assert.True(wire.ReloadRemaining > 0.0f, "reload timer must reach the client")
+        match state.Players[axisId].Weapon.State with
+        | Reloading remaining -> Assert.Equal(Units.raw remaining, wire.ReloadRemaining)
+        | other -> failwith $"server weapon should be reloading, was {other}"
+
+    [<Fact>]
+    let ``a kill streak reaches the wire and is cleared at round end`` () =
+        let host = MatchHost(TeamDeathmatch, TestKit.streetArenaWithSpawns "Streak range")
+        let allyId, _ = host.TryAddPlayer("Ally").Value
+        let axisId, _ = host.TryAddPlayer("Axis").Value
+        TestKit.readyUp host [ allyId; axisId ]
+        TestKit.rifleShot host 1L axisId allyId |> ignore
+        let state = host.Snapshot()
+        Assert.Equal(1, state.Players[axisId].Streak)
+        Assert.Equal(1, state.Players[axisId].BestStreak)
+        Assert.Equal(0, state.Players[allyId].Streak)
+        use document = System.Text.Json.JsonDocument.Parse(Protocol.serialize (Protocol.snapshot state))
+        let parsed = Ironsight.Shell.SnapshotWire.parseSnapshot document.RootElement
+        let wire = parsed.Players |> Array.find (fun player -> player.Name = "Axis")
+        Assert.Equal(1, wire.BestStreak)
+        // Deliberately the natural route rather than /restart's shortcut: this
+        // asserts the Playing -> Results -> Warmup arm itself, so it rides out
+        // the full 600s time limit — ~37k ticks, the slowest test in the suite.
+        let mutable ticks = 0
+        while host.Snapshot().Phase <> Warmup && ticks < 60000 do
+            host.AdvanceTick()
+            ticks <- ticks + 1
+        Assert.Equal(Warmup, host.Snapshot().Phase)
+        let reset = host.Snapshot().Players[axisId]
+        Assert.Equal(0, reset.Kills)
+        Assert.Equal(0, reset.Streak)
+        Assert.Equal(0, reset.BestStreak)
+
+    [<Fact>]
+    let ``lifecycle events survive the wire round trip`` () =
+        // Kill squeezes killer/victim/weapon/headshot into the shared event DTO
+        // with no dedicated fields, so a silent mismatch between the writer's
+        // packing and the reader's unpacking is the likely drift here.
+        let originals =
+            [ Kill(Some(EntityId 7), EntityId 3, "Kar98k", true)
+              Kill(None, EntityId 3, "GRENADE", false)
+              PlayerJoined(EntityId 7, "Ally")
+              PlayerLeft(EntityId 7, "Ally")
+              PhaseChanged "Results"
+              // Both halves of a chat line share one text field across a tab.
+              Chat(Some(EntityId 7), "Ally", "on your left")
+              Chat(None, "", "MATCH STARTING") ]
+        let state =
+            { Multiplayer.create TeamDeathmatch with
+                Events = originals |> List.mapi (fun index event -> { Id = int64 index + 1L; Tick = 0L; Recipient = None; Event = event }) }
+        use document = System.Text.Json.JsonDocument.Parse(Protocol.serialize (Protocol.snapshot state))
+        let parsed = Ironsight.Shell.SnapshotWire.parseSnapshot document.RootElement
+        let decoded = parsed.Events |> Array.choose Ironsight.Shell.OnlineWorld.eventToGameEvent |> Array.toList
+        Assert.Equal<GameEvent list>(originals, decoded)
 
     [<Fact>]
     let ``lag compensation rewinds targets to the shooter's estimated tick`` () =

@@ -49,6 +49,7 @@ type InputSampler(context: IInputContext) =
     let mutable reloadLatched = false
     let mutable escapeLatched = false
     let mutable loadoutLatched = false
+    let mutable chatLatched = false
     let mutable menuActive = false
     let mutable pending = MenuInput.empty
     let mutable mousePosition = Vector2.Zero
@@ -146,6 +147,7 @@ type InputSampler(context: IInputContext) =
                     | Key.Escape -> escapeLatched <- true
                     | Key.R -> reloadLatched <- true
                     | Key.B -> loadoutLatched <- true
+                    | Key.Y -> chatLatched <- true
                     | Key.F3 -> debugLatched <- true
                     | _ -> ())
             device.add_KeyChar(fun _ character ->
@@ -237,7 +239,10 @@ type InputSampler(context: IInputContext) =
         reloadLatched <- false
         { Sequence = sequence; Move = Vector2(x, y); Look = sampledLook; Buttons = buttons }
 
-    member _.SetMenuActive(value: bool) =
+    /// Menu-style key routing: text/backspace/Enter/Esc collect into `pending`
+    /// and look deltas stop reaching the sim. `releasePointer` un-grabs the
+    /// cursor, which the real menus want and chat must not do.
+    member private _.SetMode(value: bool, releasePointer: bool) =
         menuActive <- value
         firstMouseSample <- true
         lookDelta <- Vector2.Zero
@@ -252,6 +257,7 @@ type InputSampler(context: IInputContext) =
         // typed into the callsign field must not open the loadout on resume.
         escapeLatched <- false
         loadoutLatched <- false
+        chatLatched <- false
         pending <- { MenuInput.empty with TextInput = pending.TextInput }
         if value then
             suppressedPadButtons <- Set.empty
@@ -267,7 +273,12 @@ type InputSampler(context: IInputContext) =
             suppressedTriggers <-
                 [ 0; 1 ] |> List.filter (fun index -> padTriggerRaw index > TriggerThreshold) |> Set.ofList
         mouse
-        |> Option.iter (fun device -> device.Cursor.CursorMode <- if value then CursorMode.Normal else CursorMode.Raw)
+        |> Option.iter (fun device -> device.Cursor.CursorMode <- if releasePointer then CursorMode.Normal else CursorMode.Raw)
+
+    member this.SetMenuActive(value: bool) = this.SetMode(value, value)
+
+    /// Chat typing: menu key routing with the pointer still grabbed.
+    member this.SetTextCapture(value: bool) = this.SetMode(value, false)
 
     member _.ApplySettings(value: GameSettings) =
         lookSensitivity <- value.MouseSensitivity
@@ -298,6 +309,11 @@ type InputSampler(context: IInputContext) =
     member _.ConsumeLoadoutToggle() =
         let value = loadoutLatched
         loadoutLatched <- false
+        value
+
+    member _.ConsumeChatToggle() =
+        let value = chatLatched
+        chatLatched <- false
         value
 
     member _.ConsumeDebugToggle() =

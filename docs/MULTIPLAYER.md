@@ -77,10 +77,43 @@ The server answers with `welcome`, containing `playerId`, `sessionToken`,
 }
 ```
 
-Implemented client message types are `hello`, `ready`, `input`, `loadout`, and
-`leave`. A `loadout` message (`{"type":"loadout","weapon":"STG-44"}`) changes the
-player's weapon with no restrictions: instantly outside live play, otherwise on
-the next spawn.
+Implemented client message types are `hello`, `ready`, `input`, `loadout`,
+`chat`, and `leave`. A `loadout` message (`{"type":"loadout","weapon":"STG-44"}`)
+changes the player's weapon with no restrictions: instantly outside live play,
+otherwise on the next spawn.
+
+## Chat and op commands
+
+`{"type":"chat","text":"on your left"}` broadcasts one sanitized line, throttled
+to one per second per player. Lines are replicated as ordinary events on the
+snapshot, so no second transport exists.
+
+A `text` that starts with `/` is a command instead: it is never broadcast, never
+spends the chat cooldown, and its output is whispered back to the caller alone.
+Commands come from a registry of `ServerExtension` records (`Commands.fs`), so
+adding one is a list entry rather than a new message type.
+
+| Command | Level | Effect |
+| --- | --- | --- |
+| `/help` | everyone | Lists only the commands the caller may run |
+| `/op <key>` | everyone | Elevates on a match with `IRONSIGHT_OP_KEY` |
+| `/say <text>` | op | Broadcasts a highlighted server line |
+| `/kick <name>` | op | Drops a connected player |
+| `/map <alias>` | op | Queues a builtin map for the next round |
+| `/restart` | op | Ends the round now and clears scores |
+
+`IRONSIGHT_OP_KEY` is a single shared secret read at server start. If it is
+unset or empty, `/op` always fails — there is no default-op path. Elevation is
+held in process memory per player and dropped on disconnect; failed guesses are
+throttled to one per second. The tradeoffs are deliberate: no per-person audit
+trail, revocation means changing the variable and restarting, and the key
+travels in plaintext like the rest of the protocol (fine behind `wss`). Good
+enough for a small dedicated server, not for per-op accountability.
+
+`/kick` sets a flag the victim's own receive loop polls; nothing prevents an
+immediate rejoin, because there is no durable identity to ban against. `/map`
+accepts builtin aliases only and applies at the next warmup, because the client
+hot-swaps a level by name and custom maps travel by content hash.
 ## Server directory
 
 The server browser is a Half-Life-style table: one row per room with the
@@ -133,9 +166,9 @@ The server currently enforces:
 - server-side fire rate, ammunition, movement, and hit validation;
 - team hostility and spawn-protection checks.
 
-There are no accounts, administration controls, persistent progression, text
-chat, or application-level authentication. Session tokens are random and held
-only in process memory. The JSON protocol uses full snapshots rather than delta
+There are no accounts, persistent progression, or per-person authentication:
+administration is a single shared op key (see above). Session tokens are random,
+held only in process memory, and are not a security boundary. The JSON protocol uses full snapshots rather than delta
 compression, and the rate limit is a simple per-second counter rather than a
 token bucket.
 

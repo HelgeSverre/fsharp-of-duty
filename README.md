@@ -111,6 +111,12 @@ download it from the server automatically, verified by content hash.
 `--map /path/map.ironmap` plays a custom map offline against bots, and
 `tools/MapExport.fsx` writes the built-in maps out as reference files.
 
+Press `Y` in an online match to chat. A line starting with `/` is a command,
+answered to you alone; `/help` lists the ones you may run. Set `IRONSIGHT_OP_KEY`
+on the server and type `/op <key>` to unlock `/say`, `/kick`, `/map`, and
+`/restart`. With the variable unset there are no ops at all. See
+[docs/MULTIPLAYER.md](docs/MULTIPLAYER.md#chat-and-op-commands).
+
 ## Controls
 
 | Input | Action |

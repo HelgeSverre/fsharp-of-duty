@@ -54,6 +54,13 @@ module SettingsUi =
         [| header "VIDEO"
            slider "FIELD OF VIEW" 55.0f 95.0f 5.0f (int >> string) (fun c -> c.Fov) (fun v c -> { c with Fov = v })
            slider "CONTRAST" 0.8f 1.3f 0.05f (sprintf "%.2f") (fun c -> c.Contrast) (fun v c -> { c with Contrast = v })
+           toggle "FULLSCREEN" (fun c -> c.Fullscreen) (fun v c -> { c with Fullscreen = v })
+           // Windowed size. Inert while FULLSCREEN is on — the pick takes
+           // effect on the way back out.
+           { Label = "RESOLUTION"
+             Kind = Cycle
+             Get = (fun current -> $"{current.WindowWidth} x {current.WindowHeight}")
+             Step = Settings.stepResolution }
            header "GAMEPLAY"
            slider "MOUSE SENSITIVITY" 0.2f 3.0f 0.1f (sprintf "%.1f") (fun c -> c.MouseSensitivity) (fun v c ->
                { c with MouseSensitivity = v })

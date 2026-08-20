@@ -83,6 +83,15 @@ module MenuNav =
         if total <= maxVisible then 0
         else Math.Clamp(Math.Clamp(firstVisible, selected - maxVisible + 1, selected), 0, total - maxVisible)
 
+    /// One tick of text editing, shared by the callsign field and the chat
+    /// draft: backspace first, then append this tick's printable characters up
+    /// to `maxLength`.
+    let editText maxLength (input: MenuInput) (text: string) =
+        let afterBackspace = if input.Backspace && text.Length > 0 then text.Remove(text.Length - 1) else text
+        input.TextInput
+        |> Seq.filter (fun character -> character >= ' ' && character <= '~')
+        |> Seq.fold (fun (edited: string) character -> if edited.Length < maxLength then edited + string character else edited) afterBackspace
+
 type StartMenuAction =
     | StartOffline of map: string
     | StartOnline of weaponName: string * mode: GameMode * server: Uri
@@ -229,13 +238,7 @@ module StartMenu =
     let update (width: int) (height: int) (input: MenuInput) (state: StartMenuState) =
         let editedName =
             if state.Page <> NameEntry then state.PlayerName
-            else
-                let afterBackspace =
-                    if input.Backspace && state.PlayerName.Length > 0 then state.PlayerName.Remove(state.PlayerName.Length - 1)
-                    else state.PlayerName
-                input.TextInput
-                |> Seq.filter (fun character -> character >= ' ' && character <= '~')
-                |> Seq.fold (fun name character -> if name.Length < 24 then name + string character else name) afterBackspace
+            else MenuNav.editText 24 input state.PlayerName
         let state = { state with PlayerName = editedName }
         let options = items state
         // Hover hits the drawn window, so a hit maps back through FirstVisible.

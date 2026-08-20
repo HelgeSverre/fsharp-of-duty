@@ -27,8 +27,10 @@ type OnlinePlayer =
       Ammo: int
       Reserve: int
       WeaponName: string
+      ReloadRemaining: float32
       Kills: int
       Deaths: int
+      BestStreak: int
       AcknowledgedInput: int64 }
 
 [<Struct>]
@@ -116,8 +118,10 @@ module SnapshotWire =
                   Ammo = getInt "ammo" value
                   Reserve = getInt "reserve" value
                   WeaponName = getString "weapon" value
+                  ReloadRemaining = getFloat "reloadRemaining" value
                   Kills = getInt "kills" value
                   Deaths = getInt "deaths" value
+                  BestStreak = getInt "bestStreak" value
                   AcknowledgedInput = getInt64 "acknowledgedInput" value })
             |> Seq.toArray
         let grenades =
@@ -236,6 +240,9 @@ type OnlineClient(serverUri: Uri, playerName: string, requestedMode: GameMode, w
     // Loadout requests ride the sender loop so the socket never sees two
     // concurrent SendAsync calls. null = nothing pending.
     let mutable pendingLoadout: string = null
+    // Chat rides the same loop, but queued rather than a single slot: two lines
+    // typed inside one sender pass must both go out, not clobber each other.
+    let pendingChat = Collections.Concurrent.ConcurrentQueue<string>()
 
     let senderLoop () = task {
         try
@@ -243,6 +250,9 @@ type OnlineClient(serverUri: Uri, playerName: string, requestedMode: GameMode, w
                 match Interlocked.Exchange(&pendingLoadout, null) with
                 | null -> ()
                 | weapon -> do! sendJson {| ``type`` = "loadout"; version = 1; weapon = weapon |}
+                let mutable line = Unchecked.defaultof<string>
+                while pendingChat.TryDequeue(&line) do
+                    do! sendJson {| ``type`` = "chat"; version = 1; text = line |}
                 let mutable input = Unchecked.defaultof<InputFrame>
                 while inputChannel.Reader.TryRead(&input) do
                     let payload =
@@ -312,6 +322,10 @@ type OnlineClient(serverUri: Uri, playerName: string, requestedMode: GameMode, w
     /// Ask the server to change loadout; applied server-side on next spawn (or
     /// immediately outside live play). Sent on the next sender-loop pass.
     member _.RequestLoadout(weaponName: string) = Interlocked.Exchange(&pendingLoadout, weaponName) |> ignore
+
+    /// Queue a chat line for the next sender-loop pass. The server sanitizes
+    /// and rate-limits it; the reply arrives as a Chat event on the snapshot.
+    member _.SendChat(text: string) = pendingChat.Enqueue text
 
     member _.TryLatestSnapshot() =
         lock snapshotGate (fun () -> if snapshots.Count = 0 then None else Some(snapshots |> Seq.last))

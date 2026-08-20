@@ -16,7 +16,10 @@ type GameSettings =
       GamepadSensitivity: float32
       AdsToggle: bool
       CrouchToggle: bool
-      BloodColor: BloodColor }
+      BloodColor: BloodColor
+      Fullscreen: bool
+      WindowWidth: int
+      WindowHeight: int }
 
 [<RequireQualifiedAccess>]
 module Settings =
@@ -28,7 +31,10 @@ module Settings =
           AdsToggle = false
           // Hold-to-crouch by default; toggle is opt-in like ADS toggle.
           CrouchToggle = false
-          BloodColor = Crimson }
+          BloodColor = Crimson
+          Fullscreen = false
+          WindowWidth = 1280
+          WindowHeight = 720 }
 
     /// Reject out-of-range values from hand-edited or old config files.
     /// The same bounds drive the SettingsUi sliders — keep the two in sync.
@@ -40,7 +46,12 @@ module Settings =
             // 0 means the field was absent from an older settings.json.
             GamepadSensitivity =
                 if settings.GamepadSensitivity = 0.0f then 1.0f
-                else Math.Clamp(settings.GamepadSensitivity, 0.2f, 3.0f) }
+                else Math.Clamp(settings.GamepadSensitivity, 0.2f, 3.0f)
+            // 0 means the fields were absent from a settings.json written
+            // before the display options existed. Anything else is floored so
+            // a hand-edited file cannot produce an unusable window.
+            WindowWidth = if settings.WindowWidth <= 0 then 1280 else max 640 settings.WindowWidth
+            WindowHeight = if settings.WindowHeight <= 0 then 720 else max 360 settings.WindowHeight }
 
     let bloodColors = [| Crimson; Blue; Green; Black; Yellow; Pink |]
 
@@ -71,6 +82,31 @@ module Settings =
         let count = bloodColors.Length
         let next = (bloodColorIndex settings.BloodColor + direction + count) % count
         { settings with BloodColor = bloodColors[next] }
+
+    /// Sizes offered by the RESOLUTION row. Replaced at startup with the modes
+    /// the active monitor actually reports; this fallback covers backends that
+    /// enumerate nothing (some Wayland and headless setups) and keeps the
+    /// tests deterministic.
+    let mutable resolutions = [| 1280, 720; 1600, 900; 1920, 1080 |]
+
+    /// Index of the entry closest to the stored size, so a size that is no
+    /// longer offered (monitor swapped, config hand-edited) still steps from
+    /// somewhere sensible instead of snapping to the start of the list.
+    let resolutionIndex (settings: GameSettings) =
+        if resolutions.Length = 0 then 0
+        else
+            resolutions
+            |> Array.mapi (fun index (w, h) ->
+                index, abs (w - settings.WindowWidth) + abs (h - settings.WindowHeight))
+            |> Array.minBy snd
+            |> fst
+
+    let stepResolution (settings: GameSettings) direction =
+        if resolutions.Length = 0 then settings
+        else
+            let count = resolutions.Length
+            let w, h = resolutions[(resolutionIndex settings + direction + count) % count]
+            { settings with WindowWidth = w; WindowHeight = h }
 
     let private jsonOptions () =
         let options = JsonSerializerOptions(JsonSerializerDefaults.Web)

@@ -19,7 +19,7 @@ module TestKit =
     /// process start, so a shared one would leak players and scores between
     /// tests.
     let startServer () =
-        let app = Program.build [||] 0
+        let app = Program.build [||] 0 [ Commands.builtins ]
         app.StartAsync().GetAwaiter().GetResult()
         let address =
             app.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>().Addresses
@@ -105,8 +105,10 @@ module TestKit =
           Ammo = 30
           Reserve = 60
           WeaponName = "Thompson"
+          ReloadRemaining = 0.0f
           Kills = 0
           Deaths = 0
+          BestStreak = 0
           AcknowledgedInput = 0L }
 
     /// Center point of row `index` in a rows rect (mirrors Rect.slot).
@@ -148,3 +150,29 @@ module TestKit =
         host.ApplyInput(id, document.RootElement)
 
     let applyInput sequence host id = applyCustom sequence 1.0f 0.0f 4 host id
+
+    /// Turns `shooterId` onto `targetId`, steadies the aim, and lands one shot.
+    /// Shots trace from the eye, so a level shot at an equal-height target hits
+    /// the head: one Kar98k round is lethal. Returns the next input sequence.
+    let rifleShot (host: MatchHost) (startSequence: int64) shooterId targetId =
+        let initial = host.Snapshot()
+        let shooter = initial.Players[shooterId]
+        let target = initial.Players[targetId]
+        let direction = Vector3.Normalize(target.Position - shooter.Position)
+        let rawYaw = MathF.Atan2(direction.X, -direction.Z)
+        let desiredYaw = if rawYaw < shooter.Yaw - MathF.PI then rawYaw + MathF.Tau else rawYaw
+        let mutable remainingLook = desiredYaw - shooter.Yaw
+        let mutable sequence = startSequence
+        while MathF.Abs remainingLook > 0.0001f do
+            let look = Math.Clamp(remainingLook, -0.25f, 0.25f)
+            applyCustom sequence 0.0f look 2 host shooterId
+            host.AdvanceTick()
+            sequence <- sequence + 1L
+            remainingLook <- remainingLook - look
+        for _ in 1..20 do
+            applyCustom sequence 0.0f 0.0f 2 host shooterId
+            host.AdvanceTick()
+            sequence <- sequence + 1L
+        applyCustom sequence 0.0f 0.0f 3 host shooterId
+        host.AdvanceTick()
+        sequence + 1L

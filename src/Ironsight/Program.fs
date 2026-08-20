@@ -31,15 +31,28 @@ module Program =
             let next = remaining - Tuning.TickDuration
             if next > Units.seconds 0.0f then Some(struct (payload, next)) else None)
 
+    /// One kill-feed or chat row, already formatted. Names are baked in at
+    /// receipt because a player who disconnects before the row expires is gone
+    /// from later snapshots. `Highlight` picks the accent colour: a headshot in
+    /// the kill feed, a server/system line in the chat log.
+    type FeedItem =
+        { Text: string
+          Highlight: bool
+          Remaining: float32<s> }
+
     /// Transient HUD feedback the fixed-step loop accumulates and the render
-    /// pass reads: subtitle, damage direction, hit marker, inventory flash.
-    /// Pure so it stays testable without a window.
+    /// pass reads: subtitle, damage direction, hit marker, inventory flash,
+    /// kill feed. Pure so it stays testable without a window.
     type FeedbackState =
         { Subtitle: struct (string * float32<s>) option
           DamageDirection: struct (Vector3 * float32<s>) option
           HitMarkerRemaining: float32<s>
           HitMarkerLethal: bool
-          InventoryShow: float32<s> }
+          InventoryShow: float32<s>
+          /// Newest first.
+          Feed: FeedItem list
+          /// Chat log, newest first. Same shape as the kill feed, longer lived.
+          Chat: FeedItem list }
 
     [<RequireQualifiedAccess>]
     module Feedback =
@@ -48,19 +61,34 @@ module Program =
               DamageDirection = None
               HitMarkerRemaining = Units.seconds 0.0f
               HitMarkerLethal = false
-              InventoryShow = Units.seconds 0.0f }
+              InventoryShow = Units.seconds 0.0f
+              Feed = []
+              Chat = [] }
 
         let hitMarkerDuration lethal = Units.seconds (if lethal then 0.34f else 0.22f)
+
+        let feedLifetime = Units.seconds 5.0f
+        let feedCapacity = 5
+        // Chat is read, not glanced at, so rows linger far longer than a kill.
+        let chatLifetime = Units.seconds 12.0f
+        let chatCapacity = 6
 
         /// One fixed tick of decay for every timed element.
         let tick (state: FeedbackState) =
             let hitMarker = max (Units.seconds 0.0f) (state.HitMarkerRemaining - Tuning.TickDuration)
+            let decay rows =
+                rows
+                |> List.choose (fun item ->
+                    let remaining = item.Remaining - Tuning.TickDuration
+                    if remaining > Units.seconds 0.0f then Some { item with Remaining = remaining } else None)
             { state with
                 Subtitle = tickTimer state.Subtitle
                 DamageDirection = tickTimer state.DamageDirection
                 HitMarkerRemaining = hitMarker
                 HitMarkerLethal = state.HitMarkerLethal && hitMarker > Units.seconds 0.0f
-                InventoryShow = max (Units.seconds 0.0f) (state.InventoryShow - Tuning.TickDuration) }
+                InventoryShow = max (Units.seconds 0.0f) (state.InventoryShow - Tuning.TickDuration)
+                Feed = decay state.Feed
+                Chat = decay state.Chat }
 
         /// Subtitle / damage-direction / hit-marker pickup in one event scan,
         /// shared by the offline and online drains. Offline events carry a
@@ -84,6 +112,33 @@ module Program =
             | Some lethal -> { state with HitMarkerLethal = lethal; HitMarkerRemaining = hitMarkerDuration lethal }
             | None -> state
 
+        /// Kill-feed and chat-log pickup for the online drain. Rows are
+        /// formatted here, on receipt, because the server only retains an event
+        /// for ~200ms while a row lives for seconds — the buffer is
+        /// client-owned once seen. The sender's name is likewise baked into the
+        /// chat event server-side, so a line outlives its author's connection.
+        let applyFeed (nameOf: EntityId -> string) (events: GameEvent list) (state: FeedbackState) =
+            let row lifetime text highlight = { Text = text; Highlight = highlight; Remaining = lifetime }
+            let feedRow = row feedLifetime
+            let rows =
+                events
+                |> List.choose (function
+                    | Kill(Some killer, victim, weapon, headshot) ->
+                        Some(feedRow $"{nameOf killer}  [{weapon}]  {nameOf victim}" headshot)
+                    | Kill(None, victim, weapon, _) -> Some(feedRow $"[{weapon}]  {nameOf victim}" false)
+                    | PlayerJoined(_, name) -> Some(feedRow $"{name} JOINED" false)
+                    | PlayerLeft(_, name) -> Some(feedRow $"{name} LEFT" false)
+                    | _ -> None)
+            let chatRows =
+                events
+                |> List.choose (function
+                    | Chat(None, _, line) -> Some(row chatLifetime line true)
+                    | Chat(Some _, name, line) -> Some(row chatLifetime $"{name}: {line}" false)
+                    | _ -> None)
+            { state with
+                Feed = (List.rev rows @ state.Feed) |> List.truncate feedCapacity
+                Chat = (List.rev chatRows @ state.Chat) |> List.truncate chatCapacity }
+
     type MenuHome =
         /// The boot menu: no session behind it, Esc on the root page does nothing.
         | Boot
@@ -98,6 +153,9 @@ module Program =
         | Playing
         /// Weapon picker over live play; the world keeps simulating.
         | Loadout of selected: int
+        /// Typing a chat line over live play. Unlike every other screen the
+        /// mouse stays grabbed (see InputSampler.SetTextCapture).
+        | Chat of draft: string
         /// The start or pause menu, optionally with settings pushed over it.
         | Menu of home: MenuHome * state: StartMenuState * settings: SettingsUi.State option
 
@@ -115,9 +173,13 @@ module Program =
             |> Option.bind Tuning.weaponByName
             |> Option.defaultValue Tuning.thompson
             |> fun weapon -> weapon.Name
+        let mutable settings =
+            if args |> Array.contains "--reset-settings" then Settings.defaults else Settings.load ()
         let mutable options = WindowOptions.Default
         options.Title <- "IRONSIGHT — F# of Duty"
-        options.Size <- Vector2D<int>(1280, 720)
+        // Always created windowed; add_Load applies fullscreen if it is saved,
+        // so there is one code path for putting the window in a display state.
+        options.Size <- Vector2D<int>(settings.WindowWidth, settings.WindowHeight)
         options.VSync <- true
         options.API <- GraphicsAPI(ContextAPI.OpenGL, ContextProfile.Core, ContextFlags.ForwardCompatible, APIVersion(4, 1))
         use window = Window.Create options
@@ -147,14 +209,39 @@ module Program =
         let mutable feedback = Feedback.empty
         let mutable lastActiveWeaponName = ""
         let mutable lastActiveInMag = -1
+        let mutable lastActiveWeaponState = Ready
         let mutable grenadeButtonHeld = false
         let mutable lastHeartbeatTick = -1L
         let mutable lastDistantTick = -1L
-        let mutable settings =
-            if args |> Array.contains "--reset-settings" then Settings.defaults else Settings.load ()
         let applySettings () =
             sampler |> Option.iter (fun input -> input.ApplySettings settings)
             renderer |> Option.iter (fun value -> value.SetSettings settings)
+        /// The monitor the window is on, falling back to the primary one —
+        /// Monitor is null on backends that do not track window placement.
+        let activeMonitor () =
+            match Option.ofObj window.Monitor with
+            | Some monitor -> monitor
+            | None -> Monitor.GetMainMonitor window
+        /// Borderless fullscreen rather than WindowState.Fullscreen: no video
+        /// mode switch, so alt-tab is instant and a crash cannot strand the
+        /// desktop at the wrong mode. Positioning at the monitor origin with
+        /// the border hidden is deterministic everywhere, where Maximized is
+        /// window-manager dependent and misses the macOS menu bar.
+        let applyDisplay () =
+            try
+                if settings.Fullscreen then
+                    let bounds = (activeMonitor ()).Bounds
+                    window.WindowBorder <- WindowBorder.Hidden
+                    window.Position <- bounds.Origin
+                    window.Size <- bounds.Size
+                else
+                    window.WindowBorder <- WindowBorder.Resizable
+                    // Guarded because applyDisplay runs on *any* settings
+                    // change: without it, nudging the FOV slider would yank a
+                    // window the player had dragged back to the stored size.
+                    let desired = Vector2D<int>(settings.WindowWidth, settings.WindowHeight)
+                    if window.Size <> desired then window.Size <- desired
+            with _ -> ()
         let createOfflineWorld map = Sim.createOfflineWorld map 0x1A0B3CUL
         let requestedMap =
             if args |> Array.contains "--training" then Some "training"
@@ -234,9 +321,32 @@ module Program =
         /// routing, cursor capture, look-delta suppression) always follows.
         let setScreen next =
             screen <- next
-            sampler |> Option.iter (fun s -> s.SetMenuActive(match next with Screen.Playing -> false | _ -> true))
+            sampler
+            |> Option.iter (fun s ->
+                match next with
+                // Chat takes menu key routing but keeps the pointer grabbed.
+                | Screen.Chat _ -> s.SetTextCapture true
+                | Screen.Playing -> s.SetMenuActive false
+                | _ -> s.SetMenuActive true)
 
         window.add_Load(fun () ->
+            // The sizes this monitor actually reports, for the RESOLUTION row.
+            // Modes usually differ only in refresh rate, so dedupe on the
+            // resolution; anything larger than the monitor is unusable.
+            try
+                let monitor = activeMonitor ()
+                let bounds = monitor.Bounds.Size
+                let modes =
+                    monitor.GetAllVideoModes()
+                    |> Seq.choose (fun mode -> mode.Resolution |> Option.ofNullable)
+                    |> Seq.map (fun res -> res.X, res.Y)
+                    |> Seq.filter (fun (w, h) -> w > 0 && h > 0 && w <= bounds.X && h <= bounds.Y)
+                    |> Seq.distinct
+                    |> Seq.sort
+                    |> Seq.toArray
+                if modes.Length > 0 then Settings.resolutions <- modes
+            with _ -> ()
+            applyDisplay ()
             let api = window.CreateOpenGL()
             let inputContext = window.CreateInput()
             gl <- Some api
@@ -332,6 +442,7 @@ module Program =
                                 if updated.Settings <> settings then
                                     settings <- updated.Settings
                                     applySettings ()
+                                    applyDisplay ()
                                     Settings.save settings |> ignore
                         | None ->
                             let menuInput = inputSampler.ConsumeMenuInput()
@@ -366,15 +477,18 @@ module Program =
                                     | OpenSettings ->
                                         screen <- Screen.Menu(home, nextMenu, Some(SettingsUi.create settings))
                                     | ExitGame -> window.Close())
-                    | Screen.Playing | Screen.Loadout _ ->
-                        // Captured before the loadout branch can flip screen to
-                        // Playing, so the closing frame is still masked below —
-                        // otherwise a held Enter/A leaks into the sim as-is.
-                        let wasLoadout = match screen with Screen.Loadout _ -> true | _ -> false
+                    | Screen.Playing | Screen.Loadout _ | Screen.Chat _ ->
+                        // Captured before the loadout/chat branch can flip
+                        // screen to Playing, so the closing frame is still
+                        // masked below — otherwise a held Enter/A leaks into
+                        // the sim as-is.
+                        let wasOverlay = match screen with Screen.Loadout _ | Screen.Chat _ -> true | _ -> false
                         (match screen with
                          | Screen.Playing ->
                              if inputSampler.ConsumeDebugToggle() then debugView <- not debugView
-                             if inputSampler.ConsumeLoadoutToggle() then setScreen (Screen.Loadout 0)
+                             // Chat only exists online; offline there is nobody to talk to.
+                             if inputSampler.ConsumeChatToggle() && onlineClient.IsSome then setScreen (Screen.Chat "")
+                             elif inputSampler.ConsumeLoadoutToggle() then setScreen (Screen.Loadout 0)
                              elif inputSampler.ConsumeEscape() then
                                  // Pause, uniformly: offline the sim freezes
                                  // because the play block below is gated on
@@ -403,6 +517,18 @@ module Program =
                                              if index <> current.Player.Active then
                                                  current <- { current with Player = { current.Player with Active = index; Ads = 0.0f } }
                                                  previous <- current)
+                         | Screen.Chat draft ->
+                             // Same editor as the callsign field, wider cap.
+                             // The server sanitizes and rate-limits.
+                             let typed = inputSampler.ConsumeMenuInput()
+                             if typed.Back then setScreen Screen.Playing
+                             elif typed.Activate then
+                                 let line = draft.Trim()
+                                 match onlineClient with
+                                 | Some client when client.Connected && line <> "" -> client.SendChat line
+                                 | _ -> ()
+                                 setScreen Screen.Playing
+                             else screen <- Screen.Chat(MenuNav.editText 120 typed draft)
                          | Screen.Menu _ -> ())
                         let sampledFrame = inputSampler.Sample()
                         // While the loadout picker is open the world keeps
@@ -411,9 +537,9 @@ module Program =
                         // Masked when the tick started OR ended on the picker,
                         // so neither the opening nor the closing frame leaks
                         // held movement/buttons into the sim.
-                        let isLoadout = match screen with Screen.Loadout _ -> true | _ -> false
+                        let isOverlay = match screen with Screen.Loadout _ | Screen.Chat _ -> true | _ -> false
                         let inputFrame =
-                            if wasLoadout || isLoadout then
+                            if wasOverlay || isOverlay then
                                 { sampledFrame with Move = Vector2.Zero; Look = Vector2.Zero; Buttons = InputButtons.None }
                             else sampledFrame
                         if inputFrame.Buttons &&& weaponKeys <> InputButtons.None then
@@ -456,7 +582,6 @@ module Program =
                                 previous <- initialWorld
                                 feedback <- { feedback with Subtitle = None }
                             elif current.Player.IsAlive || current.Round.IsSome then
-                                let previousWeaponState = current.Player.Slots[current.Player.Active].State
                                 // A fallen player no longer steers the body or the
                                 // camera, but the world keeps stepping so the round
                                 // timer, friendly AI, and grenades settle.
@@ -472,9 +597,6 @@ module Program =
                                 let previousRound = previous.Round |> Option.map (fun round -> round.Number)
                                 let currentRound = current.Round |> Option.map (fun round -> round.Number)
                                 if previousRound <> currentRound then previous <- current
-                                match previousWeaponState, current.Player.Slots[current.Player.Active].State with
-                                | Ready, Reloading _ -> audio |> Option.iter (fun value -> value.PlayReload current.Player.Position)
-                                | _ -> ()
                                 renderer |> Option.iter (fun value -> value.HandleEvents events)
                                 if events |> List.exists (function ShotFired(Some shooter, _, _, _) -> shooter = current.Player.Id | _ -> false) then
                                     renderer |> Option.iter (fun value -> value.KickWeapon())
@@ -488,7 +610,7 @@ module Program =
                 match onlineClient with
                 | Some client when client.Connected ->
                     (match screen with
-                     | Screen.Playing | Screen.Loadout _ -> ()
+                     | Screen.Playing | Screen.Loadout _ | Screen.Chat _ -> ()
                      | _ -> previous <- current)
                     match client.TryLatestSnapshot() with
                     | Some snapshot when snapshot.Tick > reconciledTick ->
@@ -516,6 +638,12 @@ module Program =
                         renderer |> Option.iter (fun value -> value.HandleEvents presentationEvents)
                         audio |> Option.iter (fun value -> value.Handle presentationEvents)
                         feedback <- Feedback.applyEvents networkEvents feedback
+                        let nameOf (EntityId id) =
+                            snapshot.Players
+                            |> Array.tryFind (fun player -> player.Id = id)
+                            |> Option.map (fun player -> player.Name)
+                            |> Option.defaultValue "SOLDIER"
+                        feedback <- Feedback.applyFeed nameOf networkEvents feedback
                         let beforeReconcile = current.Player.Position
                         let reconciled, remaining = OnlineWorld.reconcile current.Level (pendingInputs |> Seq.toList) client.PlayerId current snapshot
                         let error = predictionError + (beforeReconcile - reconciled.Player.Position)
@@ -542,6 +670,12 @@ module Program =
                         window.Title <- "IRONSIGHT — CONNECTING"
                 | _ -> ()
                 let activeSlot = current.Player.Slots[current.Player.Active]
+                // Offline the reload starts in Sim.step, online it arrives with the
+                // snapshot; detecting the edge here catches both.
+                match lastActiveWeaponState, activeSlot.State with
+                | Ready, Reloading _ -> audio |> Option.iter (fun value -> value.PlayReload current.Player.Position)
+                | _ -> ()
+                lastActiveWeaponState <- activeSlot.State
                 if activeSlot.Class.Name <> lastActiveWeaponName then
                     if lastActiveWeaponName <> "" then feedback <- { feedback with InventoryShow = Units.seconds 2.5f }
                 elif activeSlot.Class.Name = Tuning.m1Garand.Name && activeSlot.InMag = 0 && lastActiveInMag > 0 then
@@ -583,6 +717,9 @@ module Program =
                   HitMarker = MathEx.clamp01 (feedback.HitMarkerRemaining / Feedback.hitMarkerDuration feedback.HitMarkerLethal)
                   HitMarkerLethal = feedback.HitMarkerLethal
                   Subtitle = subtitleText
+                  Feed = feedback.Feed |> List.map (fun item -> item.Text, item.Highlight)
+                  Chat = feedback.Chat |> List.map (fun item -> item.Text, item.Highlight)
+                  ChatDraft = (match screen with Screen.Chat draft -> Some draft | _ -> None)
                   ShowInventory = feedback.InventoryShow > Units.seconds 0.0f
                   DebugView = debugView
                   GrenadeCooking =
@@ -603,7 +740,12 @@ module Program =
             // still get the true framebuffer dimensions.
             renderer
             |> Option.iter (fun value ->
-                value.Resize(window.FramebufferSize.X, window.FramebufferSize.Y, window.Size)))
+                value.Resize(window.FramebufferSize.X, window.FramebufferSize.Y, window.Size))
+            // Remember a size the player reached by dragging the window edge.
+            // Skipped in fullscreen so the monitor-sized borderless window
+            // never overwrites the windowed size. add_Closing saves.
+            if not settings.Fullscreen && window.Size.X > 0 && window.Size.Y > 0 then
+                settings <- { settings with WindowWidth = window.Size.X; WindowHeight = window.Size.Y })
         window.add_Closing(fun () ->
             Settings.save settings |> ignore
             let dispose (value: #IDisposable) = value.Dispose()

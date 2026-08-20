@@ -229,6 +229,17 @@ type GameEvent =
     | FootStep of position: Vector3 * surface: Material
     | Subtitle of speaker: string * line: string
     | ObjectiveUpdated of index: int
+    /// Killer is None for world/self-inflicted kills. Names are resolved by the
+    /// client at receipt, while both players are still in the snapshot.
+    | Kill of killer: EntityId option * victim: EntityId * weapon: string * headshot: bool
+    | PlayerJoined of player: EntityId * name: string
+    | PlayerLeft of player: EntityId * name: string
+    /// Phase as a string: MatchPhase is declared after this union.
+    | PhaseChanged of phase: string
+    /// Sender is None for server/system lines. The name is baked in for the
+    /// same reason Kill names are resolved at receipt: the sender can
+    /// disconnect before the row expires from the client's chat log.
+    | Chat of sender: EntityId option * name: string * text: string
 
 [<System.Flags>]
 type InputButtons =

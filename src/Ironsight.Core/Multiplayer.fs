@@ -29,6 +29,9 @@ type NetworkPlayer =
       SpawnProtection: float32<s>
       Kills: int
       Deaths: int
+      /// Kills since the last death; `BestStreak` is the round's high-water mark.
+      Streak: int
+      BestStreak: int
       LastInputSequence: int64 }
 
 type ReplicatedEvent =
@@ -73,9 +76,20 @@ module Multiplayer =
           TimeLimit = Units.seconds 600.0f
           Rng = Rng.create 0xC0D2F5UL }
 
+    /// The one filter for player-supplied text: trims, drops control scalars
+    /// and truncates to `maxLength` runes. Names and chat lines both land
+    /// verbatim in every other player's HUD, so neither may carry control
+    /// characters (tab doubles as the chat wire separator).
+    let sanitizeText maxLength (text: string) =
+        let trimmed = if isNull text then "" else text.Trim()
+        trimmed.EnumerateRunes()
+        |> Seq.filter (fun rune -> not (Text.Rune.IsControl rune))
+        |> Seq.truncate maxLength
+        |> Seq.map string
+        |> String.concat ""
+
     let sanitizeName (name: string) =
-        let trimmed = if isNull name then "" else name.Trim()
-        let scalars = trimmed.EnumerateRunes() |> Seq.truncate 24 |> Seq.map string |> String.concat ""
+        let scalars = sanitizeText 24 name
         if String.IsNullOrWhiteSpace scalars then "Soldier" else scalars
 
     let areHostile mode (first: NetworkPlayer) (second: NetworkPlayer) =
@@ -95,6 +109,12 @@ module Multiplayer =
                     Health = Units.health 0.0f
                     Alive = false
                     Deaths = victim.Deaths + 1
+                    Streak = 0
+                    // Dying cancels an interrupted reload the way every FPS
+                    // does. Nothing steps a dead player's weapon, so a live
+                    // Reloading timer would freeze on the replicated HUD for
+                    // the whole respawn wait.
+                    Weapon = { victim.Weapon with State = Ready }
                     RespawnIn = Units.seconds 5.0f
                     SpawnProtection = Units.seconds 0.0f
                     Velocity = Vector3.Zero }
@@ -104,7 +124,11 @@ module Multiplayer =
     let recordKill killerId victimId state =
         match Map.tryFind killerId state.Players, Map.tryFind victimId state.Players with
         | Some killer, Some victim when killerId <> victimId && areHostile state.Mode killer victim ->
-            let updatedKiller = { killer with Kills = killer.Kills + 1 }
+            // A killer already marked dead earlier this tick (his grenade cooks
+            // off after he is shot) keeps the credit but not the streak: the
+            // streak died with him.
+            let streak = if killer.Alive then killer.Streak + 1 else 0
+            let updatedKiller = { killer with Kills = killer.Kills + 1; Streak = streak; BestStreak = max killer.BestStreak streak }
             let deadState = markDead victimId state
             let allies, axis =
                 match state.Mode, killer.Team with

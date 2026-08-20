@@ -25,6 +25,7 @@ type Act =
     /// Unlike Aim this persists, because a bot that has to walk somewhere needs
     /// to keep pointing there rather than drift.
     | Face of bot: string * yaw: float32
+    | Talk of bot: string * text: string
     | Press of bot: string * buttons: InputButtons
     | Release of bot: string * buttons: InputButtons
     | Wait of seconds: float
@@ -157,6 +158,7 @@ module MatchScript =
             | Move(name, direction) -> (bot name).Move <- direction
             | Aim(name, delta) -> (bot name).Look <- delta
             | Face(name, yaw) -> (bot name).Heading <- ValueSome yaw
+            | Talk(name, text) -> (bot name).Client.SendChat text
             | Press(name, buttons) ->
                 let entry = bot name
                 entry.Buttons <- entry.Buttons ||| buttons

@@ -42,12 +42,33 @@ module Program =
                 return None
     }
 
+    /// Handles one client message; returns false when the client has asked to
+    /// leave.
+    let private dispatch extensions (host: MatchHost) playerId (message: JsonElement) =
+        match Protocol.tryString "type" message with
+        | Some "input" ->
+            host.ApplyInput(playerId, message)
+            true
+        | Some "ready" ->
+            host.SetReady playerId
+            true
+        | Some "loadout" ->
+            Protocol.tryString "weapon" message
+            |> Option.iter (fun weapon -> host.SetLoadout(playerId, weapon))
+            true
+        | Some "chat" ->
+            Protocol.tryString "text" message
+            |> Option.iter (Commands.handleChat extensions host playerId)
+            true
+        | Some "leave" -> false
+        | _ -> true
+
     let private send value (socket: WebSocket) cancellationToken = task {
         let bytes = Protocol.serialize value
         do! socket.SendAsync(ReadOnlyMemory bytes, WebSocketMessageType.Text, true, cancellationToken)
     }
 
-    let private handleSocket (matches: MatchDirectory) (context: HttpContext) = task {
+    let private handleSocket (extensions: ServerExtension list) (matches: MatchDirectory) (context: HttpContext) = task {
         if not context.WebSockets.IsWebSocketRequest then
             context.Response.StatusCode <- StatusCodes.Status400BadRequest
         else
@@ -86,7 +107,7 @@ module Program =
                     | Some(playerId, token) ->
                     try
                         try
-                            do! send (Protocol.welcome playerId token matches.LevelName matches.MapHash) socket cancellationToken
+                            do! send (Protocol.welcomeFor playerId token matches.LevelName matches.MapHash (host.Snapshot())) socket cancellationToken
                             let mutable connected = true
                             let mutable pendingReceive = receiveMessage socket cancellationToken
                             // The snapshot timer must keep its own cadence. Starting a
@@ -95,10 +116,13 @@ module Program =
                             let mutable snapshotDelay = Task.Delay(50, cancellationToken)
                             let mutable rateWindow = Stopwatch.GetTimestamp()
                             let mutable messagesInWindow = 0
-                            while connected && socket.State = WebSocketState.Open && not cancellationToken.IsCancellationRequested do
+                            // /kick has no socket to close, so the victim's own
+                            // loop polls the flag; the snapshot delay bounds
+                            // the wait at 50ms. RemovePlayer runs in the finally.
+                            while connected && not (host.IsKicked playerId) && socket.State = WebSocketState.Open && not cancellationToken.IsCancellationRequested do
                                 let! completed = Task.WhenAny(pendingReceive, snapshotDelay)
                                 if Object.ReferenceEquals(completed, snapshotDelay) then
-                                    do! send (host.Snapshot() |> Protocol.snapshot) socket cancellationToken
+                                    do! send (Protocol.snapshotFor playerId (host.Snapshot())) socket cancellationToken
                                     snapshotDelay <- Task.Delay(50, cancellationToken)
                                 else
                                     let! incoming = pendingReceive
@@ -114,15 +138,7 @@ module Program =
                                             connected <- false
                                             do! socket.CloseAsync(WebSocketCloseStatus.PolicyViolation, "Message rate exceeded.", cancellationToken)
                                         else
-                                            let message = inputDocument.RootElement
-                                            match Protocol.tryString "type" message with
-                                            | Some "input" -> host.ApplyInput(playerId, message)
-                                            | Some "ready" -> host.SetReady playerId
-                                            | Some "loadout" ->
-                                                Protocol.tryString "weapon" message
-                                                |> Option.iter (fun weapon -> host.SetLoadout(playerId, weapon))
-                                            | Some "leave" -> connected <- false
-                                            | _ -> ()
+                                            connected <- dispatch extensions host playerId inputDocument.RootElement
                                         if connected then pendingReceive <- receiveMessage socket cancellationToken
                                     | None -> connected <- false
                         with
@@ -136,7 +152,7 @@ module Program =
 
     /// Builds the configured application without starting it. Tests bind port 0
     /// to get an ephemeral port; the real process passes the PORT env value.
-    let build (args: string array) (port: int) =
+    let build (args: string array) (port: int) (extensions: ServerExtension list) =
         let sourceWebRoot = IO.Path.GetFullPath("../../website", __SOURCE_DIRECTORY__)
         let options =
             WebApplicationOptions(
@@ -207,7 +223,7 @@ module Program =
                 else Results.NotFound()))
         |> ignore
         app.Map("/play", Action<IApplicationBuilder>(fun branch ->
-            branch.Run(fun context -> handleSocket matches context) |> ignore)) |> ignore
+            branch.Run(fun context -> handleSocket extensions matches context) |> ignore)) |> ignore
         app
 
     /// Rewrite the bundled fallback JSON inside arsenal.html from the live
@@ -248,5 +264,5 @@ module Program =
                 |> Option.ofObj
                 |> Option.bind (fun value -> match Int32.TryParse value with true, parsed -> Some parsed | _ -> None)
                 |> Option.defaultValue 8080
-            (build args port).Run()
+            (build args port [ Commands.builtins ]).Run()
             0

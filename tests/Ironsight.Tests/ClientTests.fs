@@ -229,6 +229,63 @@ module ClientTests =
         Assert.Equal(0, menuStepped.Selected)
 
     [<Fact>]
+    let ``kill feed keeps the newest rows and expires them`` () =
+        // Names are baked in when the event arrives: the server retains a kill
+        // for ~200ms while the row lives for seconds, so a killer who leaves
+        // meanwhile must still be named on screen.
+        let mutable roster = Map.ofList [ EntityId 1, "Ally"; EntityId 2, "Axis" ]
+        let nameOf id = roster |> Map.tryFind id |> Option.defaultValue "SOLDIER"
+        let state =
+            Program.Feedback.empty
+            |> Program.Feedback.applyFeed nameOf
+                [ Kill(Some(EntityId 1), EntityId 2, "Kar98k", true)
+                  Kill(None, EntityId 2, "GRENADE", false)
+                  PlayerLeft(EntityId 1, "Ally") ]
+        Assert.Equal<string list>(
+            [ "Ally LEFT"; "[GRENADE]  Axis"; "Ally  [Kar98k]  Axis" ],
+            state.Feed |> List.map (fun item -> item.Text))
+        Assert.Equal<bool list>([ false; false; true ], state.Feed |> List.map (fun item -> item.Highlight))
+        // The killer is gone from the roster, but the formatted row is not.
+        roster <- Map.remove (EntityId 1) roster
+        let overflowed =
+            state
+            |> Program.Feedback.applyFeed nameOf (List.replicate 5 (PlayerJoined(EntityId 3, "Extra")))
+        Assert.Equal(Program.Feedback.feedCapacity, overflowed.Feed.Length)
+        Assert.True(overflowed.Feed |> List.forall (fun item -> item.Text = "Extra JOINED"))
+        // 5s lifetime: still there just before, gone just after.
+        let ticksFor seconds = int (seconds / Units.raw Tuning.TickDuration)
+        let almost = List.fold (fun acc _ -> Program.Feedback.tick acc) state [ 1 .. ticksFor 4.9f ]
+        Assert.Equal(3, almost.Feed.Length)
+        let expired = List.fold (fun acc _ -> Program.Feedback.tick acc) almost [ 1 .. ticksFor 0.2f ]
+        Assert.Empty expired.Feed
+
+    [<Fact>]
+    let ``chat log keeps the newest lines and expires them`` () =
+        // The sender's name rides the event, so a line outlives its author's
+        // connection exactly like a kill-feed row.
+        let nameOf _ = "IGNORED"
+        let state =
+            Program.Feedback.empty
+            |> Program.Feedback.applyFeed nameOf
+                [ Chat(Some(EntityId 1), "Ally", "on your left")
+                  Chat(None, "", "MATCH STARTING") ]
+        Assert.Equal<string list>([ "MATCH STARTING"; "Ally: on your left" ], state.Chat |> List.map (fun item -> item.Text))
+        // Server lines are highlighted, player lines are not.
+        Assert.Equal<bool list>([ true; false ], state.Chat |> List.map (fun item -> item.Highlight))
+        // Chat rows must not leak into the kill feed, or vice versa.
+        Assert.Empty state.Feed
+        let overflowed =
+            state
+            |> Program.Feedback.applyFeed nameOf (List.replicate 8 (Chat(Some(EntityId 2), "Axis", "spam")))
+        Assert.Equal(Program.Feedback.chatCapacity, overflowed.Chat.Length)
+        // 12s lifetime: still there just before, gone just after.
+        let ticksFor seconds = int (seconds / Units.raw Tuning.TickDuration)
+        let almost = List.fold (fun acc _ -> Program.Feedback.tick acc) state [ 1 .. ticksFor 11.9f ]
+        Assert.Equal(2, almost.Chat.Length)
+        let expired = List.fold (fun acc _ -> Program.Feedback.tick acc) almost [ 1 .. ticksFor 0.2f ]
+        Assert.Empty expired.Chat
+
+    [<Fact>]
     let ``row slot geometry round-trips between drawing and hit-testing`` () =
         let rows = { X = 100.0f; Y = 200.0f; W = 600.0f; H = 54.0f * 5.0f }
         for index in 0..4 do
@@ -386,6 +443,28 @@ module ClientTests =
         Assert.True(reconciled.Player.Position.Z < 10.0f)
         Assert.Single reconciled.Soldiers |> ignore
         Assert.Equal(EntityId 8, reconciled.Soldiers[0].Id)
+
+    [<Fact>]
+    let ``a reloading snapshot rebuilds the weapon slot as Reloading`` () =
+        // weaponFor is the only place an online WeaponSlot is built; before the
+        // wire carried the timer it hardcoded Ready, so Hud.drawReloadBar's
+        // Reloading case could never match online.
+        let world = Sim.createTrainingWorld 900UL
+        let snapshot =
+            { Tick = 100L
+              Mode = TeamDeathmatch
+              LevelName = world.Level.Name
+              Phase = Playing
+              AlliesScore = 0
+              AxisScore = 0
+              Players =
+                [| { TestKit.onlinePlayer 1 "Local" Allies world.Player.Position with ReloadRemaining = 1.5f }
+                   { TestKit.onlinePlayer 2 "Remote" Axis (Vector3(4.0f, 0.0f, -4.0f)) with ReloadRemaining = 0.0f } |]
+              Grenades = [||]
+              Events = [||] }
+        let reconciled, _ = OnlineWorld.reconcile world.Level [] 1 world snapshot
+        Assert.Equal(Reloading(Units.seconds 1.5f), reconciled.Player.Slots[reconciled.Player.Active].State)
+        Assert.Equal(Ready, reconciled.Soldiers[0].Weapon.State)
 
     [<Fact>]
     let ``reconciliation from full movement state reproduces local prediction exactly`` () =

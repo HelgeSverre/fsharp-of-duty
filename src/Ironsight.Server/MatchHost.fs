@@ -5,18 +5,32 @@ open System.Numerics
 open System.Text.Json
 open Ironsight
 
-type MatchHost(mode: GameMode, ?matchLevel: Level, ?disconnectGrace: TimeSpan) =
+type MatchHost(mode: GameMode, ?matchLevel: Level, ?disconnectGrace: TimeSpan, ?opKey: string) =
     let gate = obj ()
     // How long a disconnected player's slot (and session token) is reserved
     // for resume. Overridable so tests need not wait out wall-clock time.
     let disconnectGrace = defaultArg disconnectGrace (TimeSpan.FromSeconds 30.0)
-    let level = defaultArg matchLevel (Sim.createTrainingWorld 0xF5A4D3UL).Level
+    // Shared op secret, read once at construction like PORT/IRONSIGHT_LEVEL.
+    // Blank (unset env var) means /op can never succeed — an unconfigured
+    // server has no ops rather than everyone being one.
+    let opKey = defaultArg opKey (Environment.GetEnvironmentVariable "IRONSIGHT_OP_KEY")
+    let mutable level = defaultArg matchLevel (Sim.createTrainingWorld 0xF5A4D3UL).Level
     let mutable nextPlayerId = 1
     let mutable state = { Multiplayer.create mode with LevelName = level.Name }
 
     /// Replace one player's entry in the authoritative state.
     let setPlayer id player =
         state <- { state with Players = Map.add id player state.Players }
+
+    /// Append an event from outside the tick loop (join/leave), where
+    /// AdvanceTick's `emitted` buffer does not exist. Callers already hold the
+    /// gate, and AdvanceTick reads NextEventId back out of state, so ids never
+    /// collide with the ones it assigns. `recipient` of None broadcasts.
+    let enqueue recipient event =
+        state <-
+            { state with
+                Events = state.Events @ [ { Id = state.NextEventId; Tick = state.Tick; Recipient = recipient; Event = event } ]
+                NextEventId = state.NextEventId + 1L }
 
     /// Update a player if connected-known; a missing id is a no-op.
     let updatePlayer id update =
@@ -36,6 +50,44 @@ type MatchHost(mode: GameMode, ?matchLevel: Level, ?disconnectGrace: TimeSpan) =
     // resumes whichever player slot it was minted for.
     let mutable sessionOwners: Map<string, EntityId> = Map.empty
     let mutable disconnectedSince: Map<EntityId, DateTimeOffset> = Map.empty
+    // Chat is throttled per player, in ticks. The connection-level 120 msg/s
+    // limiter cannot do this job: it hard-closes the socket, so a chat flood
+    // would drop the player instead of throttling him.
+    let mutable lastChatTick: Map<EntityId, int64> = Map.empty
+    // Op elevation is per-connection and deliberately not persisted: it is
+    // dropped in RemovePlayer, so a resumed session must say /op again.
+    let mutable ops: Set<EntityId> = Set.empty
+    let mutable lastOpAttemptTick: Map<EntityId, int64> = Map.empty
+    // Kicking has no socket to close — sockets are locals in handleSocket and
+    // nothing stores them — so the victim's own receive loop polls this.
+    let mutable kicked: Set<EntityId> = Set.empty
+    // /map applies between rounds, never mid-fight: swapping the level under
+    // live players would teleport them into a different geometry.
+    let mutable pendingLevel: Level option = None
+    // Join/leave rows are broadcast into everyone's kill feed, and a client
+    // holding a session token can cycle its slot as fast as it can handshake.
+    // Same one-per-second ceiling as chat, so the feed cannot be drowned.
+    let mutable lastAnnounceTick: Map<EntityId, int64> = Map.empty
+
+    /// True once per player per second, in ticks. Callers already hold the gate.
+    let cooledSince (stamps: Map<EntityId, int64>) id =
+        match Map.tryFind id stamps with
+        | Some tick -> state.Tick - tick >= int64 Tuning.TickRate
+        | None -> true
+
+    /// Spends this player's one chat-or-command line per second. Commands share
+    /// the budget with chat: every command reply lands in the broadcast event
+    /// list that all 16 clients serialize 20 times a second.
+    let tryChatCredit id =
+        if cooledSince lastChatTick id && Map.containsKey id state.Players then
+            lastChatTick <- Map.add id state.Tick lastChatTick
+            true
+        else false
+
+    let announce id event =
+        if cooledSince lastAnnounceTick id then
+            lastAnnounceTick <- Map.add id state.Tick lastAnnounceTick
+            enqueue None event
 
     let clamp (minimum: float32) (maximum: float32) (value: float32) = Math.Clamp(value, minimum, maximum)
     let selectedWeapon team weaponName =
@@ -93,6 +145,24 @@ type MatchHost(mode: GameMode, ?matchLevel: Level, ?disconnectGrace: TimeSpan) =
             RespawnIn = Units.seconds 0.0f
             SpawnProtection = Units.seconds 2.0f }
 
+    /// The between-rounds reset: fresh spawns, cleared scores, back to Warmup.
+    /// A /map request lands here, the only point where changing the level is
+    /// safe, and is what makes the client hot-swap on the new LevelName.
+    let warmupReset (current: MatchState) =
+        pendingLevel |> Option.iter (fun next -> level <- next)
+        pendingLevel <- None
+        let resetPlayers =
+            current.Players
+            |> Map.map (fun id player -> { freshSpawn current.Tick id player with Kills = 0; Deaths = 0; Streak = 0; BestStreak = 0 })
+        { current with
+            Phase = Warmup
+            PhaseRemaining = Units.seconds 10.0f
+            Players = resetPlayers
+            Grenades = [||]
+            AlliesScore = 0
+            AxisScore = 0
+            LevelName = level.Name }
+
     let asSoldier (player: NetworkPlayer) =
         { Id = player.Id
           Team = player.Team
@@ -126,6 +196,7 @@ type MatchHost(mode: GameMode, ?matchLevel: Level, ?disconnectGrace: TimeSpan) =
                                 Weapon = weapon }
                         setPlayer id restored
                         disconnectedSince <- Map.remove id disconnectedSince
+                        announce id (PlayerJoined(id, restored.Name))
                         Some(id, token)
                     | _ -> None)
             match resumed with
@@ -163,10 +234,13 @@ type MatchHost(mode: GameMode, ?matchLevel: Level, ?disconnectGrace: TimeSpan) =
                       SpawnProtection = Units.seconds 2.0f
                       Kills = 0
                       Deaths = 0
+                      Streak = 0
+                      BestStreak = 0
                       LastInputSequence = -1L }
                 let token = Convert.ToHexString(Guid.NewGuid().ToByteArray())
                 setPlayer id player
                 sessionOwners <- Map.add token id sessionOwners
+                announce id (PlayerJoined(id, player.Name))
                 Some(id, token))
 
     member _.RemovePlayer id =
@@ -177,6 +251,11 @@ type MatchHost(mode: GameMode, ?matchLevel: Level, ?disconnectGrace: TimeSpan) =
                 disconnectedSince <- Map.add id DateTimeOffset.UtcNow disconnectedSince
                 pendingInputs <- Map.remove id pendingInputs
                 inputCredits <- Map.remove id inputCredits
+                ops <- Set.remove id ops
+                kicked <- Set.remove id kicked
+                // Announced on disconnect, not on grace expiry, so the feed
+                // matches the moment other players actually see them drop.
+                announce id (PlayerLeft(id, player.Name))
             | None -> ())
 
     member _.SetReady id =
@@ -240,6 +319,10 @@ type MatchHost(mode: GameMode, ?matchLevel: Level, ?disconnectGrace: TimeSpan) =
 
     member _.AdvanceTick() =
         lock gate (fun () ->
+            // Declared before the lifecycle match so phase changes can emit too.
+            let emitted = ResizeArray<struct (EntityId option * GameEvent)>()
+            let emit event = emitted.Add(struct (None, event))
+            let emitOnly recipient event = emitted.Add(struct (Some recipient, event))
             let expired =
                 disconnectedSince
                 |> Map.toArray
@@ -249,6 +332,12 @@ type MatchHost(mode: GameMode, ?matchLevel: Level, ?disconnectGrace: TimeSpan) =
                 disconnectedSince <- Map.remove id disconnectedSince
                 pendingInputs <- Map.remove id pendingInputs
                 inputCredits <- Map.remove id inputCredits
+                // Not in RemovePlayer: the slot is still resumable during the
+                // grace, and clearing there would let a flooder reset his chat
+                // and op-guess throttles with a leave/rejoin round trip.
+                lastChatTick <- Map.remove id lastChatTick
+                lastOpAttemptTick <- Map.remove id lastOpAttemptTick
+                lastAnnounceTick <- Map.remove id lastAnnounceTick
                 sessionOwners <- sessionOwners |> Map.filter (fun _ owner -> owner <> id)
             let readyPlayers = state.Players |> Map.toSeq |> Seq.filter (fun (_, player) -> player.Connected && player.Ready) |> Seq.length
             let lifecycleState =
@@ -273,18 +362,13 @@ type MatchHost(mode: GameMode, ?matchLevel: Level, ?disconnectGrace: TimeSpan) =
                 | Playing when state.PhaseRemaining <= Tuning.TickDuration || Multiplayer.hasWinner state ->
                     { state with Phase = Results; PhaseRemaining = Units.seconds 10.0f }
                 | Playing -> { state with PhaseRemaining = state.PhaseRemaining - Tuning.TickDuration }
-                | Results when state.PhaseRemaining <= Tuning.TickDuration ->
-                    let resetPlayers =
-                        state.Players
-                        |> Map.map (fun id player -> { freshSpawn state.Tick id player with Kills = 0; Deaths = 0 })
-                    { state with Phase = Warmup; PhaseRemaining = Units.seconds 10.0f; Players = resetPlayers; Grenades = [||]; AlliesScore = 0; AxisScore = 0 }
+                | Results when state.PhaseRemaining <= Tuning.TickDuration -> warmupReset state
                 | Results -> { state with PhaseRemaining = state.PhaseRemaining - Tuning.TickDuration }
+            if lifecycleState.Phase <> state.Phase then
+                emit (PhaseChanged(string lifecycleState.Phase))
             let mutable rng = state.Rng
             let shots = ResizeArray<EntityId * Vector3 * Vector3 * float32<hp> * float32 * float32 * WeaponKind * int64>()
             let thrownGrenades = ResizeArray<Grenade>()
-            let emitted = ResizeArray<struct (EntityId option * GameEvent)>()
-            let emit event = emitted.Add(struct (None, event))
-            let emitOnly recipient event = emitted.Add(struct (Some recipient, event))
             let respawnedPlayers =
                 lifecycleState.Players
                 |> Map.map (fun id player ->
@@ -398,6 +482,9 @@ type MatchHost(mode: GameMode, ?matchLevel: Level, ?disconnectGrace: TimeSpan) =
                             emitOnly targetId (PlayerHurt(direction, damaged.Health))
                             if after.IsDead then
                                 combatState <- Multiplayer.recordKill shooterId targetId combatState
+                                // Ballistics already stamped the lethal region
+                                // on this victim, per target of a penetrating round.
+                                emit (Kill(Some shooterId, targetId, shooter.Weapon.Class.Name, (match after.Behavior with DyingHeadshot _ -> true | _ -> false)))
                 | _ -> ()
             let grenadeSet = Array.append lifecycleState.Grenades (thrownGrenades.ToArray())
             let activeGrenades, explosions =
@@ -423,11 +510,16 @@ type MatchHost(mode: GameMode, ?matchLevel: Level, ?disconnectGrace: TimeSpan) =
                         let torso = target.Position + Vector3(0.0f, 1.0f, 0.0f)
                         emitOnly targetId (PlayerHurt(MathEx.normalizedOrZero (torso - position), health))
                         if health <= Units.health 0.0f then
-                            if ownerId <> targetId then combatState <- Multiplayer.recordKill ownerId targetId combatState
-                            else combatState <- Multiplayer.markDead targetId combatState
+                            if ownerId <> targetId then
+                                combatState <- Multiplayer.recordKill ownerId targetId combatState
+                                emit (Kill(Some ownerId, targetId, "GRENADE", false))
+                            else
+                                combatState <- Multiplayer.markDead targetId combatState
+                                emit (Kill(None, targetId, "GRENADE", false))
                     | None -> ()
             let finalState =
                 if combatState.Phase = Playing && Multiplayer.hasWinner combatState then
+                    emit (PhaseChanged(string Results))
                     { combatState with Phase = Results; PhaseRemaining = Units.seconds 10.0f }
                 else combatState
             let nextTick = state.Tick + 1L
@@ -448,5 +540,72 @@ type MatchHost(mode: GameMode, ?matchLevel: Level, ?disconnectGrace: TimeSpan) =
                 positionHistory
                 |> Map.add nextTick positions
                 |> Map.filter (fun tick _ -> tick >= nextTick - 12L))
+
+    /// Broadcasts one player's chat line, sanitized (it lands unescaped in
+    /// every other client's HUD). A line inside the one-second cooldown is
+    /// dropped silently — a lost line is friendlier than a kicked player.
+    member _.Chat(id: EntityId, text: string) =
+        lock gate (fun () ->
+            match Map.tryFind id state.Players with
+            | Some player ->
+                let line = Multiplayer.sanitizeText 120 text
+                if line <> "" && tryChatCredit id then
+                    enqueue None (Chat(Some id, player.Name, line))
+            | None -> ())
+
+    /// Spends the caller's one chat-or-command line per second, returning false
+    /// when the cooldown (or an unknown id) refuses it. Commands.handleChat
+    /// gates the slash branch on this so a command cannot outrun plain chat.
+    member _.TryChatCredit(id: EntityId) = lock gate (fun () -> tryChatCredit id)
+
+    /// Grants op to a player who typed the right key. Failed guesses are
+    /// throttled to one per second per player, in ticks like the chat cooldown:
+    /// the connection limiter's 120 msg/s is a flood guard, not a rate a shared
+    /// secret should be guessable at.
+    member _.TryElevate(id: EntityId, key: string) =
+        lock gate (fun () ->
+            if String.IsNullOrEmpty opKey || not (cooledSince lastOpAttemptTick id) || not (Map.containsKey id state.Players) then false
+            elif String.Equals(key, opKey, StringComparison.Ordinal) then
+                ops <- Set.add id ops
+                true
+            else
+                lastOpAttemptTick <- Map.add id state.Tick lastOpAttemptTick
+                false)
+
+    member _.IsOp(id: EntityId) = lock gate (fun () -> Set.contains id ops)
+
+    /// Flags the named player for disconnect and announces it; his own receive
+    /// loop polls IsKicked and drops the socket. Nothing stops him rejoining —
+    /// there is no durable identity to ban against.
+    member _.Kick(name: string) =
+        lock gate (fun () ->
+            let target =
+                state.Players
+                |> Map.tryPick (fun id player ->
+                    if player.Connected && String.Equals(player.Name, name, StringComparison.OrdinalIgnoreCase) then Some(id, player.Name)
+                    else None)
+            match target with
+            | Some(id, matched) ->
+                kicked <- Set.add id kicked
+                enqueue None (Chat(None, "", $"{matched} was kicked."))
+                Some matched
+            | None -> None)
+
+    member _.IsKicked(id: EntityId) = lock gate (fun () -> Set.contains id kicked)
+
+    /// Queues a level swap for the next Warmup. Builtin levels only: the
+    /// client resolves an unknown LevelName through Levels.byName.
+    member _.RequestLevel(next: Level) = lock gate (fun () -> pendingLevel <- Some next)
+
+    /// Ends the round early: scores cleared, everyone respawned, back to Warmup.
+    member _.Restart() =
+        lock gate (fun () ->
+            state <- warmupReset state
+            enqueue None (PhaseChanged(string Warmup)))
+
+    /// Injects an event into the replicated stream from outside the tick loop.
+    /// No recipient broadcasts it; `Some id` whispers it to that player alone.
+    member _.Enqueue(event: GameEvent, ?recipient: EntityId) =
+        lock gate (fun () -> enqueue recipient event)
 
     member _.Snapshot() = lock gate (fun () -> state)

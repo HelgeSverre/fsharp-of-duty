@@ -21,7 +21,10 @@ module SettingsTests =
               GamepadSensitivity = 2.2f
               AdsToggle = true
               CrouchToggle = true
-              BloodColor = Green }
+              BloodColor = Green
+              Fullscreen = true
+              WindowWidth = 2560
+              WindowHeight = 1440 }
         let restored = Settings.deserialize (Settings.serialize custom)
         Assert.Equal(85.0f, restored.Fov)
         Assert.Equal(1.15f, restored.Contrast)
@@ -30,6 +33,9 @@ module SettingsTests =
         Assert.True(restored.AdsToggle)
         Assert.True(restored.CrouchToggle)
         Assert.Equal(Green, restored.BloodColor)
+        Assert.True(restored.Fullscreen)
+        Assert.Equal(2560, restored.WindowWidth)
+        Assert.Equal(1440, restored.WindowHeight)
 
     [<Fact>]
     let ``settings are clamped to supported ranges after load`` () =
@@ -40,17 +46,60 @@ module SettingsTests =
               GamepadSensitivity = 99.0f
               AdsToggle = true
               CrouchToggle = false
-              BloodColor = Black }
+              BloodColor = Black
+              Fullscreen = false
+              WindowWidth = 16
+              WindowHeight = 9 }
         let restored = Settings.deserialize (Settings.serialize wild)
         Assert.Equal(95.0f, restored.Fov)
         Assert.Equal(0.8f, restored.Contrast)
         Assert.Equal(3.0f, restored.MouseSensitivity)
         Assert.Equal(3.0f, restored.GamepadSensitivity)
+        // Floored rather than reset: a hand-edited file cannot produce a
+        // window too small to interact with.
+        Assert.Equal(640, restored.WindowWidth)
+        Assert.Equal(360, restored.WindowHeight)
 
     [<Fact>]
     let ``old settings files without gamepad sensitivity fall back to the default`` () =
         let restored = Settings.deserialize """{"fov":75,"contrast":1.0,"mouseSensitivity":1.0,"adsToggle":false,"crouchToggle":false,"bloodColor":"Crimson"}"""
         Assert.Equal(1.0f, restored.GamepadSensitivity)
+
+    [<Fact>]
+    let ``old settings files without display fields fall back to a usable window`` () =
+        let restored = Settings.deserialize """{"fov":75,"contrast":1.0,"mouseSensitivity":1.0,"adsToggle":false,"crouchToggle":false,"bloodColor":"Crimson"}"""
+        Assert.Equal(1280, restored.WindowWidth)
+        Assert.Equal(720, restored.WindowHeight)
+        Assert.False(restored.Fullscreen)
+
+    // These exercise the built-in Settings.resolutions fallback, which is what
+    // a headless test run sees — Program replaces it at window load with the
+    // modes the real monitor reports.
+    [<Fact>]
+    let ``resolution steps through the offered sizes and wraps at both ends`` () =
+        let first = Settings.resolutions[0]
+        let last = Settings.resolutions[Settings.resolutions.Length - 1]
+        let atFirst = { Settings.defaults with WindowWidth = fst first; WindowHeight = snd first }
+        Assert.Equal(Settings.resolutions[1], (let n = Settings.stepResolution atFirst 1 in n.WindowWidth, n.WindowHeight))
+        Assert.Equal(last, (let n = Settings.stepResolution atFirst -1 in n.WindowWidth, n.WindowHeight))
+        let atLast = { Settings.defaults with WindowWidth = fst last; WindowHeight = snd last }
+        Assert.Equal(first, (let n = Settings.stepResolution atLast 1 in n.WindowWidth, n.WindowHeight))
+
+    [<Fact>]
+    let ``a stored size that is no longer offered steps from the nearest entry`` () =
+        // 1288x724 is nobody's mode — a monitor swap or a hand-edited file.
+        let odd = { Settings.defaults with WindowWidth = 1288; WindowHeight = 724 }
+        Assert.Equal(0, Settings.resolutionIndex odd)
+        let next = Settings.stepResolution odd 1
+        Assert.Equal(Settings.resolutions[1], (next.WindowWidth, next.WindowHeight))
+
+    [<Fact>]
+    let ``fullscreen toggle flips with enter and left right`` () =
+        let selected = selectRow "FULLSCREEN" (SettingsUi.create Settings.defaults)
+        let on = SettingsUi.update 1280 720 { idleInput with Activate = true } selected
+        Assert.True(on.Settings.Fullscreen)
+        let off = SettingsUi.update 1280 720 { idleInput with Left = true } on
+        Assert.False(off.Settings.Fullscreen)
 
     [<Fact>]
     let ``blood palette covers every color with a distinct rgb`` () =
@@ -118,11 +167,14 @@ module SettingsTests =
         let overHeader = SettingsUi.update 1280 720 { idleInput with Pointer = Some(middleOf 0) } state
         Assert.Equal(state.Selected, overHeader.Selected)
         // Hovering an adjustable row selects it; clicking a toggle flips it.
-        let toggleIndex = all |> Array.findIndex (fun row -> row.Label = "ADS TOGGLE")
+        // Must be a toggle inside the initial row window — rows past
+        // MaxVisibleRows are not drawn, so they are not hoverable either.
+        let toggleIndex = all |> Array.findIndex (fun row -> row.Label = "FULLSCREEN")
+        Assert.True(toggleIndex < visibleCount)
         let clicked =
             SettingsUi.update 1280 720 { idleInput with Pointer = Some(middleOf toggleIndex); Clicked = true } state
         Assert.Equal(toggleIndex, clicked.Selected)
-        Assert.True(clicked.Settings.AdsToggle)
+        Assert.True(clicked.Settings.Fullscreen)
 
     [<Fact>]
     let ``scroll window keeps the selected row visible`` () =

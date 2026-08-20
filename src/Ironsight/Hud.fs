@@ -19,6 +19,13 @@ type HudInfo =
       HitMarker: float32
       HitMarkerLethal: bool
       Subtitle: string option
+      /// Kill-feed rows, newest first: pre-formatted text and a headshot flag
+      /// that only picks the colour.
+      Feed: (string * bool) list
+      /// Chat rows, newest first; the flag marks a server line.
+      Chat: (string * bool) list
+      /// The line being typed, while the chat input is open.
+      ChatDraft: string option
       /// Show the weapon category list (recent switch activity).
       ShowInventory: bool
       /// Wireframe + line-of-sight overlay (F3). Deliberately a wallhack —
@@ -306,8 +313,12 @@ type Hud(gl: GL) =
                         match online.Mode with
                         | TeamDeathmatch -> (if player.Team = Allies then 0 else 1), -player.Kills, player.Deaths
                         | _ -> 0, -player.Kills, player.Deaths)
+                let summary = online.Phase = Results
                 let panelRect =
-                    { X = centerX - panelWidth * 0.5f; Y = 105.0f; W = panelWidth; H = 72.0f + rowHeight * float32 sorted.Length }
+                    { X = centerX - panelWidth * 0.5f
+                      Y = 105.0f
+                      W = panelWidth
+                      H = 72.0f + rowHeight * float32 sorted.Length + (if summary then 76.0f else 0.0f) }
                 panel panelRect (Vector4(0.015f, 0.02f, 0.018f, 0.88f)) 4.0f (Vector4(0.62f, 0.14f, 0.08f, 0.95f))
                 let rows = { X = panelRect.X + 18.0f; Y = panelRect.Y + 64.0f; W = panelRect.W - 36.0f; H = rowHeight * float32 sorted.Length }
                 let columns = [| 0.0f, "PLAYER"; 340.0f, "TEAM"; 460.0f, "K   D" |]
@@ -327,7 +338,47 @@ type Hud(gl: GL) =
                         [ fst columns[0], 1.0f, player.Name
                           fst columns[1], 1.0f, team
                           fst columns[2], 1.0f, $"{player.Kills}   {player.Deaths}" ])
+                if summary then
+                    let winner =
+                        match online.Mode with
+                        | TeamDeathmatch when online.AlliesScore > online.AxisScore -> "ALLIES WIN"
+                        | TeamDeathmatch when online.AxisScore > online.AlliesScore -> "AXIS WIN"
+                        | TeamDeathmatch -> "DRAW"
+                        // Sorted by kills already, so the head is the winner.
+                        | _ -> sorted |> Array.tryHead |> Option.map (fun p -> $"{p.Name} WINS") |> Option.defaultValue "DRAW"
+                    let topFragger =
+                        online.Players
+                        |> Array.sortByDescending (fun player -> player.Kills)
+                        |> Array.tryHead
+                        |> Option.map (fun player -> $"TOP FRAGGER  {player.Name}  {player.Kills}")
+                        |> Option.defaultValue ""
+                    let bestStreak =
+                        online.Players
+                        |> Array.sortByDescending (fun player -> player.BestStreak)
+                        |> Array.tryHead
+                        |> Option.map (fun player -> $"BEST STREAK  {player.Name}  {player.BestStreak}")
+                        |> Option.defaultValue ""
+                    addTextCentered centerX (rows.Y + rows.H + 10.0f) 1.35f (Vector4(1.0f, 0.92f, 0.58f, 1.0f)) winner
+                    addTextCentered centerX (rows.Y + rows.H + 34.0f) 0.95f label topFragger
+                    addTextCentered centerX (rows.Y + rows.H + 58.0f) 0.95f label bestStreak
             | _ -> ()
+        let drawKillFeed () =
+            info.Feed
+            |> List.iteri (fun index (text, headshot) ->
+                addTextRight (float32 width - 20.0f) (100.0f + 18.0f * float32 index) 1.0f (if headshot then accent else white) text)
+        // Bottom-left, stacking upward. The subtitle band owns the full width
+        // at height-118 and the health panel sits at height-66, so everything
+        // here stays above height-124.
+        let drawChat () =
+            let draftY = float32 height - 142.0f
+            info.Chat
+            |> List.iteri (fun index (text, system) ->
+                addText 20.0f (draftY - 20.0f * float32 (index + 1)) 1.0f (if system then accent else white) text)
+            info.ChatDraft
+            |> Option.iter (fun draft ->
+                let line = $"SAY: {draft}_"
+                solid 14.0f (draftY - 4.0f) (max 240.0f (textWidth 1.0f line + 14.0f)) 22.0f (Vector4(0.0f, 0.0f, 0.0f, 0.62f))
+                addText 20.0f draftY 1.0f white line)
         let drawSubtitle (subtitle: string) =
             solid 0.0f (float32 height - 118.0f) (float32 width) 46.0f (Vector4(0.0f,0.0f,0.0f,0.55f))
             addTextCentered centerX (float32 height - 106.0f) 1.25f white subtitle
@@ -445,6 +496,8 @@ type Hud(gl: GL) =
         drawCompass ()
         if info.Online.IsNone then drawOfflineScore ()
         drawOnlineScore ()
+        drawKillFeed ()
+        drawChat ()
         drawScoreboard ()
         info.Subtitle |> Option.iter drawSubtitle
         if hurt > 0.01f then drawDamageVignette ()

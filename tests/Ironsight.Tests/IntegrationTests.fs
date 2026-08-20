@@ -77,6 +77,13 @@ module IntegrationTests =
                     snapshot.Events |> Array.exists (fun event -> event.Kind = "shot"))
                 Release("Alpha", InputButtons.Fire)
 
+                // Chat is the only client message with a text payload, so this
+                // is where a rename of the wire field would surface.
+                Talk("Alpha", "on your left")
+                WaitUntil("Alpha's chat line reaches the other client", 5.0, fun snapshot ->
+                    snapshot.Events
+                    |> Array.exists (fun event -> event.Kind = "chat" && event.Text = "Alpha\ton your left"))
+
                 Leave "Alpha"
                 Leave "Bravo"
             ]

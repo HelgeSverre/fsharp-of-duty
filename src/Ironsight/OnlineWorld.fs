@@ -29,13 +29,35 @@ module OnlineWorld =
         // the speaker slot stays empty — the HUD must not prefix it again.
         | "subtitle" -> Some(Subtitle("", event.Text))
         | "objective" -> Some(ObjectiveUpdated event.EntityId)
+        // kill: entityId = victim, x = killer id (0 = world/suicide),
+        // value = headshot, text = weapon. Mirrors Protocol.eventSnapshot.
+        | "kill" ->
+            let killerId = int event.Position.X
+            let killer = if killerId = 0 then None else Some(EntityId killerId)
+            Some(Kill(killer, EntityId event.EntityId, event.Text, event.Value > 0.5f))
+        | "joined" -> Some(PlayerJoined(EntityId event.EntityId, event.Text))
+        | "left" -> Some(PlayerLeft(EntityId event.EntityId, event.Text))
+        | "phase-change" -> Some(PhaseChanged event.Text)
+        // chat: entityId = sender (0 = server/system), text = "{name}\t{line}".
+        // Tab separates safely because Multiplayer.sanitizeText strips control
+        // scalars from both halves. Mirrors Protocol.eventSnapshot.
+        | "chat" ->
+            let parts = event.Text.Split('\t', 2)
+            let sender = if event.EntityId = 0 then None else Some(EntityId event.EntityId)
+            if parts.Length = 2 then Some(Chat(sender, parts[0], parts[1])) else Some(Chat(sender, "", event.Text))
         | _ -> None
 
     let private weaponFor (player: OnlinePlayer) =
         let weapon =
             Tuning.weaponByName player.WeaponName
             |> Option.defaultValue (Tuning.defaultWeapon player.Team)
-        { Tuning.weaponSlot weapon 0 with InMag = player.Ammo; Reserve = player.Reserve }
+        // The single place an online weapon slot is built (local player, HUD,
+        // viewmodel and remote soldiers all come through here), so the server's
+        // reload timer has to be reapplied here or it is lost.
+        { Tuning.weaponSlot weapon 0 with
+            InMag = player.Ammo
+            Reserve = player.Reserve
+            State = if player.ReloadRemaining > 0.0f then Reloading(Units.seconds player.ReloadRemaining) else Ready }
 
     let private localPlayer previous (snapshot: OnlinePlayer) =
         { previous with
