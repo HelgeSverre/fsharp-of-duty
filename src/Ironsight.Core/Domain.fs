@@ -176,13 +176,14 @@ type Soldier =
 type Material =
     | Brick | Plaster | Wood | Mud | Snow | Sandbag | Metal
     | UniformOlive | UniformFeldgrau | Skin | Water
-    // Appended after Water so every existing on-disk material tag keeps its
-    // index (see Materials.all). Surfaces first, then the render-only palette
-    // entries, which collision geometry never uses.
+    // New cases are appended so every existing on-disk material tag keeps its
+    // index (see Materials.all). Most entries after Concrete are render-only;
+    // Glass is the exception because imported breakables need a trace material.
     | Sand | RustedMetal | Concrete
     | PaintRed | PaintBlue | PaintGreen | PaintYellow | PaintPurple | PaintOrange
     | FoamBlue | FoamOrange
     | ToolBlack | WaterBlue | WetDark
+    | Glass
 
 type Brush =
     { Bounds: Aabb
@@ -192,6 +193,9 @@ type Brush =
 type MeshVertex =
     { Position: Vector3
       Normal: Vector3
+      /// Authored UVs for imported geometry. Procedural meshes leave this at
+      /// zero and continue to use world-projected materials in the shader.
+      TexCoord: Vector2
       MaterialId: int }
 
 type NavNode =
@@ -210,7 +214,11 @@ type Tri =
     { A: Vector3
       B: Vector3
       C: Vector3
+      UvA: Vector2
+      UvB: Vector2
+      UvC: Vector2
       Normal: Vector3
+      RenderMaterialId: int
       Material: Material }
 
 /// The world as triangles, with the same flat XZ hash the brush grid uses.
@@ -218,6 +226,14 @@ type CollisionMesh =
     { Triangles: Tri array
       CellSize: float32
       Cells: Map<struct (int * int), int array> }
+
+/// One independently removable piece of authored world geometry. GoldSrc
+/// brush-model ids are retained as stable ids so a server and every client can
+/// remove the same window from their locally loaded copy of the map.
+type BreakableSurface =
+    { Id: int
+      Bounds: Aabb
+      Triangles: Tri array }
 
 type TriggerCondition =
     | EnterVolume of Aabb
@@ -242,15 +258,28 @@ type MountedGun =
       Facing: float32
       Team: Team }
 
+/// Texture data attached to an authored world mesh. PNG resources keep the
+/// compact checked-in Dust II atlas; native GoldSrc maps expose their decoded
+/// paletted textures directly, without adding an image dependency to Core.
+type LevelTextureAtlas =
+    | EmbeddedPngAtlas of resourceName: string * columns: int * rows: int * tileSize: int
+    | RgbaAtlas of pixels: byte array * width: int * height: int * columns: int * rows: int * tileSize: int
+
 type Level =
     { Name: string
       Revision: int
       Bounds: Aabb
+      /// Whether the compiler supplied the rectangular street floor. Imported
+      /// static worlds have their own ground and must not synthesize nav nodes
+      /// where their mesh has no walkable surface.
+      HasGeneratedGround: bool
       Brushes: Brush array
       BrushGrid: BrushGrid
       /// Geometry that is not a box: ramps, terrain, oriented walls. Kept apart
       /// from Brushes so a rebuild can re-merge it instead of dropping it.
       Sloped: Tri array
+      Breakables: BreakableSurface array
+      BrokenBreakables: Set<int>
       Collision: CollisionMesh
       Cover: CoverPoint array
       Spawns: struct (Team option * Vector3) array
@@ -264,6 +293,7 @@ type Level =
       /// Sea/flood height. Render-only surface; the sim reads it to slow
       /// anyone wading below it.
       WaterLevel: float32 option
+      TextureAtlas: LevelTextureAtlas option
       Vertices: MeshVertex array
       Indices: uint32 array }
 
@@ -350,6 +380,7 @@ type World =
 type GameEvent =
     | ShotFired of shooter: EntityId option * origin: Vector3 * direction: Vector3 * weapon: string
     | Impact of position: Vector3 * normal: Vector3 * surface: Material
+    | GlassBroken of breakableId: int * position: Vector3
     | HitConfirmed of victim: EntityId * lethal: bool
     | BloodImpact of position: Vector3 * direction: Vector3 * headshot: bool
     | HeadGib of position: Vector3 * direction: Vector3

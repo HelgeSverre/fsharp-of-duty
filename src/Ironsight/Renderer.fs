@@ -9,6 +9,7 @@ open Microsoft.FSharp.NativeInterop
 open Ironsight
 open Ironsight.ProcGen
 open Silk.NET.OpenGL
+open StbImageSharp
 
 [<RequireQualifiedAccess>]
 module ViewmodelAnimation =
@@ -66,6 +67,11 @@ type Renderer(gl: GL) =
     let mutable shadowProgram = 0u
     let mutable shadowFramebuffer = 0u
     let mutable shadowTexture = 0u
+    let mutable materialAtlasTexture = 0u
+    let mutable materialAtlasColumns = 1
+    let mutable materialAtlasRows = 1
+    let mutable materialAtlasTileSize = 1
+    let mutable materialAtlasFlipY = 0
     let mutable indexCount = 0u
     let mutable soldierVao = 0u
     let mutable soldierVertexBuffer = 0u
@@ -125,6 +131,49 @@ type Renderer(gl: GL) =
         if status <> GLEnum.FramebufferComplete then invalidOp $"Shadow framebuffer is incomplete: {status}"
         gl.BindFramebuffer(FramebufferTarget.Framebuffer, 0u)
 
+    let uploadMaterialAtlas (data: byte array) width height columns rows tileSize =
+        if width <= 0 || height <= 0 || columns <= 0 || rows <= 0 || tileSize <= 0 || data.Length <> width * height * 4 then
+            invalidOp $"level texture atlas has invalid dimensions ({width}x{height}, {columns}x{rows} tiles of {tileSize}px)"
+        if materialAtlasTexture <> 0u then gl.DeleteTexture materialAtlasTexture
+        materialAtlasTexture <- gl.GenTexture()
+        materialAtlasColumns <- columns
+        materialAtlasRows <- rows
+        materialAtlasTileSize <- tileSize
+        gl.BindTexture(TextureTarget.Texture2D, materialAtlasTexture)
+        use pixels = fixed data
+        gl.TexImage2D(
+            TextureTarget.Texture2D,
+            0,
+            InternalFormat.Rgba8,
+            uint32 width,
+            uint32 height,
+            0,
+            PixelFormat.Rgba,
+            PixelType.UnsignedByte,
+            NativePtr.toVoidPtr pixels)
+        gl.GenerateMipmap TextureTarget.Texture2D
+        gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMinFilter, int TextureMinFilter.LinearMipmapLinear)
+        gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMagFilter, int TextureMagFilter.Linear)
+        gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapS, int TextureWrapMode.ClampToEdge)
+        gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapT, int TextureWrapMode.ClampToEdge)
+
+    let createMaterialAtlas source =
+        match source with
+        | None ->
+            materialAtlasFlipY <- 0
+            uploadMaterialAtlas [| 255uy; 255uy; 255uy; 255uy |] 1 1 1 1 1
+        | Some(EmbeddedPngAtlas(resourceName, columns, rows, tileSize)) ->
+            use stream = Reflection.Assembly.GetExecutingAssembly().GetManifestResourceStream resourceName
+            if isNull stream then invalidOp $"embedded level texture atlas '{resourceName}' is missing"
+            let image = ImageResult.FromStream(stream, ColorComponents.RedGreenBlueAlpha)
+            if image.Width <> columns * tileSize || image.Height <> rows * tileSize then
+                invalidOp $"level texture atlas '{resourceName}' is {image.Width}x{image.Height}, expected {columns * tileSize}x{rows * tileSize}"
+            materialAtlasFlipY <- 1
+            uploadMaterialAtlas image.Data image.Width image.Height columns rows tileSize
+        | Some(RgbaAtlas(data, width, height, columns, rows, tileSize)) ->
+            materialAtlasFlipY <- 0
+            uploadMaterialAtlas data width height columns rows tileSize
+
     let deleteMesh () =
         if vao <> 0u then gl.DeleteVertexArray vao
         if vertexBuffer <> 0u then gl.DeleteBuffer vertexBuffer
@@ -135,6 +184,7 @@ type Renderer(gl: GL) =
 
     let uploadLevel (level: Level) =
         deleteMesh ()
+        createMaterialAtlas level.TextureAtlas
         let vertices = GlUtil.flattenVertices level.Vertices
         let struct (v, vb, ib) = GlUtil.createMeshBuffers gl
         vao <- v
@@ -529,6 +579,13 @@ type Renderer(gl: GL) =
             gl.ActiveTexture TextureUnit.Texture0
             gl.BindTexture(TextureTarget.Texture2D, shadowTexture)
             uniform1i program "uShadowMap" 0
+            gl.ActiveTexture TextureUnit.Texture1
+            gl.BindTexture(TextureTarget.Texture2D, materialAtlasTexture)
+            uniform1i program "uMaterialAtlas" 1
+            uniform1i program "uAtlasColumns" materialAtlasColumns
+            uniform1i program "uAtlasRows" materialAtlasRows
+            uniform1i program "uAtlasTileSize" materialAtlasTileSize
+            uniform1i program "uAtlasFlipY" materialAtlasFlipY
             // HandleEvents already caps decals at the 16 uImpacts slots.
             uniform1i program "uImpactCount" decals.Length
             decals
@@ -805,6 +862,7 @@ type Renderer(gl: GL) =
             del gl.DeleteBuffer gunIndexBuffer
             del gl.DeleteFramebuffer shadowFramebuffer
             del gl.DeleteTexture shadowTexture
+            del gl.DeleteTexture materialAtlasTexture
             del gl.DeleteProgram shadowProgram
             del gl.DeleteProgram skyProgram
             del gl.DeleteProgram program

@@ -29,6 +29,7 @@ module MeshGen =
                 |> Array.map (fun corner ->
                     { Position = Vector3.Transform(corner, transform)
                       Normal = normal
+                      TexCoord = Vector2.Zero
                       MaterialId = Materials.id material }))
         let indices =
             Array.init 6 (fun face ->
@@ -51,19 +52,19 @@ module MeshGen =
                    Vector3(n1.X * radius, n1.Y * radius, -length * 0.5f), n1
                    Vector3(n1.X * radius, n1.Y * radius, length * 0.5f), n1
                    Vector3(n0.X * radius, n0.Y * radius, length * 0.5f), n0 |] do
-                vertices.Add { Position = position; Normal = normal; MaterialId = Materials.id material }
+                vertices.Add { Position = position; Normal = normal; TexCoord = Vector2.Zero; MaterialId = Materials.id material }
             indices.Add start; indices.Add(start + 1u); indices.Add(start + 2u)
             indices.Add start; indices.Add(start + 2u); indices.Add(start + 3u)
             // Flat end caps are deliberately duplicated so their normals remain
             // sharp. Without these, scopes and barrels expose hollow interiors
             // whenever back-face culling is enabled.
             let capStart = uint32 vertices.Count
-            vertices.Add { Position = Vector3(0.0f, 0.0f, -length * 0.5f); Normal = -Vector3.UnitZ; MaterialId = Materials.id material }
-            vertices.Add { Position = Vector3(n1.X * radius, n1.Y * radius, -length * 0.5f); Normal = -Vector3.UnitZ; MaterialId = Materials.id material }
-            vertices.Add { Position = Vector3(n0.X * radius, n0.Y * radius, -length * 0.5f); Normal = -Vector3.UnitZ; MaterialId = Materials.id material }
-            vertices.Add { Position = Vector3(0.0f, 0.0f, length * 0.5f); Normal = Vector3.UnitZ; MaterialId = Materials.id material }
-            vertices.Add { Position = Vector3(n0.X * radius, n0.Y * radius, length * 0.5f); Normal = Vector3.UnitZ; MaterialId = Materials.id material }
-            vertices.Add { Position = Vector3(n1.X * radius, n1.Y * radius, length * 0.5f); Normal = Vector3.UnitZ; MaterialId = Materials.id material }
+            vertices.Add { Position = Vector3(0.0f, 0.0f, -length * 0.5f); Normal = -Vector3.UnitZ; TexCoord = Vector2.Zero; MaterialId = Materials.id material }
+            vertices.Add { Position = Vector3(n1.X * radius, n1.Y * radius, -length * 0.5f); Normal = -Vector3.UnitZ; TexCoord = Vector2.Zero; MaterialId = Materials.id material }
+            vertices.Add { Position = Vector3(n0.X * radius, n0.Y * radius, -length * 0.5f); Normal = -Vector3.UnitZ; TexCoord = Vector2.Zero; MaterialId = Materials.id material }
+            vertices.Add { Position = Vector3(0.0f, 0.0f, length * 0.5f); Normal = Vector3.UnitZ; TexCoord = Vector2.Zero; MaterialId = Materials.id material }
+            vertices.Add { Position = Vector3(n0.X * radius, n0.Y * radius, length * 0.5f); Normal = Vector3.UnitZ; TexCoord = Vector2.Zero; MaterialId = Materials.id material }
+            vertices.Add { Position = Vector3(n1.X * radius, n1.Y * radius, length * 0.5f); Normal = Vector3.UnitZ; TexCoord = Vector2.Zero; MaterialId = Materials.id material }
             indices.Add capStart; indices.Add(capStart + 1u); indices.Add(capStart + 2u)
             indices.Add(capStart + 3u); indices.Add(capStart + 4u); indices.Add(capStart + 5u)
         { Vertices = vertices.ToArray(); Indices = indices.ToArray() }
@@ -92,6 +93,7 @@ module MeshGen =
                     vertices.Add
                         { Position = Vector3(radial.X * profile[ring].X, radial.Y * profile[ring].X, profile[ring].Y)
                           Normal = MathEx.normalizedOrZero (radial * n.X + Vector3.UnitZ * n.Y)
+                          TexCoord = Vector2.Zero
                           MaterialId = Materials.id material }
             for ring in 0..profile.Length - 2 do
                 for segment in 0..count - 1 do
@@ -110,12 +112,13 @@ module MeshGen =
                 if radius > 0.001f then
                     let z = profile[ringIndex].Y
                     let centre = uint32 vertices.Count
-                    vertices.Add { Position = Vector3(0.0f, 0.0f, z); Normal = outward; MaterialId = Materials.id material }
+                    vertices.Add { Position = Vector3(0.0f, 0.0f, z); Normal = outward; TexCoord = Vector2.Zero; MaterialId = Materials.id material }
                     for segment in 0..count - 1 do
                         let angle = float32 segment / float32 count * MathF.Tau
                         vertices.Add
                             { Position = Vector3(MathF.Cos angle * radius, MathF.Sin angle * radius, z)
                               Normal = outward
+                              TexCoord = Vector2.Zero
                               MaterialId = Materials.id material }
                     for segment in 0..count - 1 do
                         let next = (segment + 1) % count
@@ -145,7 +148,7 @@ module MeshGen =
         for a,b,c in triangles do
             let normal = Vector3.Cross(points[b] - points[a], points[c] - points[a]) |> MathEx.normalizedOrZero
             let start = uint32 vertices.Count
-            for index in [| a; b; c |] do vertices.Add { Position = points[index]; Normal = normal; MaterialId = Materials.id material }
+            for index in [| a; b; c |] do vertices.Add { Position = points[index]; Normal = normal; TexCoord = Vector2.Zero; MaterialId = Materials.id material }
             indices.Add start; indices.Add(start + 1u); indices.Add(start + 2u)
         { Vertices = vertices.ToArray(); Indices = indices.ToArray() }
 

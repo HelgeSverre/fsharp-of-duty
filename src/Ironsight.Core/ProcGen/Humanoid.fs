@@ -103,18 +103,18 @@ module Humanoid =
             let start1, cut1, normal1 = ring angle1
             let sideStart = uint32 sideVertices.Count
             for position, normal in [| start0, normal0; start1, normal1; cut1, normal1; cut0, normal0 |] do
-                sideVertices.Add { Position = position; Normal = normal; MaterialId = Materials.id material }
+                sideVertices.Add { Position = position; Normal = normal; TexCoord = Vector2.Zero; MaterialId = Materials.id material }
             sideIndices.Add sideStart; sideIndices.Add(sideStart + 1u); sideIndices.Add(sideStart + 2u)
             sideIndices.Add sideStart; sideIndices.Add(sideStart + 2u); sideIndices.Add(sideStart + 3u)
             let baseStart = uint32 sideVertices.Count
-            sideVertices.Add { Position = intactPoint; Normal = -axis; MaterialId = Materials.id material }
-            sideVertices.Add { Position = start1; Normal = -axis; MaterialId = Materials.id material }
-            sideVertices.Add { Position = start0; Normal = -axis; MaterialId = Materials.id material }
+            sideVertices.Add { Position = intactPoint; Normal = -axis; TexCoord = Vector2.Zero; MaterialId = Materials.id material }
+            sideVertices.Add { Position = start1; Normal = -axis; TexCoord = Vector2.Zero; MaterialId = Materials.id material }
+            sideVertices.Add { Position = start0; Normal = -axis; TexCoord = Vector2.Zero; MaterialId = Materials.id material }
             sideIndices.Add baseStart; sideIndices.Add(baseStart + 1u); sideIndices.Add(baseStart + 2u)
             let capStart = uint32 goreVertices.Count
-            goreVertices.Add { Position = cutPoint; Normal = capNormal; MaterialId = Materials.id PaintRed }
-            goreVertices.Add { Position = cut0; Normal = capNormal; MaterialId = Materials.id PaintRed }
-            goreVertices.Add { Position = cut1; Normal = capNormal; MaterialId = Materials.id PaintRed }
+            goreVertices.Add { Position = cutPoint; Normal = capNormal; TexCoord = Vector2.Zero; MaterialId = Materials.id PaintRed }
+            goreVertices.Add { Position = cut0; Normal = capNormal; TexCoord = Vector2.Zero; MaterialId = Materials.id PaintRed }
+            goreVertices.Add { Position = cut1; Normal = capNormal; TexCoord = Vector2.Zero; MaterialId = Materials.id PaintRed }
             goreIndices.Add capStart; goreIndices.Add(capStart + 1u); goreIndices.Add(capStart + 2u)
         MeshGen.union
             [| { Vertices = sideVertices.ToArray(); Indices = sideIndices.ToArray() }

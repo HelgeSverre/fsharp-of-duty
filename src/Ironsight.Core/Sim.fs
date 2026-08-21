@@ -257,6 +257,17 @@ module Sim =
         let mutable projectilePlayer = armedPlayer
         let mutable elementalStatus = world.ElementalStatus
         let mutable dismemberments = world.Dismemberments
+        let mutable level = world.Level
+        let breakHitGlass hitEvents =
+            for event in hitEvents do
+                match event with
+                | Impact(position, _, Glass) ->
+                    match LevelCompile.tryBreakableAt position level with
+                    | Some item ->
+                        level <- LevelCompile.removeBreakables (Set.singleton item.Id) level
+                        shotEvents.Add(GlassBroken(item.Id, position))
+                    | None -> ()
+                | _ -> ()
         let spawnedProjectiles = ResizeArray<SpecialProjectile>()
         if not result.Shots.IsEmpty then
             // Tracer starts at the muzzle; the hit trace below leaves the eye.
@@ -273,20 +284,20 @@ module Sim =
             match result.Weapon.Class.Mechanism with
             | Rocket ->
                 let nextPlayer, nextSoldiers, backblastEvents =
-                    SpecialProjectiles.applyBackblast muzzle direction world.Level projectilePlayer soldiers
+                    SpecialProjectiles.applyBackblast muzzle direction level projectilePlayer soldiers
                 projectilePlayer <- nextPlayer
                 soldiers <- nextSoldiers
                 shotEvents.AddRange backblastEvents
             | FlameJet ->
                 let nextPlayer, nextSoldiers, nextStatus, flameEvents =
-                    SpecialProjectiles.applyFlameJet armedPlayer.Id muzzle direction world.Level projectilePlayer soldiers elementalStatus
+                    SpecialProjectiles.applyFlameJet armedPlayer.Id muzzle direction level projectilePlayer soldiers elementalStatus
                 projectilePlayer <- nextPlayer
                 soldiers <- nextSoldiers
                 elementalStatus <- nextStatus
                 shotEvents.AddRange flameEvents
             | Laser ->
                 let hitSoldiers, endpoint, hitEvents =
-                    Ballistics.applyLaserFiltered (fun soldier -> soldier.Team = Axis) muzzle direction shot.Damage world.Level soldiers
+                    Ballistics.applyLaserFiltered (fun soldier -> soldier.Team = Axis) muzzle direction shot.Damage level soldiers
                 soldiers <- hitSoldiers
                 shotEvents.Add(LaserBeam(muzzle, endpoint))
                 shotEvents.AddRange hitEvents
@@ -312,7 +323,7 @@ module Sim =
                             (fun target ->
                                 soldiers
                                 |> Array.exists (fun soldier -> soldier.Id = target.Id && soldier.Team = Axis && soldier.IsAlive))
-                            world.Level targets
+                            level targets
                     let endpoint = Melee.traceEndpoint attack armedPlayer.Position armedPlayer.Yaw armedPlayer.Pitch
                     shotEvents.Add(MeleeTrace(armedPlayer.Id, armedPlayer.Position + Vector3.UnitY * 1.15f, endpoint, attack))
                     for hit in hits do
@@ -349,7 +360,8 @@ module Sim =
             | Paintball | FoamDart | Nail | Harpoon | Bow | WaterJet -> ()
             | Hitscan ->
               let hitSoldiers, hitEvents =
-                  Ballistics.applyShotFiltered (fun soldier -> soldier.Team = Axis) origin direction shot.Damage shot.Penetration shot.HeadshotMultiplier shot.Kind world.Level soldiers
+                  Ballistics.applyShotFiltered (fun soldier -> soldier.Team = Axis) origin direction shot.Damage shot.Penetration shot.HeadshotMultiplier shot.Kind level soldiers
+              breakHitGlass hitEvents
               let hitIds =
                   hitEvents
                   |> List.choose (function HitConfirmed(victim, _) -> Some victim | _ -> None)
@@ -385,14 +397,14 @@ module Sim =
                   | _ -> ()
         let projectiles = Array.append world.SpecialProjectiles (spawnedProjectiles.ToArray())
         let activeSpecial, persistentMarks, specialPlayer, specialSoldiers, projectileStatus, specialEvents =
-            SpecialProjectiles.stepWithStatus Tuning.TickDuration world.Level projectilePlayer soldiers projectiles world.PersistentMarks elementalStatus
+            SpecialProjectiles.stepWithStatus Tuning.TickDuration level projectilePlayer soldiers projectiles world.PersistentMarks elementalStatus
         let grenades = match result.Thrown with Some grenade -> Array.append world.Grenades [| grenade |] | None -> world.Grenades
-        let activeGrenades, explosions = Grenades.stepProjectiles Tuning.TickDuration world.Level grenades
-        let explodedSoldiers, explosionEvents = Grenades.applyExplosions world.Level explosions specialSoldiers
-        let player, playerExplosionEvents = Grenades.applyExplosionsToPlayer world.Level explosions specialPlayer
+        let activeGrenades, explosions = Grenades.stepProjectiles Tuning.TickDuration level grenades
+        let explodedSoldiers, explosionEvents = Grenades.applyExplosions level explosions specialSoldiers
+        let player, playerExplosionEvents = Grenades.applyExplosionsToPlayer level explosions specialPlayer
         let elementalPlayer, elementalSoldiers, nextElementalStatus, elementalEvents =
             SpecialProjectiles.stepElemental Tuning.TickDuration player explodedSoldiers projectileStatus
-        let aiPlayer, aiSoldiers, aiEvents = AiBrain.step Tuning.TickDuration &rng world.Level world.Squads elementalPlayer elementalSoldiers
+        let aiPlayer, aiSoldiers, aiEvents = AiBrain.step Tuning.TickDuration &rng level world.Squads elementalPlayer elementalSoldiers
         let footstepEvents = result.FootStep |> Option.toList
         let objectives, objectiveEvents =
             if world.Round.IsNone && world.Objectives.Length > 0 && not world.Objectives[0].Done
@@ -429,6 +441,7 @@ module Sim =
                 PersistentMarks = persistentMarks
                 ElementalStatus = nextElementalStatus
                 Dismemberments = dismemberments
+                Level = level
                 Objectives = objectives
                 Squads = squads
                 Script = { world.Script with MissionTime = world.Script.MissionTime + Tuning.TickDuration } }
@@ -581,4 +594,3 @@ module Sim =
             Levels.byAlias alias
             |> Option.map (fun level -> createRoundWorldFor level seed)
             |> Option.defaultWith (fun () -> createPaintballWorld seed)
-

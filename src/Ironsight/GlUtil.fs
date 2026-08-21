@@ -41,14 +41,15 @@ module GlUtil =
         value
 
     /// Flattens level/actor/gun mesh vertices into the interleaved
-    /// pos3/normal3/material1 layout the level shaders expect.
+    /// pos3/normal3/material1/uv2 layout the level shaders expect.
     let flattenVertices (vertices: MeshVertex array) : float32[] =
         vertices
         |> Array.collect (fun vertex ->
             [| vertex.Position.X; vertex.Position.Y; vertex.Position.Z
-               vertex.Normal.X; vertex.Normal.Y; vertex.Normal.Z; float32 vertex.MaterialId |])
+               vertex.Normal.X; vertex.Normal.Y; vertex.Normal.Z; float32 vertex.MaterialId
+               vertex.TexCoord.X; vertex.TexCoord.Y |])
 
-    /// Creates a VAO/VBO/IBO trio and binds the stride-7 pos3/normal3/material1
+    /// Creates a VAO/VBO/IBO trio and binds the stride-9 pos3/normal3/material1/uv2
     /// vertex-attribute layout shared by the level, soldier, and gun meshes.
     /// Leaves the VAO unbound; buffer data upload is the caller's job.
     let createMeshBuffers (gl: GL) : struct (uint32 * uint32 * uint32) =
@@ -58,13 +59,15 @@ module GlUtil =
         gl.BindVertexArray vao
         gl.BindBuffer(BufferTargetARB.ArrayBuffer, vertexBuffer)
         gl.BindBuffer(BufferTargetARB.ElementArrayBuffer, indexBuffer)
-        let stride = uint32 (7 * sizeof<float32>)
+        let stride = uint32 (9 * sizeof<float32>)
         gl.EnableVertexAttribArray 0u
         gl.VertexAttribPointer(0u, 3, VertexAttribPointerType.Float, false, stride, nativeint 0)
         gl.EnableVertexAttribArray 1u
         gl.VertexAttribPointer(1u, 3, VertexAttribPointerType.Float, false, stride, nativeint (3 * sizeof<float32>))
         gl.EnableVertexAttribArray 2u
         gl.VertexAttribPointer(2u, 1, VertexAttribPointerType.Float, false, stride, nativeint (6 * sizeof<float32>))
+        gl.EnableVertexAttribArray 3u
+        gl.VertexAttribPointer(3u, 2, VertexAttribPointerType.Float, false, stride, nativeint (7 * sizeof<float32>))
         gl.BindVertexArray 0u
         struct (vao, vertexBuffer, indexBuffer)
 

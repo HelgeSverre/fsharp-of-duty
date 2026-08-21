@@ -53,6 +53,7 @@ type MatchState =
     { Tick: int64
       Mode: GameMode
       LevelName: string
+      BrokenBreakables: Set<int>
       Phase: MatchPhase
       PhaseRemaining: float32<s>
       Players: Map<EntityId, NetworkPlayer>
@@ -82,6 +83,7 @@ module Multiplayer =
         { Tick = 0L
           Mode = mode
           LevelName = ""
+          BrokenBreakables = Set.empty
           Phase = Waiting
           PhaseRemaining = Units.seconds 0.0f
           Players = Map.empty

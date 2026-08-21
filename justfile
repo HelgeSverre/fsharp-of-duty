@@ -41,6 +41,11 @@ dev: _sdk
 training: _sdk
     {{ dotnet }} run --project {{ client }} -- --training
 
+# Run any built-in map alias directly (for example office or poolday).
+[group('run')]
+level map="paintball": _sdk
+    {{ dotnet }} run --project {{ client }} -- --level "{{ map }}"
+
 # Connect to TDM (default server).
 [group('run')]
 online name="Player" weapon="Thompson": _sdk

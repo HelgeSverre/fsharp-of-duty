@@ -3,6 +3,9 @@
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
   </PropertyGroup>
   <ItemGroup>
+    <EmbeddedResource Include="Maps/Assets/dust2.mesh" LogicalName="Ironsight.Maps.dust2.mesh" />
+  </ItemGroup>
+  <ItemGroup>
     <Compile Include="Prelude.fs" />
     <Compile Include="Noise.fs" />
     <Compile Include="MathEx.fs" />
@@ -15,6 +18,7 @@
     <Compile Include="ProcGen/AudioSynth.fs" />
     <Compile Include="ProcGen/FontGen.fs" />
     <Compile Include="ProcGen/Humanoid.fs" />
+    <Compile Include="Maps/GoldSrcBsp.fs" />
     <Compile Include="ProcGen/LevelDsl.fs" />
     <Compile Include="ProcGen/LevelCompile.fs" />
     <Compile Include="ProcGen/MapFile.fs" />
@@ -25,6 +29,10 @@
     <Compile Include="Maps/OmahaDraw.fs" />
     <Compile Include="Maps/Rust.fs" />
     <Compile Include="Maps/Killhouse.fs" />
+    <Compile Include="Maps/Dust2.fs" />
+    <Compile Include="Maps/PoolDay.fs" />
+    <Compile Include="Maps/Office.fs" />
+    <Compile Include="Maps/ClassicBspMaps.fs" />
     <Compile Include="ProcGen/Levels.fs" />
     <Compile Include="Movement.fs" />
     <Compile Include="Weapons.fs" />

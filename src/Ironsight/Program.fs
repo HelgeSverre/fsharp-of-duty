@@ -312,7 +312,7 @@ module Program =
         let createOfflineWorld map = Sim.createOfflineWorld map 0x1A0B3CUL
         let requestedMap =
             if args |> Array.contains "--training" then Some "training"
-            else None
+            else argumentValue "--level" args
         // --map <file.ironmap>: play a custom map offline as a bot round.
         let customMapWorld =
             argumentValue "--map" args
@@ -744,6 +744,9 @@ module Program =
                                     Ironsight.ProcGen.Levels.byName snapshot.LevelName
                                     |> Option.defaultValue Ironsight.ProcGen.Levels.paintballArena
                             current <- { current with Level = level }
+                        let missingBreaks = Set.difference snapshot.BrokenBreakables current.Level.BrokenBreakables
+                        if not missingBreaks.IsEmpty then
+                            current <- { current with Level = Ironsight.ProcGen.LevelCompile.removeBreakables missingBreaks current.Level }
                         let networkEvents =
                             snapshot.Events
                             |> Array.filter (fun event -> event.Id > lastOnlineEventId && (event.RecipientId = 0 || event.RecipientId = client.PlayerId))

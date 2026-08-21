@@ -145,6 +145,7 @@ type SnapshotMessage =
       tick: int64
       mode: string
       level: string
+      brokenBreakables: int array
       phase: string
       alliesScore: int
       axisScore: int
@@ -375,6 +376,7 @@ module Protocol =
             match replicated.Event with
             | ShotFired(shooter, position, direction, weapon) -> make "shot" (defaultArg shooter (EntityId 0)) position direction 0.0f weapon
             | Impact(position, normal, surface) -> make "impact" (EntityId 0) position normal 0.0f (string surface)
+            | GlassBroken(breakableId, position) -> make "glass-broken" (EntityId breakableId) position Vector3.Zero 0.0f ""
             | HitConfirmed(victim, lethal) -> make "hit" victim Vector3.Zero Vector3.Zero (if lethal then 1.0f else 0.0f) ""
             | BloodImpact(position, direction, headshot) -> make "blood" (EntityId 0) position direction (if headshot then 1.0f else 0.0f) ""
             | HeadGib(position, direction) -> make "head-gib" (EntityId 0) position direction 0.0f ""
@@ -430,6 +432,7 @@ module Protocol =
           tick = state.Tick
           mode = string state.Mode
           level = state.LevelName
+          brokenBreakables = Set.toArray state.BrokenBreakables
           phase = string state.Phase
           alliesScore = state.AlliesScore
           axisScore = state.AxisScore

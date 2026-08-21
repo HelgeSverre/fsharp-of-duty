@@ -142,6 +142,17 @@ module AudioSynth =
             let shaft = MathF.Sin(MathF.Tau * 530.0f * time) * MathF.Exp(-time * 36.0f)
             MathF.Tanh(white * MathF.Exp(-time * 70.0f) * 0.45f + thunk * 0.45f + shaft * 0.18f) * 0.58f)
 
+    let glassBreak () =
+        render 0.48f 5189 (fun time white ->
+            let shard frequency phase decay =
+                MathF.Sin(MathF.Tau * frequency * time + phase) * MathF.Exp(-time * decay)
+            let scatter = white * MathF.Exp(-time * 17.0f) * 0.32f
+            let ring =
+                shard 1780.0f 0.0f 13.0f * 0.26f
+                + shard 2630.0f 1.1f 17.0f * 0.20f
+                + shard 3910.0f 2.4f 23.0f * 0.14f
+            MathF.Tanh(scatter + ring) * 0.62f)
+
     /// The M1 Garand's en-bloc clip ejecting: a bright metallic ring of
     /// inharmonic partials over a short noise transient.
     let garandPing () =

@@ -23,11 +23,17 @@
     <!-- Bundles OpenAL Soft natives so published builds have audio on systems
          without a system OpenAL (notably Windows). -->
     <PackageReference Include="Silk.NET.OpenAL.Soft.Native" Version="1.23.1" />
+    <PackageReference Include="StbImageSharp" Version="2.30.16" />
+  </ItemGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="Assets/dust2-materials.png" LogicalName="Ironsight.Assets.dust2-materials.png" />
   </ItemGroup>
   <ItemGroup>
     <!-- The canonical server list ships beside the executable; the repo root
          copy is the single source of truth (and the PR target). -->
     <Content Include="../../servers.json" Link="servers.json" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="../../maps/*.bsp" Link="maps/%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="../../maps/*.wad" Link="maps/%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
   <ItemGroup>
     <Compile Include="Settings.fs" />

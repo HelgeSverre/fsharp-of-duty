@@ -63,6 +63,7 @@ module Ballistics =
         | Sand -> 3.2f
         | Concrete -> 10.0f
         | Metal | RustedMetal -> 20.0f
+        | Glass -> 0.05f
         | UniformOlive | UniformFeldgrau | Skin -> 0.5f
         // Render-only; never in the collision mesh, kept for match totality.
         | Water

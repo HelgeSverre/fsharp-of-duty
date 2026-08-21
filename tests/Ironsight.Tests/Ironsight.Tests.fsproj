@@ -21,6 +21,8 @@
   </ItemGroup>
   <ItemGroup>
     <Content Include="xunit.runner.json" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="../../maps/*.bsp" Link="maps/%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="../../maps/*.wad" Link="maps/%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
     <Compile Include="TestKit.fs" />
     <Compile Include="PropertyTests.fs" />
     <Compile Include="CoreTests.fs" />

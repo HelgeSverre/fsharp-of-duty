@@ -142,6 +142,13 @@ void main() {
                     let angle = float32 index * MathF.Tau / 4.0f
                     let velocity = normal * (0.35f + float32 index * 0.08f) + tangent * MathF.Cos(angle) * 0.3f + bitangent * MathF.Sin(angle) * 0.3f
                     addPuff position velocity (Vector4(0.55f, 0.42f, 0.25f, 0.56f)) (10.0f + float32 index * 2.0f) 0.42f -1.8f
+            | GlassBroken(_, position) ->
+                for index in 0..11 do
+                    let angle = float32 index * 2.3999632f
+                    let direction = Vector3(MathF.Cos angle, 0.35f + float32 (index % 3) * 0.18f, MathF.Sin angle)
+                    let endpoint = position + direction * (0.18f + float32 (index % 4) * 0.055f)
+                    addLine position endpoint (Vector4(0.66f, 0.88f, 0.94f, 0.82f)) 0.34f
+                    addPuff position (direction * (0.8f + float32 (index % 4) * 0.28f)) (Vector4(0.72f, 0.90f, 0.96f, 0.68f)) 7.0f 0.52f -8.5f
             | ArrowImpact(position, normal, stuck) ->
                 let color = if stuck then Vector4(0.64f, 0.43f, 0.20f, 0.88f) else Vector4(0.78f, 0.72f, 0.60f, 0.72f)
                 addLine position (position + normal * 0.32f) color 0.20f

@@ -5,15 +5,32 @@ open Ironsight
 
 [<RequireQualifiedAccess>]
 module Materials =
+    /// Render-material ids below this value are the procedural Material union.
+    /// Authored map textures pack their collision material and atlas layer into
+    /// the same integer so the renderer still needs only one vertex attribute.
+    let importedBase = 100
+    let importedStride = 1000
+
     /// Canonical order, also MapFile's serialization tag order (index =
     /// tag/id) — new cases go at the END so on-disk tags stay stable.
     let all =
         [| Brick; Plaster; Wood; Mud; Snow; Sandbag; Metal; UniformOlive; UniformFeldgrau; Skin; Water
            Sand; RustedMetal; Concrete
            PaintRed; PaintBlue; PaintGreen; PaintYellow; PaintPurple; PaintOrange; FoamBlue; FoamOrange
-           ToolBlack; WaterBlue; WetDark |]
+           ToolBlack; WaterBlue; WetDark; Glass |]
 
     let id material = Array.findIndex ((=) material) all
+
+    let importedId collisionMaterial textureIndex =
+        importedBase + id collisionMaterial * importedStride + textureIndex
+
+    let isImported materialId = materialId >= importedBase
+
+    let importedCollisionId materialId =
+        (materialId - importedBase) / importedStride
+
+    let importedTextureIndex materialId =
+        (materialId - importedBase) % importedStride
 
     /// Flat display colour for a material, for anything that draws geometry
     /// without the game's shader: the gun-preview tool and the website's
@@ -45,6 +62,7 @@ module Materials =
         | ToolBlack -> Vector3(0.035f, 0.04f, 0.045f)
         | WaterBlue -> Vector3(0.05f, 0.52f, 0.88f)
         | WetDark -> Vector3(0.075f, 0.10f, 0.12f)
+        | Glass -> Vector3(0.55f, 0.72f, 0.78f)
 
     let parse (name: string) =
         all |> Array.tryFind (fun material -> string material = name)

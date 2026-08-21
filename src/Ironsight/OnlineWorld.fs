@@ -20,10 +20,12 @@ module OnlineWorld =
             | "PaintYellow" -> PaintYellow | "PaintPurple" -> PaintPurple | "PaintOrange" -> PaintOrange
             | "FoamBlue" -> FoamBlue | "FoamOrange" -> FoamOrange
             | "ToolBlack" -> ToolBlack | "WaterBlue" -> WaterBlue | "WetDark" -> WetDark
+            | "Glass" -> Glass
             | _ -> Mud
         match event.Kind with
         | "shot" -> Some(ShotFired((if event.EntityId = 0 then None else Some(EntityId event.EntityId)), event.Position, event.Direction, event.Text))
         | "impact" -> Some(Impact(event.Position, event.Direction, material))
+        | "glass-broken" -> Some(GlassBroken(event.EntityId, event.Position))
         | "hit" -> Some(HitConfirmed(EntityId event.EntityId, event.Value > 0.5f))
         | "blood" -> Some(BloodImpact(event.Position, event.Direction, event.Value > 0.5f))
         | "head-gib" -> Some(HeadGib(event.Position, event.Direction))

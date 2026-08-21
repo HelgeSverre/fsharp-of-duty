@@ -119,23 +119,69 @@ module AiBrain =
         |> Array.sortBy (fun cover -> Vector3.DistanceSquared(cover.Pos, soldier.Position) + Vector3.DistanceSquared(cover.Pos, target) * 0.2f)
         |> Array.tryHead
 
-    let private moveWith (speed: float32) (weave: float32) dt (level: Level) target (soldier: Soldier) =
-        let offset = MathEx.horizontal (target - soldier.Position)
-        let distance = offset.Length()
-        if distance < 0.05f then soldier, true
-        else
-            let direction = offset / distance
-            // Attack movement: weave laterally while closing so an assault is
-            // not a straight-line conga toward the muzzle. Facing stays on the
-            // route; only the body jinks.
-            let side = Vector3(-direction.Z, 0.0f, direction.X)
-            let moveDirection = MathEx.normalizedOrZero (direction + side * (MathF.Sin(soldier.AnimPhase * 1.6f) * weave))
-            let step = min distance (speed * Units.raw dt)
-            let facing = MathF.Atan2(direction.X, -direction.Z)
-            let requested = soldier.Position + moveDirection * step
-            let position = Movement.resolveAgent level soldier.Position requested
-            let travelled = Vector3.Distance(soldier.Position, position)
-            { soldier with Position = position; Facing = facing; AnimPhase = soldier.AnimPhase + travelled * 3.0f }, distance <= 0.2f
+    let private moveWith (speed: float32) (weave: float32) dt (level: Level) (target: Vector3) (soldier: Soldier) =
+        let verticalDistance = abs (target.Y - soldier.Position.Y)
+        let ladder =
+            if verticalDistance <= 0.45f then None
+            else
+                let lower, upper = min target.Y soldier.Position.Y, max target.Y soldier.Position.Y
+                level.Ladders
+                |> Array.choose (fun volume ->
+                    let centre = (volume.Min + volume.Max) * 0.5f
+                    let centre2 = Vector2(centre.X, centre.Z)
+                    let soldierDistance = Vector2.DistanceSquared(Vector2(soldier.Position.X, soldier.Position.Z), centre2)
+                    let targetDistance = Vector2.DistanceSquared(Vector2(target.X, target.Z), centre2)
+                    let reaches =
+                        volume.Min.Y <= lower + 1.0f
+                        && volume.Max.Y + Tuning.StandingHeight + 0.25f >= upper
+                    if reaches && soldierDistance < 10.0f && targetDistance < 10.0f then
+                        Some(volume, soldierDistance + targetDistance)
+                    else None)
+                |> function [||] -> None | candidates -> Some(Array.minBy snd candidates |> fst)
+        match ladder with
+        | Some volume ->
+            // Approach the nearest point in the climb volume and preserve an
+            // already-valid position. Pulling every climber to the AABB centre
+            // can move it a few centimetres into the wall the ladder is fixed
+            // to, enough for the standing capsule to catch on the top lip.
+            let approach =
+                Vector3(
+                    Math.Clamp(soldier.Position.X, volume.Min.X, volume.Max.X),
+                    soldier.Position.Y,
+                    Math.Clamp(soldier.Position.Z, volume.Min.Z, volume.Max.Z))
+            let towardLadder = approach - soldier.Position
+            let horizontalDistance = towardLadder.Length()
+            if horizontalDistance > 0.12f then
+                let direction = towardLadder / horizontalDistance
+                let step = min horizontalDistance (speed * Units.raw dt)
+                let requested = soldier.Position + direction * step
+                let position = Movement.resolveAgent level soldier.Position requested
+                let travelled = Vector3.Distance(soldier.Position, position)
+                let facing = MathF.Atan2(direction.X, -direction.Z)
+                { soldier with Position = position; Facing = facing; AnimPhase = soldier.AnimPhase + travelled * 3.0f }, false
+            else
+                let climb = MathF.CopySign(min verticalDistance (Tuning.ClimbSpeed * Units.raw dt), target.Y - soldier.Position.Y)
+                let requested = Vector3(approach.X, soldier.Position.Y + climb, approach.Z)
+                let position = Movement.resolveClimbingAgent level requested
+                let travelled = Vector3.Distance(soldier.Position, position)
+                { soldier with Position = position; AnimPhase = soldier.AnimPhase + travelled * 3.0f }, false
+        | None ->
+            let offset = MathEx.horizontal (target - soldier.Position)
+            let distance = offset.Length()
+            if distance < 0.05f then soldier, true
+            else
+                let direction = offset / distance
+                // Attack movement: weave laterally while closing so an assault is
+                // not a straight-line conga toward the muzzle. Facing stays on the
+                // route; only the body jinks.
+                let side = Vector3(-direction.Z, 0.0f, direction.X)
+                let moveDirection = MathEx.normalizedOrZero (direction + side * (MathF.Sin(soldier.AnimPhase * 1.6f) * weave))
+                let step = min distance (speed * Units.raw dt)
+                let facing = MathF.Atan2(direction.X, -direction.Z)
+                let requested = soldier.Position + moveDirection * step
+                let position = Movement.resolveAgent level soldier.Position requested
+                let travelled = Vector3.Distance(soldier.Position, position)
+                { soldier with Position = position; Facing = facing; AnimPhase = soldier.AnimPhase + travelled * 3.0f }, distance <= 0.2f
 
     let private moveTowards dt (level: Level) target (soldier: Soldier) = moveWith 2.2f 0.0f dt level target soldier
 

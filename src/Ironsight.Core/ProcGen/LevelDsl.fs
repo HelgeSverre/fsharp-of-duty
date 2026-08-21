@@ -22,6 +22,13 @@ type LevelItem =
     /// navmesh only consults brushes. Put a Block inside anything a bot must
     /// path around; the prop shell hides it.
     | Prop of mesh: ProceduralMesh * position: Vector3 * yaw: float32
+    /// A complete authored world mesh with explicit bounds. Unlike a Prop it
+    /// replaces the DSL's generated street floor: imported BSP geometry
+    /// already contains every floor, wall, roof and underground surface.
+    | StaticWorld of mesh: ProceduralMesh * bounds: Aabb * textureAtlas: LevelTextureAtlas option
+    /// Independently removable authored geometry, currently GoldSrc glass
+    /// brush models. Its stable source id is replicated when the piece breaks.
+    | BreakableWorld of id: int * mesh: ProceduralMesh * bounds: Aabb
     /// A genuinely sloped surface between two heights, solid down to the ground
     /// beneath it. Walkable if the grade is inside the slope limit.
     | Ramp of startPoint: Vector3 * endPoint: Vector3 * width: float32 * material: Material
@@ -55,6 +62,9 @@ module LevelDsl =
     let mg42 position facing owner = Mg42(position, facing, owner)
     let block center size material = Block(center, size, material)
     let prop mesh position yaw = Prop(mesh, position, yaw)
+    let staticWorld mesh bounds = StaticWorld(mesh, bounds, None)
+    let texturedStaticWorld mesh bounds textureAtlas = StaticWorld(mesh, bounds, Some textureAtlas)
+    let breakableWorld id mesh bounds = BreakableWorld(id, mesh, bounds)
     let ramp startPoint endPoint width material = Ramp(startPoint, endPoint, width, material)
     let ladder foot height facing = Ladder(foot, height, facing)
     let heightfield center size cells height material = Heightfield(center, size, cells, height, material)

@@ -56,8 +56,8 @@ module LevelCompile =
                -Vector3.UnitY, [| corner 0 0 0; corner 1 0 0; corner 1 0 1; corner 0 0 1 |] |]
         quads
         |> Array.collect (fun (normal, points) ->
-            [| { A = points[0]; B = points[1]; C = points[2]; Normal = normal; Material = material }
-               { A = points[0]; B = points[2]; C = points[3]; Normal = normal; Material = material } |])
+            [| { A = points[0]; B = points[1]; C = points[2]; UvA = Vector2.Zero; UvB = Vector2.Zero; UvC = Vector2.Zero; Normal = normal; RenderMaterialId = Materials.id material; Material = material }
+               { A = points[0]; B = points[2]; C = points[3]; UvA = Vector2.Zero; UvB = Vector2.Zero; UvC = Vector2.Zero; Normal = normal; RenderMaterialId = Materials.id material; Material = material } |])
 
     /// Two triangles for a quad, wound so the normal points away from `inside`.
     /// Deriving the normal and then orienting it against a known interior point
@@ -67,11 +67,11 @@ module LevelCompile =
         let normal = Vector3.Cross(p1 - p0, p2 - p0) |> MathEx.normalizedOrZero
         let outward = if Vector3.Dot(normal, centre - inside) >= 0.0f then normal else -normal
         if Vector3.Dot(normal, centre - inside) >= 0.0f then
-            [| { A = p0; B = p1; C = p2; Normal = outward; Material = material }
-               { A = p0; B = p2; C = p3; Normal = outward; Material = material } |]
+            [| { A = p0; B = p1; C = p2; UvA = Vector2.Zero; UvB = Vector2.Zero; UvC = Vector2.Zero; Normal = outward; RenderMaterialId = Materials.id material; Material = material }
+               { A = p0; B = p2; C = p3; UvA = Vector2.Zero; UvB = Vector2.Zero; UvC = Vector2.Zero; Normal = outward; RenderMaterialId = Materials.id material; Material = material } |]
         else
-            [| { A = p0; B = p2; C = p1; Normal = outward; Material = material }
-               { A = p0; B = p3; C = p2; Normal = outward; Material = material } |]
+            [| { A = p0; B = p2; C = p1; UvA = Vector2.Zero; UvB = Vector2.Zero; UvC = Vector2.Zero; Normal = outward; RenderMaterialId = Materials.id material; Material = material }
+               { A = p0; B = p3; C = p2; UvA = Vector2.Zero; UvB = Vector2.Zero; UvC = Vector2.Zero; Normal = outward; RenderMaterialId = Materials.id material; Material = material } |]
 
     /// A closed sloped prism: the walkable top surface plus a skirt down to the
     /// ground, so penetration can still pair an entry face with an exit face.
@@ -123,8 +123,8 @@ module LevelCompile =
             for struct (a, b, c) in [| struct (p0, p1, p2); struct (p0, p2, p3) |] do
                 let normal = Vector3.Cross(b - a, c - a) |> MathEx.normalizedOrZero
                 let outward = if normal.Y < 0.0f then -normal else normal
-                if outward.Y < 0.0f then triangles.Add { A = a; B = c; C = b; Normal = outward; Material = material }
-                else triangles.Add { A = a; B = b; C = c; Normal = outward; Material = material }
+                if outward.Y < 0.0f then triangles.Add { A = a; B = c; C = b; UvA = Vector2.Zero; UvB = Vector2.Zero; UvC = Vector2.Zero; Normal = outward; RenderMaterialId = Materials.id material; Material = material }
+                else triangles.Add { A = a; B = b; C = c; UvA = Vector2.Zero; UvB = Vector2.Zero; UvC = Vector2.Zero; Normal = outward; RenderMaterialId = Materials.id material; Material = material }
         for iz in 0 .. cells - 1 do
             for ix in 0 .. cells - 1 do
                 addQuad (point ix iz) (point ix (iz + 1)) (point (ix + 1) (iz + 1)) (point (ix + 1) iz)
@@ -179,8 +179,8 @@ module LevelCompile =
         let b = Vector3(bounds.Max.X, height, bounds.Min.Z)
         let c = Vector3(bounds.Max.X, height, bounds.Max.Z)
         let d = Vector3(bounds.Min.X, height, bounds.Max.Z)
-        [| { A = a; B = c; C = b; Normal = Vector3.UnitY; Material = Water }
-           { A = a; B = d; C = c; Normal = Vector3.UnitY; Material = Water } |]
+        [| { A = a; B = c; C = b; UvA = Vector2.Zero; UvB = Vector2.Zero; UvC = Vector2.Zero; Normal = Vector3.UnitY; RenderMaterialId = Materials.id Water; Material = Water }
+           { A = a; B = d; C = c; UvA = Vector2.Zero; UvB = Vector2.Zero; UvC = Vector2.Zero; Normal = Vector3.UnitY; RenderMaterialId = Materials.id Water; Material = Water } |]
 
     let private triangleBounds (triangle: Tri) =
         { Min = Vector3.Min(triangle.A, Vector3.Min(triangle.B, triangle.C))
@@ -394,8 +394,12 @@ module LevelCompile =
                 let face = Vector3.Cross(b.Position - a.Position, c.Position - a.Position)
                 if face.LengthSquared() < 1e-12f then Vector3.UnitY else Vector3.Normalize face
             { A = a.Position; B = b.Position; C = c.Position
+              UvA = a.TexCoord; UvB = b.TexCoord; UvC = c.TexCoord
               Normal = normal
-              Material = Materials.all[a.MaterialId] })
+              RenderMaterialId = a.MaterialId
+              Material =
+                  if Materials.isImported a.MaterialId then Materials.all[Materials.importedCollisionId a.MaterialId]
+                  else Materials.all[a.MaterialId] })
 
     let private faces (item: Brush) =
         let min, max = item.Bounds.Min, item.Bounds.Max
@@ -409,7 +413,7 @@ module LevelCompile =
         let normals =
             [| -Vector3.UnitZ; Vector3.UnitZ; -Vector3.UnitX; Vector3.UnitX; Vector3.UnitY; -Vector3.UnitY |]
         let materialId = Materials.id item.Material
-        Array.init 24 (fun index -> { Position = positions[index]; Normal = normals[index / 4]; MaterialId = materialId })
+        Array.init 24 (fun index -> { Position = positions[index]; Normal = normals[index / 4]; TexCoord = Vector2.Zero; MaterialId = materialId })
 
     let private compileMesh (brushes: Brush array) =
         let vertices = brushes |> Array.collect faces
@@ -435,14 +439,26 @@ module LevelCompile =
             let extraVertices =
                 triangles
                 |> Array.collect (fun triangle ->
-                    let materialId = Materials.id triangle.Material
-                    [| { Position = triangle.A; Normal = triangle.Normal; MaterialId = materialId }
-                       { Position = triangle.B; Normal = triangle.Normal; MaterialId = materialId }
-                       { Position = triangle.C; Normal = triangle.Normal; MaterialId = materialId } |])
+                    let materialId = triangle.RenderMaterialId
+                    [| { Position = triangle.A; Normal = triangle.Normal; TexCoord = triangle.UvA; MaterialId = materialId }
+                       { Position = triangle.B; Normal = triangle.Normal; TexCoord = triangle.UvB; MaterialId = materialId }
+                       { Position = triangle.C; Normal = triangle.Normal; TexCoord = triangle.UvC; MaterialId = materialId } |])
             let extraIndices = Array.init (triangles.Length * 3) (fun index -> baseIndex + uint32 index)
             Array.append vertices extraVertices, Array.append indices extraIndices
 
-    let private compileNav (bounds: Aabb) (brushes: Brush array) (brushGrid: BrushGrid) (ladders: Aabb array) (collision: CollisionMesh) =
+    let private collisionNear (mesh: CollisionMesh) (position: Vector3) radius =
+        let cell value = int (MathF.Floor(value / mesh.CellSize))
+        let minX, maxX = cell (position.X - radius), cell (position.X + radius)
+        let minZ, maxZ = cell (position.Z - radius), cell (position.Z + radius)
+        [| for z in minZ..maxZ do
+               for x in minX..maxX do
+                   match Map.tryFind (struct (x, z)) mesh.Cells with
+                   | Some indices -> yield! indices
+                   | None -> () |]
+        |> Array.distinct
+        |> Array.map (fun index -> mesh.Triangles[index])
+
+    let private compileNav (bounds: Aabb) hasGeneratedGround (brushes: Brush array) (brushGrid: BrushGrid) (ladders: Aabb array) (collision: CollisionMesh) =
         let spacing = 2.0f
         let minX, maxX = int (MathF.Ceiling(bounds.Min.X / spacing)), int (MathF.Floor(bounds.Max.X / spacing))
         let minZ, maxZ = int (MathF.Ceiling(bounds.Min.Z / spacing)), int (MathF.Floor(bounds.Max.Z / spacing))
@@ -468,7 +484,8 @@ module LevelCompile =
                 // and the navmesh grew a hole across it.
                 let layers =
                     match surfaceLayers collision flatPosition.X flatPosition.Z with
-                    | [||] -> [| struct (0.0f, Vector3.UnitY) |]
+                    | [||] when hasGeneratedGround -> [| struct (0.0f, Vector3.UnitY) |]
+                    | [||] -> [||]
                     | found ->
                         // A layer is only somewhere to stand if there is room to
                         // stand in. Without this the ground *under* a sandbag
@@ -487,11 +504,30 @@ module LevelCompile =
                     // The same capsule test doubles as the headroom check: a
                     // layer with a ceiling too low to stand under is blocked by
                     // that ceiling and never becomes a node.
-                    let blocked =
-                        nearby
-                        |> Array.exists (fun index ->
-                            brushes[index].Bounds.Max.Y > groundY + 0.05f
-                            && MathEx.capsuleIntersectsAabb Tuning.PlayerRadius Tuning.StandingHeight position brushes[index].Bounds)
+                    let blocked = (
+                        if hasGeneratedGround then
+                            nearby
+                            |> Array.exists (fun index ->
+                                brushes[index].Bounds.Max.Y > groundY + 0.05f
+                                && MathEx.capsuleIntersectsAabb Tuning.PlayerRadius Tuning.StandingHeight position brushes[index].Bounds)
+                        else
+                            collisionNear collision position (Tuning.PlayerRadius + 0.1f)
+                            |> Array.exists (fun triangle ->
+                                triangle.Normal.Y < 0.95f
+                                // A stair riser is collision, but its whole
+                                // purpose is to be stepped through. Treating a
+                                // 15 cm riser like a full wall deletes every
+                                // node on native BSP staircases.
+                                && max triangle.A.Y (max triangle.B.Y triangle.C.Y)
+                                   - min triangle.A.Y (min triangle.B.Y triangle.C.Y) > 0.45f
+                                && (MathEx.capsuleIntersectsTriangle
+                                        Tuning.PlayerRadius
+                                        Tuning.StandingHeight
+                                        position
+                                        triangle.A
+                                        triangle.B
+                                        triangle.C).IsSome)
+                        )
                     if not blocked then
                         let column =
                             match lookup.TryGetValue(struct (x, z)) with
@@ -514,17 +550,32 @@ module LevelCompile =
                 |> Array.filter (fun value ->
                         let other = positions[value]
                         let rise = abs (other.Y - position.Y)
+                        let delta = other - position
+                        let distance = delta.Length()
+                        let crossesWorld height =
+                            let origin = position + Vector3.UnitY * height
+                            let direction = delta / distance
+                            collisionNear collision ((position + other) * 0.5f) (spacing * 0.75f)
+                            |> Array.exists (fun triangle ->
+                                abs triangle.Normal.Y < 0.8f
+                                && match MathEx.rayTriangle origin direction triangle.A triangle.B triangle.C with
+                                   | ValueSome hit -> hit > 0.05f && hit < distance - 0.05f
+                                   | ValueNone -> false)
+                        let routeBlocked =
+                            not hasGeneratedGround
+                            && (crossesWorld 1.35f || (rise <= 0.1f && crossesWorld 0.55f))
                         // A step is climbable outright. Anything taller is only
                         // linked when the ground between the two nodes actually
                         // ramps: a 2 m rise over 2 m is a 45 degree slope if the
                         // midpoint is halfway up, and a wall if it is not.
                         // Layered, like the nodes themselves: indoors the
                         // highest surface between two floor nodes is the roof.
-                        rise <= 0.45f
-                        || (rise <= spacing * MathF.Tan(Tuning.MaxSlopeAngle * MathF.PI / 180.0f)
-                            && surfaceLayers collision ((position.X + other.X) * 0.5f) ((position.Z + other.Z) * 0.5f)
-                               |> Array.exists (fun (struct (midHeight, _)) ->
-                                   abs (midHeight - (position.Y + other.Y) * 0.5f) <= 0.35f)))
+                        (rise <= 0.45f
+                         || (rise <= spacing * MathF.Tan(Tuning.MaxSlopeAngle * MathF.PI / 180.0f)
+                             && surfaceLayers collision ((position.X + other.X) * 0.5f) ((position.Z + other.Z) * 0.5f)
+                                |> Array.exists (fun (struct (midHeight, _)) ->
+                                    abs (midHeight - (position.Y + other.Y) * 0.5f) <= 0.35f)))
+                        && not routeBlocked)
             { Position = positions[index]; Neighbours = neighbours })
         |> Seq.toArray
         |> fun nodes ->
@@ -547,15 +598,24 @@ module LevelCompile =
                     // Horizontal and vertical separately: judged on straight-line
                     // distance alone, a ceiling two metres over the ladder head
                     // beats the deck the ladder actually serves.
-                    let nearest (height: float32) =
+                    let nearest (height: float32) below above =
                         nodes
                         |> Array.mapi (fun index node -> index, node)
-                        |> Array.filter (fun (_, node) -> abs (node.Position.Y - height) <= 1.0f)
+                        |> Array.filter (fun (_, node) ->
+                            node.Position.Y >= height - below && node.Position.Y <= height + above)
                         |> Array.map (fun (index, node) ->
                             index, Vector2.DistanceSquared(Vector2(node.Position.X, node.Position.Z), Vector2(centre.X, centre.Z)))
                         |> Array.filter (fun (_, distance) -> distance < 9.0f)
                         |> function [||] -> None | found -> Some(Array.minBy snd found |> fst)
-                    match nearest volume.Min.Y, nearest volume.Max.Y with
+                    // GoldSrc tests the player hull against ladder brushes,
+                    // while our nav graph samples standable points at the feet.
+                    // Converted maps can therefore leave the serving deck—or
+                    // the next segment in a ladder chain—above the brush end.
+                    // Allow one standing hull of upper reach without letting
+                    // the lower end jump to a floor above it.
+                    let bottom = nearest volume.Min.Y 1.0f 1.0f
+                    let top = nearest volume.Max.Y 1.0f (Tuning.StandingHeight + 0.25f)
+                    match bottom, top with
                     | Some bottom, Some top when bottom <> top -> join bottom top
                     | _ -> ()
                 nodes
@@ -615,7 +675,11 @@ module LevelCompile =
             | Some height -> appendTriangleMesh vertices indices (waterTriangles waterBounds height)
             | None -> vertices, indices
         let collision =
-            Array.append (brushes |> Array.collect (fun item -> boxTriangles item.Bounds item.Material)) sloped
+            // Authored water faces are visible world geometry, not floors.
+            // Keeping them out of collision lets players enter the pool rather
+            // than stand on its surface.
+            let collidableSloped = sloped |> Array.filter (fun triangle -> triangle.Material <> Water)
+            Array.append (brushes |> Array.collect (fun item -> boxTriangles item.Bounds item.Material)) collidableSloped
             |> compileCollision
         vertices, indices, collision
 
@@ -666,11 +730,16 @@ module LevelCompile =
     let compile (spec: LevelSpec) =
         let streets = spec.Items |> List.choose (function Street(length, width, surface) -> Some(length, width, surface) | _ -> None)
         let length, width, surface = streets |> List.tryHead |> Option.defaultValue (40.0f, 16.0f, Mud)
-        let bounds = { Min = Vector3(-width, 0.0f, -length * 0.5f); Max = Vector3(width, 8.0f, length * 0.5f) }
+        let staticWorlds = spec.Items |> List.choose (function StaticWorld(mesh, bounds, atlas) -> Some(mesh, bounds, atlas) | _ -> None)
+        let bounds =
+            match staticWorlds with
+            | (_, authored, _) :: _ -> authored
+            | [] -> { Min = Vector3(-width, 0.0f, -length * 0.5f); Max = Vector3(width, 8.0f, length * 0.5f) }
         let brushes = ResizeArray<Brush>()
         // Geometry that is not a box lives here and is merged into both the
         // collision mesh and the render mesh once the item loop is done.
         let sloped = ResizeArray<Tri>()
+        let breakables = ResizeArray<BreakableSurface>()
         let ladders = ResizeArray<Aabb>()
         // The ground is a grid rather than one slab so terrain can cut into it.
         // A single solid slab meant nothing could ever sit below y = 0, which is
@@ -703,15 +772,16 @@ module LevelCompile =
         let groundCell = 2.0f
         let groundStepsX = max 1 (int (MathF.Ceiling(width * 2.0f / groundCell)))
         let groundStepsZ = max 1 (int (MathF.Ceiling(length / groundCell)))
-        for iz in 0 .. groundStepsZ - 1 do
-            for ix in 0 .. groundStepsX - 1 do
-                let x0 = -width + float32 ix * groundCell
-                let z0 = -length * 0.5f + float32 iz * groundCell
-                let x1 = min width (x0 + groundCell)
-                let z1 = min (length * 0.5f) (z0 + groundCell)
-                if not (isCut ((x0 + x1) * 0.5f) ((z0 + z1) * 0.5f)) then
-                    sloped.AddRange(
-                        boxTriangles { Min = Vector3(x0, -0.25f, z0); Max = Vector3(x1, 0.0f, z1) } surface)
+        if List.isEmpty staticWorlds then
+            for iz in 0 .. groundStepsZ - 1 do
+                for ix in 0 .. groundStepsX - 1 do
+                    let x0 = -width + float32 ix * groundCell
+                    let z0 = -length * 0.5f + float32 iz * groundCell
+                    let x1 = min width (x0 + groundCell)
+                    let z1 = min (length * 0.5f) (z0 + groundCell)
+                    if not (isCut ((x0 + x1) * 0.5f) ((z0 + z1) * 0.5f)) then
+                        sloped.AddRange(
+                            boxTriangles { Min = Vector3(x0, -0.25f, z0); Max = Vector3(x1, 0.0f, z1) } surface)
         let covers = ResizeArray<CoverPoint>()
         let spawns = ResizeArray<struct (Team option * Vector3)>()
         let mountedGuns = ResizeArray<MountedGun>()
@@ -742,6 +812,11 @@ module LevelCompile =
                         covers.Add { Pos = Vector3(center.X, 0.0f, center.Z) + reach; PeekDir = facing; Crouch = true; Owner = None }
             | Ramp(startPoint, endPoint, width, material) -> sloped.AddRange(rampTriangles startPoint endPoint width material)
             | Prop(mesh, position, yaw) -> sloped.AddRange(propTriangles mesh position yaw)
+            | StaticWorld(mesh, _, _) -> sloped.AddRange(propTriangles mesh Vector3.Zero 0.0f)
+            | BreakableWorld(id, mesh, bounds) ->
+                let triangles = propTriangles mesh Vector3.Zero 0.0f
+                sloped.AddRange triangles
+                breakables.Add { Id = id; Bounds = bounds; Triangles = triangles }
             | Ladder(foot, height, facing) ->
                 // The climb space: a body's width across the ladder's face and
                 // deep enough to stand in, from the foot to a little above the
@@ -881,9 +956,12 @@ module LevelCompile =
         { Name = spec.Name
           Revision = 0
           Bounds = worldBounds
+          HasGeneratedGround = List.isEmpty staticWorlds
           Brushes = brushArray
           BrushGrid = brushGrid
           Sloped = slopedArray
+          Breakables = breakables.ToArray()
+          BrokenBreakables = Set.empty
           Collision = collision
           // Spawns and cover both ride on the ground probe, so all three of
           // them, nav included, agree about where the floor is. Cover used to
@@ -899,8 +977,9 @@ module LevelCompile =
             |> List.choose (function MissionRule(condition, action) -> Some { Condition = condition; Action = action; Fired = false } | _ -> None)
             |> List.toArray
           Ladders = ladderArray
-          Nav = compileNav bounds brushArray brushGrid ladderArray collision |> pruneUnreachable snappedSpawns
+          Nav = compileNav bounds (List.isEmpty staticWorlds) brushArray brushGrid ladderArray collision |> pruneUnreachable snappedSpawns
           WaterLevel = waterLevel
+          TextureAtlas = staticWorlds |> List.tryPick (fun (_, _, atlas) -> atlas)
           Vertices = vertices
           Indices = indices }
 
@@ -915,6 +994,41 @@ module LevelCompile =
             Brushes = brushes
             BrushGrid = brushGrid
             Collision = rebuiltCollision
-            Nav = compileNav level.Bounds brushes brushGrid level.Ladders rebuiltCollision |> pruneUnreachable level.Spawns
+            Nav = compileNav level.Bounds level.HasGeneratedGround brushes brushGrid level.Ladders rebuiltCollision |> pruneUnreachable level.Spawns
             Vertices = vertices
             Indices = indices }
+
+    /// Remove one or more authored breakable brush models from rendering,
+    /// collision, sight traces, and navigation in one revision bump.
+    let removeBreakables ids (level: Level) =
+        let removed = level.Breakables |> Array.filter (fun item -> Set.contains item.Id ids)
+        if Array.isEmpty removed then level
+        else
+            let isRemoved triangle =
+                removed |> Array.exists (fun item -> Array.contains triangle item.Triangles)
+            let sloped = level.Sloped |> Array.filter (isRemoved >> not)
+            let active = level.Breakables |> Array.filter (fun item -> not (Set.contains item.Id ids))
+            let vertices, indices, collision = buildGeometry level.Brushes sloped level.Ladders level.WaterLevel level.Bounds
+            { level with
+                Revision = level.Revision + 1
+                Sloped = sloped
+                Breakables = active
+                BrokenBreakables = Set.union level.BrokenBreakables ids
+                Collision = collision
+                Nav = compileNav level.Bounds level.HasGeneratedGround level.Brushes level.BrushGrid level.Ladders collision |> pruneUnreachable level.Spawns
+                Vertices = vertices
+                Indices = indices }
+
+    /// Resolve the stable brush-model id struck at a world-space point. BSP
+    /// face hits lie exactly on the bounds, with a small tolerance for the
+    /// penetration trace's floating-point reconstruction.
+    let tryBreakableAt (position: Vector3) (level: Level) =
+        level.Breakables
+        |> Array.tryFind (fun item ->
+            let margin = Vector3(0.06f)
+            MathEx.overlapsPoint position { Min = item.Bounds.Min - margin; Max = item.Bounds.Max + margin }
+            && (item.Triangles
+                |> Array.exists (fun triangle ->
+                    Vector3.DistanceSquared(
+                        position,
+                        MathEx.closestPointOnTriangle position triangle.A triangle.B triangle.C) <= 0.0036f)))

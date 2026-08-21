@@ -154,13 +154,13 @@ module MapFile =
 
     let private writeItem (writer: BinaryWriter) item =
         match item with
-        | Prop _ ->
-            // A prop carries arbitrary generated geometry — a mesh, not a
-            // handful of numbers — so there is no compact on-disk form for it.
-            // Maps that use props ship as builtins, which the client resolves
-            // by name and generates itself. Loud, because silently dropping the
-            // geometry would serve a map with holes in it.
-            failwith "Prop geometry has no .map representation; ship this map as a builtin"
+        | Prop _ | StaticWorld _ | BreakableWorld _ ->
+            // Props and static worlds carry arbitrary mesh geometry rather
+            // than a handful of numbers, so there is no compact on-disk form.
+            // Such maps ship as builtins, which the client resolves by name
+            // and generates itself. Loud, because silently dropping geometry
+            // would serve a map with holes in it.
+            failwith "Mesh geometry has no .map representation; ship this map as a builtin"
 
         | Street(length, width, surface) ->
             writer.Write 1uy
@@ -297,10 +297,10 @@ module MapFile =
         | tag -> failwith $"unknown map item tag {tag} (map made by a newer game version?)"
 
     /// Whether a spec can be written to the on-disk format at all. A map with
-    /// props carries generated geometry that has no serialised form, so it is
+    /// mesh items carry generated geometry that has no serialised form, so it is
     /// a builtin: distributed as code and resolved by name, never by hash.
     let encodable (spec: LevelSpec) =
-        spec.Items |> List.forall (function Prop _ -> false | _ -> true)
+        spec.Items |> List.forall (function Prop _ | StaticWorld _ -> false | _ -> true)
 
     let encode (spec: LevelSpec) =
         use stream = new MemoryStream()

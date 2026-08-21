@@ -236,6 +236,82 @@ module GeometryTests =
         Assert.True(finish.Y > 2.0f, $"expected to gain height, ended at y={finish.Y}")
 
     [<Fact>]
+    let ``a player crosses Aim Map's imported ramp`` () =
+        // The ramp is only 34 degrees, but a capsule resting on it has its feet
+        // above the plane. Treating that gap as airborne pinned the player near
+        // the bottom even though the surface was comfortably inside the limit.
+        let finish = walkForward Levels.aimMap (Vector3(-13.3f, -11.675f, 14.3f)) 180
+        Assert.True(finish.Z > 20.0f, $"expected to cross the ramp, ended at z={finish.Z}")
+        Assert.True(finish.Y > -8.5f, $"expected to reach the upper floor, ended at y={finish.Y}")
+
+    [<Fact>]
+    let ``a shallow approach slides along an angled wall`` () =
+        let wall =
+            MeshGen.box (Vector3(0.3f, 3.0f, 30.0f)) Brick
+            |> MeshGen.rotateY (MathF.PI * 0.25f)
+        let level =
+            LevelDsl.level "Diagonal wall"
+                [ LevelDsl.street 80.0f 30.0f Mud
+                  LevelDsl.prop wall (Vector3(0.0f, 1.5f, 0.0f)) 0.0f ]
+            |> LevelCompile.compile
+        let tangent = Vector3.Normalize(Vector3(1.0f, 0.0f, 1.0f))
+        let normal = Vector3.Normalize(Vector3(1.0f, 0.0f, -1.0f))
+        let start = -normal * 1.2f - tangent * 8.0f
+        let direction = Vector3.Normalize(tangent + normal * 0.18f)
+        let yaw = MathF.Atan2(direction.X, -direction.Z)
+        let world = Sim.createTrainingWorld 3UL
+        let mutable player = { world.Player with Position = start; Yaw = yaw; Velocity = Vector3.Zero }
+        let input = { Sequence = 0L; Move = Vector2(0.0f, 1.0f); Look = Vector2.Zero; Buttons = InputButtons.None }
+        for _ in 1..120 do
+            player <- Movement.step Tuning.TickDuration input level player
+        let along = Vector3.Dot(player.Position - start, tangent)
+        Assert.True(along > 8.0f, $"expected to keep sliding along the wall, advanced only {along}m to {player.Position}")
+
+    [<Fact>]
+    let ``existing wall contact does not pin a shallow approach`` () =
+        let angle = MathF.PI / 18.0f
+        let wall =
+            MeshGen.box (Vector3(0.3f, 3.0f, 30.0f)) Brick
+            |> MeshGen.rotateY angle
+        let level =
+            LevelDsl.level "Diagonal wall contact"
+                [ LevelDsl.street 80.0f 30.0f Mud
+                  LevelDsl.prop wall (Vector3(0.0f, 1.5f, 0.0f)) 0.0f ]
+            |> LevelCompile.compile
+        let normal = Vector3(MathF.Cos angle, 0.0f, -MathF.Sin angle)
+        let tangent = Vector3(-MathF.Sin angle, 0.0f, -MathF.Cos angle)
+        // GoldSrc BSP faces often leave the capsule microscopically inside one
+        // of several coplanar triangles. That existing contact must not reject
+        // a move whose only remaining component is parallel to the wall.
+        let start = -normal * (0.15f + Tuning.PlayerRadius - 0.002f) - tangent * 8.0f
+        let direction = Vector3.Normalize(tangent + normal * 0.18f)
+        let yaw = MathF.Atan2(direction.X, -direction.Z)
+        let world = Sim.createTrainingWorld 3UL
+        let mutable player = { world.Player with Position = start; Yaw = yaw; Velocity = Vector3.Zero }
+        let input = { Sequence = 0L; Move = Vector2(0.0f, 1.0f); Look = Vector2.Zero; Buttons = InputButtons.None }
+        for _ in 1..120 do
+            player <- Movement.step Tuning.TickDuration input level player
+        let along = Vector3.Dot(player.Position - start, tangent)
+        Assert.True(along > 8.0f, $"expected contact-safe wall sliding, advanced only {along}m to {player.Position}")
+
+    [<Fact>]
+    let ``a shallow approach slides along an imported Office wall`` () =
+        // A long wall beside Office's outside spawn. This is native BSP
+        // collision (including its coplanar face splits), not generated boxes.
+        let start = Vector3(-18.0f, -8.390625f, -44.0f)
+        let outward = Vector3.Normalize(Vector3(-0.99503726f, 0.0f, 0.099502206f))
+        let tangent = Vector3.Normalize(Vector3(0.099502206f, 0.0f, 0.99503726f))
+        let direction = Vector3.Normalize(tangent - outward * 0.18f)
+        let yaw = MathF.Atan2(direction.X, -direction.Z)
+        let world = Sim.createTrainingWorld 3UL
+        let mutable player = { world.Player with Position = start; Yaw = yaw; Velocity = Vector3.Zero }
+        let input = { Sequence = 0L; Move = Vector2(0.0f, 1.0f); Look = Vector2.Zero; Buttons = InputButtons.None }
+        for _ in 1..60 do
+            player <- Movement.step Tuning.TickDuration input Levels.office player
+        let along = Vector3.Dot(player.Position - start, tangent)
+        Assert.True(along > 4.5f, $"expected to slide along the Office BSP wall, advanced only {along}m to {player.Position}")
+
+    [<Fact>]
     let ``a ladder is climbed with forward, let go with jump, and is not solid`` () =
         // A 5 m platform with a ladder up its near face, ending a little above
         // the lip so the top of the climb is level with the floor it serves.
@@ -283,6 +359,21 @@ module GeometryTests =
         Assert.NotEqual(bottomNode, topNode)
         Assert.Contains(topNode, level.Nav[bottomNode].Neighbours)
         Assert.Contains(bottomNode, level.Nav[topNode].Neighbours)
+        let goal = level.Nav[topNode].Position
+        let route = AiBrain.findPath level foot goal
+        let training = Sim.createTrainingWorld 3UL
+        let player =
+            { training.Player with
+                Position = goal
+                Health = Units.health 10_000.0f }
+        let bot =
+            { TestKit.soldier 91 foot with
+                Behavior = AdvancingTo(goal, route)
+                Contacts = Map.ofList [ player.Id, struct (goal, Units.seconds 0.0f) ] }
+        let _, climbed, _ = TestKit.runBrain 91UL level player [| bot |] 360
+        Assert.True(
+            climbed[0].Position.Y > 4.5f,
+            $"bot did not climb the ladder: {climbed[0].Position}, {climbed[0].Behavior}")
         // And the same platform without a ladder stays unreachable.
         Assert.DoesNotContain(nearest bare (Vector3(0.0f, 5.0f, 2.0f)), bare.Nav[nearest bare (Vector3(0.0f, 0.0f, 0.6f))].Neighbours)
 

@@ -152,6 +152,152 @@ module CombatTests =
         Assert.True(high.Length >= 4, $"only {high.Length} reachable nav nodes above the yard floor")
 
     [<Fact>]
+    let ``dust two preserves its routes and both teams can cross the map`` () =
+        let level = Levels.dust2
+        Assert.Equal("Dust II", level.Name)
+        Assert.Equal(9932, level.Collision.Triangles.Length)
+        Assert.InRange(level.Bounds.Max.X - level.Bounds.Min.X, 111.9f, 112.1f)
+        Assert.InRange(level.Bounds.Max.Z - level.Bounds.Min.Z, 132.7f, 132.9f)
+        Assert.Contains(level.Vertices, fun vertex -> Materials.isImported vertex.MaterialId && vertex.TexCoord <> Vector2.Zero)
+        for team in [ Allies; Axis ] do
+            let spawns = level.Spawns |> Array.filter (fun struct (owner, _) -> owner = Some team)
+            Assert.Equal(8, spawns.Length)
+            Assert.All(spawns, fun struct (_, position) ->
+                Assert.NotEmpty(LevelCompile.surfaceLayers level.Collision position.X position.Z)
+                Assert.InRange(position.Y, -0.1f, 3.3f))
+        let nearest (target: Vector3) =
+            level.Nav
+            |> Array.mapi (fun index node -> index, Vector3.DistanceSquared(node.Position, target))
+            |> Array.minBy snd
+            |> fst
+        let reachable =
+            let seen = System.Collections.Generic.HashSet<int>()
+            let queue = System.Collections.Generic.Queue<int>()
+            let axisSpawn = level.Spawns |> Array.pick (fun struct (owner, position) -> if owner = Some Axis then Some position else None)
+            queue.Enqueue(nearest axisSpawn)
+            while queue.Count > 0 do
+                let current = queue.Dequeue()
+                if seen.Add current then
+                    for next in level.Nav[current].Neighbours do queue.Enqueue next
+            seen
+        let alliesSpawn = level.Spawns |> Array.pick (fun struct (owner, position) -> if owner = Some Allies then Some position else None)
+        Assert.True(reachable.Contains(nearest alliesSpawn), "the opposing spawn is unreachable")
+
+        // The defining T-spawn pick through the gap in mid double doors. A
+        // sealed or shifted door leaf makes Dust II wrong even if its outer
+        // silhouette still resembles the map.
+        let eye = Vector3(30.0f, 1.6f, -48.0f)
+        let throughDoors = Vector3(8.0f, 1.6f, 10.0f) - eye
+        let distance = throughDoors.Length()
+        let direction = throughDoors / distance
+        let obstruction =
+            LevelCompile.trianglesAlongRay eye direction distance level
+            |> Array.tryPick (fun triangle ->
+                match MathEx.rayTriangle eye direction triangle.A triangle.B triangle.C with
+                | ValueSome hit when hit > 0.05f && hit < distance - 0.05f -> Some hit
+                | _ -> None)
+        Assert.True(obstruction.IsNone, $"mid double-door sightline is blocked at {obstruction}")
+
+    let private assertNativeCounterStrikeMap expectedName expectedTriangles expectedTextures expectedColumns allies axis (level: Level) =
+        Assert.Equal(expectedName, level.Name)
+        Assert.Equal(expectedTriangles, level.Indices.Length / 3)
+        Assert.Contains(level.Vertices, fun vertex -> Materials.isImported vertex.MaterialId && vertex.TexCoord <> Vector2.Zero)
+        match level.TextureAtlas with
+        | Some(RgbaAtlas(pixels, width, height, columns, rows, tileSize)) ->
+            Assert.Equal(expectedColumns, columns)
+            Assert.Equal(128, tileSize)
+            Assert.Equal(columns * tileSize, width)
+            Assert.Equal(rows * tileSize, height)
+            Assert.Equal(width * height * 4, pixels.Length)
+            let layers = (expectedTextures + columns - 1) / columns
+            Assert.Equal(layers, rows)
+        | atlas -> Assert.Fail($"expected a decoded BSP texture atlas, got {atlas}")
+        for team, count in [ Allies, allies; Axis, axis ] do
+            let spawns = level.Spawns |> Array.filter (fun struct (owner, _) -> owner = Some team)
+            Assert.Equal(count, spawns.Length)
+            Assert.All(spawns, fun struct (_, position) ->
+                Assert.NotEmpty(LevelCompile.surfaceLayers level.Collision position.X position.Z))
+        let nearest (target: Vector3) =
+            level.Nav
+            |> Array.mapi (fun index node -> index, Vector3.DistanceSquared(node.Position, target))
+            |> Array.minBy snd
+            |> fst
+        let axisSpawn = level.Spawns |> Array.pick (fun struct (owner, position) -> if owner = Some Axis then Some position else None)
+        let alliesSpawn = level.Spawns |> Array.pick (fun struct (owner, position) -> if owner = Some Allies then Some position else None)
+        let target = nearest alliesSpawn
+        let seen = System.Collections.Generic.HashSet<int>()
+        let queue = System.Collections.Generic.Queue<int>()
+        queue.Enqueue(nearest axisSpawn)
+        while queue.Count > 0 do
+            let current = queue.Dequeue()
+            if seen.Add current then
+                for next in level.Nav[current].Neighbours do queue.Enqueue next
+        Assert.True(seen.Contains target, "the opposing Counter-Strike spawn is unreachable")
+
+    [<Fact>]
+    let ``pool day loads geometry textures entities and routes directly from BSP30`` () =
+        assertNativeCounterStrikeMap "Pool Day" 4754 31 6 16 16 Levels.poolDay
+
+    [<Fact>]
+    let ``office loads geometry textures entities and routes directly from BSP30`` () =
+        let level = Levels.office
+        assertNativeCounterStrikeMap "Office" 20806 214 15 10 10 level
+        Assert.Equal(10, level.Breakables.Length)
+        Assert.All(level.Breakables, fun item ->
+            Assert.NotEmpty item.Triangles
+            Assert.All(item.Triangles, fun triangle -> Assert.Equal(Glass, triangle.Material)))
+
+    [<Fact>]
+    let ``shooting glass removes its rendering collision and sight obstruction`` () =
+        let glassMesh =
+            MeshGen.box (Vector3(2.0f, 2.0f, 0.12f)) Glass
+            |> MeshGen.translate (Vector3(0.0f, 1.0f, -2.0f))
+        let glassBounds =
+            { Min = Vector3(-1.0f, 0.0f, -2.06f)
+              Max = Vector3(1.0f, 2.0f, -1.94f) }
+        let level =
+            LevelDsl.level "Glass range"
+                [ LevelDsl.street 30.0f 10.0f Mud
+                  LevelDsl.breakableWorld 42 glassMesh glassBounds
+                  LevelDsl.spawnSquad Allies 1 (Vector3(0.0f, 0.0f, 2.0f))
+                  LevelDsl.spawnSquad Axis 1 (Vector3(5.0f, 0.0f, -5.0f))
+                  LevelDsl.objective "Break the glass" ]
+            |> LevelCompile.compile
+        let beforeTriangles = level.Collision.Triangles.Length
+        let beforeVertices = level.Vertices.Length
+        Assert.False(Ballistics.lineOfSight (Vector3(0.0f, 1.0f, 0.0f)) (Vector3(0.0f, 1.0f, -4.0f)) level)
+        let world = Sim.createWorld level "Break the glass" 41UL
+        let fire = TestKit.input 1L InputButtons.Fire Vector2.Zero
+        let struct (after, events) = Sim.step fire world
+        Assert.Contains(events, function GlassBroken(42, _) -> true | _ -> false)
+        Assert.Contains(42, after.Level.BrokenBreakables)
+        Assert.Empty after.Level.Breakables
+        Assert.Equal(level.Revision + 1, after.Level.Revision)
+        Assert.Equal(beforeTriangles - 12, after.Level.Collision.Triangles.Length)
+        Assert.Equal(beforeVertices - 36, after.Level.Vertices.Length)
+        Assert.True(Ballistics.lineOfSight (Vector3(0.0f, 1.0f, 0.0f)) (Vector3(0.0f, 1.0f, -4.0f)) after.Level)
+
+    [<Fact>]
+    let ``aim map loads geometry textures entities and routes directly from BSP30`` () =
+        assertNativeCounterStrikeMap "Aim Map" 2307 18 5 16 16 Levels.aimMap
+
+    [<Fact>]
+    let ``awp india loads geometry textures entities and routes directly from BSP30`` () =
+        assertNativeCounterStrikeMap "AWP India" 2930 18 5 16 16 Levels.awpIndia
+
+    [<Fact>]
+    let ``rats 2 loads geometry textures entities and routes directly from BSP30`` () =
+        assertNativeCounterStrikeMap "Rats 2" 9967 134 12 10 10 Levels.rats2
+
+    [<Fact>]
+    let ``iceworld loads geometry textures entities and routes directly from BSP30`` () =
+        assertNativeCounterStrikeMap "Iceworld" 553 5 3 12 12 Levels.iceworld
+
+    [<Fact>]
+    let ``snow loads geometry textures entities and routes directly from BSP30`` () =
+        assertNativeCounterStrikeMap "Snow" 2526 9 3 16 16 Levels.snow
+
+    [<Fact>]
     let ``head capsule applies lethal multiplier`` () =
         let targets = [| soldier Vector3.Zero |]
         let updated, events =

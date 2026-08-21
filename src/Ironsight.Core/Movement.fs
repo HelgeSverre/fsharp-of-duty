@@ -31,6 +31,85 @@ module Movement =
     let private collides (level: Level) (stance: Stance) (position: Vector3) =
         collisionCount level stance position > 0
 
+    /// Horizontal contact planes that this displacement is moving into. A
+    /// capsule may already overlap a triangle by a tiny amount (especially at
+    /// imported BSP seams); that triangle is harmless when the new movement is
+    /// parallel to it and must not make the whole candidate position invalid.
+    let private blockingWallNormals (level: Level) (stance: Stance) (position: Vector3) (displacement: Vector3) =
+        LevelCompile.trianglesNear position (Tuning.PlayerRadius + 0.6f) level
+        |> Array.choose (fun triangle ->
+            match MathEx.capsuleIntersectsTriangle Tuning.PlayerRadius (stanceHeight stance) position triangle.A triangle.B triangle.C with
+            | ValueNone -> None
+            | ValueSome contact ->
+                let faceNormal = MathEx.horizontal triangle.Normal |> MathEx.normalizedOrZero
+                let radialNormal = MathEx.horizontal (position - contact) |> MathEx.normalizedOrZero
+                let normal =
+                    if faceNormal.LengthSquared() > 0.5f then
+                        // Collision triangles are two-sided. Orient the face
+                        // toward the capsule rather than trusting BSP winding.
+                        if Vector3.Dot(faceNormal, radialNormal) < 0.0f then -faceNormal else faceNormal
+                    else radialNormal
+                if normal.LengthSquared() > 0.5f && Vector3.Dot(displacement, normal) < -0.000001f then
+                    Some normal
+                else None)
+        // A BSP wall is commonly split into many coplanar triangles. Treat it
+        // as one plane so seams do not consume the resolver's iteration budget.
+        |> Array.fold (fun normals normal ->
+            if normals |> List.exists (fun existing -> Vector3.Dot(existing, normal) > 0.999f) then normals
+            else normal :: normals) []
+
+    /// Move up to the first wall contact and project the unspent part of the
+    /// tick along its plane. Repeating handles a second plane at a corner while
+    /// retaining the original wall plane so the projection cannot cut through
+    /// it on the next bump.
+    let private slideHorizontal level stance (minBound: Vector3) (maxBound: Vector3) (oldPosition: Vector3) (displacement: Vector3) =
+        let clampPosition (position: Vector3) = Vector3.Clamp(position, minBound, maxBound)
+        let addPlanes planes blockers =
+            blockers
+            |> List.fold (fun accumulated normal ->
+                if accumulated |> List.exists (fun existing -> Vector3.Dot(existing, normal) > 0.999f) then accumulated
+                else normal :: accumulated) planes
+        let clip planes (movement: Vector3) =
+            let permitted candidate =
+                planes |> List.forall (fun normal -> Vector3.Dot(candidate, normal) >= -0.000001f)
+            // Projecting sequentially is order-dependent: at a convex edge it
+            // can manufacture a left/right preference that was not present in
+            // the input. In horizontal 2D the closest legal result is either
+            // the original movement, one plane's tangent, or zero.
+            seq {
+                yield Vector3.Zero
+                if permitted movement then yield movement
+                for normal in planes do
+                    let projected = movement - normal * Vector3.Dot(movement, normal)
+                    if permitted projected then yield projected
+            }
+            |> Seq.minBy (fun candidate -> Vector3.DistanceSquared(candidate, movement))
+        let rec resolve bumps (position: Vector3) (remaining: Vector3) planes =
+            if bumps >= 3 || remaining.LengthSquared() < 0.00000001f then position
+            else
+                let endpoint = clampPosition (position + remaining)
+                let travel = endpoint - position
+                let blockers = blockingWallNormals level stance endpoint travel
+                if List.isEmpty blockers then endpoint
+                else
+                    // Find the last unblocked point, preserving the portion of
+                    // the movement completed before first contact. When the
+                    // capsule starts in contact the fraction is simply zero.
+                    let mutable safe = 0.0f
+                    if List.isEmpty (blockingWallNormals level stance position travel) then
+                        let mutable blocked = 1.0f
+                        for _ in 1..10 do
+                            let middle = (safe + blocked) * 0.5f
+                            if List.isEmpty (blockingWallNormals level stance (position + travel * middle) travel) then
+                                safe <- middle
+                            else
+                                blocked <- middle
+                    let contact = position + travel * safe
+                    let unspent = travel * (1.0f - safe)
+                    let contactPlanes = addPlanes planes blockers
+                    resolve (bumps + 1) contact (clip contactPlanes unspent) contactPlanes
+        resolve 0 oldPosition displacement []
+
     /// The surface under a position: its height and its normal. Probes the
     /// capsule footprint rather than a single point, so standing on the lip of a
     /// ledge still finds support. Returns the highest surface at or below the
@@ -78,10 +157,20 @@ module Movement =
     /// Whether a surface is shallow enough to stand on rather than slide down.
     let walkableNormal (normal: Vector3) = normal.Y >= Tuning.MaxSlopeCosine
 
+    /// A vertical capsule resting on a slope has its feet above the plane even
+    /// though the round base is touching it. Account for that geometric gap in
+    /// the grounded test; otherwise sufficiently inclined (but still walkable)
+    /// ramps alternate between grounded and airborne and eventually pin the
+    /// player against the surface.
+    let private slopeContactClearance (normal: Vector3) =
+        Tuning.PlayerRadius * (1.0f / normal.Y - 1.0f)
+
     let grounded (level: Level) (position: Vector3) =
         match surfaceUnder level position with
-        | ValueSome(struct (height, normal)) -> abs (position.Y - height) <= 0.055f && walkableNormal normal
+        | ValueSome(struct (height, normal)) when walkableNormal normal ->
+            abs (position.Y - height) <= 0.055f + slopeContactClearance normal
         | ValueNone -> false
+        | _ -> false
 
     let private resolveWorld (level: Level) (stance: Stance) (oldPosition: Vector3) (requestedPosition: Vector3) (wasGrounded: bool) =
         let radius = Tuning.PlayerRadius
@@ -102,10 +191,8 @@ module Movement =
                 match stepped with
                 | Some position -> position
                 | None ->
-                    let alongX = Vector3(bounded.X, oldPosition.Y, oldPosition.Z)
-                    let xResolved = if collides level stance alongX then oldPosition else alongX
-                    let alongZ = Vector3(xResolved.X, xResolved.Y, bounded.Z)
-                    if collides level stance alongZ then xResolved else alongZ
+                    let displacement = horizontal - oldPosition
+                    slideHorizontal level stance minBound maxBound oldPosition displacement
         // Settle onto the surface underfoot, but only if it is shallow enough to
         // stand on — a steep face lets you keep falling, which is what turns a
         // cliff into a wall without needing an invisible box around it.
@@ -134,6 +221,17 @@ module Movement =
         match surfaceUnder level resolved with
         | ValueSome(struct (floorY, normal)) when walkableNormal normal -> Vector3(resolved.X, floorY, resolved.Z)
         | _ -> resolved
+
+    /// An explicit ladder edge is already the collision-safe route through the
+    /// world. Clamp an AI climber to the level, but do not run its standing
+    /// capsule into the wall or deck the ladder is attached to: either contact
+    /// would pin the agent before its feet reached the dismount node.
+    let internal resolveClimbingAgent (level: Level) requestedPosition =
+        let radius = Tuning.PlayerRadius
+        Vector3.Clamp(
+            requestedPosition,
+            level.Bounds.Min + Vector3(radius, 0.0f, radius),
+            level.Bounds.Max - Vector3(radius, 0.0f, radius))
 
     let step (dt: float32<s>) (input: InputFrame) (level: Level) (player: Player) : Player =
         let seconds = Units.raw dt
@@ -203,9 +301,13 @@ module Movement =
         let requested = basePosition + velocity * seconds
         let position = resolveWorld level stance basePosition requested onGround
         let blockedVelocity =
-            let x = if abs (position.X - requested.X) > 0.0001f then 0.0f else velocity.X
+            let horizontalBlocked =
+                abs (position.X - requested.X) > 0.0001f
+                || abs (position.Z - requested.Z) > 0.0001f
+            let resolvedHorizontal = (position - basePosition) / seconds
+            let x = if horizontalBlocked then resolvedHorizontal.X else velocity.X
             let y = if abs (position.Y - requested.Y) > 0.0001f then 0.0f else velocity.Y
-            let z = if abs (position.Z - requested.Z) > 0.0001f then 0.0f else velocity.Z
+            let z = if horizontalBlocked then resolvedHorizontal.Z else velocity.Z
             Vector3(x, y, z)
         // Right-click is the katana's overhead attack, not an optical ADS
         // state: no zoom, accuracy transition or bow-like recentering.

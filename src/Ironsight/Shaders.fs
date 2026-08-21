@@ -151,17 +151,20 @@ void main() {
 layout(location = 0) in vec3 aPosition;
 layout(location = 1) in vec3 aNormal;
 layout(location = 2) in float aMaterial;
+layout(location = 3) in vec2 aTexCoord;
 uniform mat4 uViewProjection;
 uniform mat4 uLightViewProjection;
 out vec3 vWorld;
 out vec3 vNormal;
 out vec4 vLightPosition;
 flat out int vMaterial;
+out vec2 vTexCoord;
 void main() {
     vWorld = aPosition;
     vNormal = aNormal;
     vLightPosition = uLightViewProjection * vec4(aPosition, 1.0);
     vMaterial = int(aMaterial + 0.5);
+    vTexCoord = aTexCoord;
     gl_Position = uViewProjection * vec4(aPosition, 1.0);
 }
 """
@@ -172,10 +175,16 @@ in vec3 vWorld;
 in vec3 vNormal;
 in vec4 vLightPosition;
 flat in int vMaterial;
+in vec2 vTexCoord;
 uniform vec3 uCamera;
 uniform int uViewmodel;
 uniform float uContrast;
 uniform sampler2D uShadowMap;
+uniform sampler2D uMaterialAtlas;
+uniform int uAtlasColumns;
+uniform int uAtlasRows;
+uniform int uAtlasTileSize;
+uniform int uAtlasFlipY;
 uniform int uImpactCount;
 uniform vec4 uImpacts[16];
 out vec4 outColor;
@@ -187,6 +196,17 @@ float noise(vec2 p) {
 }
 uniform float uHeatGlow;
 vec3 materialColor() {
+    if (vMaterial >= 100) {
+        int layer = (vMaterial - 100) % 1000;
+        vec2 cell = vec2(float(layer % uAtlasColumns), float(layer / uAtlasColumns));
+        // Inset by one atlas texel so bilinear filtering never bleeds a
+        // neighbouring authored material into this one at a repeat seam.
+        vec2 repeated = fract(vTexCoord);
+        if (uAtlasFlipY != 0) repeated.y = 1.0 - repeated.y;
+        float tileSize = float(uAtlasTileSize);
+        vec2 local = (repeated * (tileSize - 2.0) + 1.0) / tileSize;
+        return texture(uMaterialAtlas, (cell + local) / vec2(float(uAtlasColumns), float(uAtlasRows))).rgb;
+    }
     // Project the procedural pattern along the dominant face axis. Using xz
     // everywhere made vertical walls collapse into single-colour stripes.
     vec3 axis = abs(normalize(vNormal));
@@ -246,8 +266,9 @@ vec3 materialColor() {
         float ripple = noise(p * 2.2) * 0.5 + noise(p * 7.0) * 0.5;
         return mix(vec3(0.10,0.20,0.24), vec3(0.22,0.36,0.38), ripple);
     }
-    // Render-only palette: paints, foams, tooling. Numbered from 14 because
-    // Sand, RustedMetal and Concrete took 11-13 (see Materials.all).
+    // Extended palette: paints, foams, tooling, and the flat fallback for
+    // procedural glass. Numbered from 14 because Sand, RustedMetal and
+    // Concrete took 11-13 (see Materials.all).
     if (vMaterial == 14) return vec3(0.95,0.06,0.08);
     if (vMaterial == 15) return vec3(0.04,0.30,0.98);
     if (vMaterial == 16) return vec3(0.08,0.90,0.22);
@@ -259,6 +280,7 @@ vec3 materialColor() {
     if (vMaterial == 22) return vec3(0.035,0.040,0.045);
     if (vMaterial == 23) return vec3(0.05,0.52,0.88);
     if (vMaterial == 24) return vec3(0.075,0.10,0.12);
+    if (vMaterial == 25) return vec3(0.55,0.72,0.78);
     return vec3(0.24,0.26,0.25);
 }
 void main() {

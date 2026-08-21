@@ -92,6 +92,7 @@ type OnlineSnapshot =
     { Tick: int64
       Mode: GameMode
       LevelName: string
+      BrokenBreakables: Set<int>
       Phase: MatchPhase
       AlliesScore: int
       AxisScore: int
@@ -255,6 +256,11 @@ module SnapshotWire =
         { Tick = getInt64 "tick" root
           Mode = getString "mode" root |> parseMode
           LevelName = getString "level" root
+          BrokenBreakables =
+              match root.TryGetProperty "brokenBreakables" with
+              | true, values when values.ValueKind = JsonValueKind.Array ->
+                  values.EnumerateArray() |> Seq.map _.GetInt32() |> Set.ofSeq
+              | _ -> Set.empty
           Phase = getString "phase" root |> parsePhase
           AlliesScore = getInt "alliesScore" root
           AxisScore = getInt "axisScore" root

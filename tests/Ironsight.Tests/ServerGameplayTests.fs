@@ -315,11 +315,12 @@ module ServerGameplayTests =
         // Move and fire so velocity, look, and events all carry real values.
         TestKit.applyCustom 1L 1.0f 0.2f 3 host axisId
         host.AdvanceTick()
-        let state = host.Snapshot()
+        let state = { host.Snapshot() with BrokenBreakables = Set.ofList [ 2; 71 ] }
         use document = System.Text.Json.JsonDocument.Parse(Protocol.serialize (Protocol.snapshot state))
         let parsed = Ironsight.Shell.SnapshotWire.parseSnapshot document.RootElement
         Assert.Equal(state.Tick, parsed.Tick)
         Assert.Equal(state.Mode, parsed.Mode)
+        Assert.Equal(state.BrokenBreakables, parsed.BrokenBreakables)
         Assert.Equal(state.Phase, parsed.Phase)
         Assert.Equal(state.AlliesScore, parsed.AlliesScore)
         Assert.Equal(state.AxisScore, parsed.AxisScore)

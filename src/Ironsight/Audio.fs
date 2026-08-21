@@ -37,6 +37,7 @@ type AudioSystem() =
     let laser = upload (AudioSynth.laserClick ())
     let katana = upload (AudioSynth.katanaSwing ())
     let arrowHit = upload (AudioSynth.arrowImpact ())
+    let glass = upload (AudioSynth.glassBreak ())
     let blast = upload (AudioSynth.explosion ())
     let step = upload (AudioSynth.footstep ())
     let reload = upload (AudioSynth.reloadClick ())
@@ -46,7 +47,7 @@ type AudioSystem() =
     let wind = upload (AudioSynth.wind ())
     let buffers =
         [| rifle; smg; minigun; marker; foam; rocket; flame; flameHit; water; nail; harpoon; harpoonHit
-           bow; laser; katana; arrowHit; blast; step; reload; ping; heartbeat; radio; wind |]
+           bow; laser; katana; arrowHit; glass; blast; step; reload; ping; heartbeat; radio; wind |]
 
     // Sixty rounds a second is above the rate an ear resolves as separate
     // events, so playing every one of them is both a hum and a source hog.
@@ -153,6 +154,7 @@ type AudioSystem() =
             | HarpoonSkewer(position, _, _) -> play harpoonHit position 0.72f 0.82f
             | HarpoonEmbedded(position, _) -> play harpoonHit position 0.86f 1.08f
             | ArrowImpact(position, _, stuck) -> play arrowHit position (if stuck then 0.66f else 0.46f) (if stuck then 0.92f else 1.25f)
+            | GlassBroken(_, position) -> play glass position 0.82f (0.96f + float32 sourceIndex * 0.004f)
             | FootStep(position, _) -> play step position 0.38f 1.0f
             | Subtitle _ -> play radio Vector3.Zero 0.28f 1.0f
             | _ -> ()

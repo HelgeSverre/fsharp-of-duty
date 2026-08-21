@@ -10,6 +10,10 @@
     <ProjectReference Include="../Ironsight.Core/Ironsight.Core.fsproj" />
   </ItemGroup>
   <ItemGroup>
+    <Content Include="../../maps/*.bsp" Link="maps/%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="../../maps/*.wad" Link="maps/%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+  <ItemGroup>
     <Compile Include="ServerConfig.fs" />
     <Compile Include="Protocol.fs" />
     <Compile Include="MatchHost.fs" />

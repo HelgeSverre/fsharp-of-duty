@@ -136,6 +136,7 @@ module ClientOnlineTests =
             { Tick = 120L
               Mode = TeamDeathmatch
               LevelName = "Training Yard"
+              BrokenBreakables = Set.empty
               Phase = Playing
               AlliesScore = 2
               AxisScore = 1
@@ -179,6 +180,7 @@ module ClientOnlineTests =
             { Tick = 100L
               Mode = TeamDeathmatch
               LevelName = world.Level.Name
+              BrokenBreakables = Set.empty
               Phase = Playing
               AlliesScore = 0
               AxisScore = 0
@@ -203,7 +205,7 @@ module ClientOnlineTests =
                 Slots = bowKit
                 DrawCharge = charge }
         let snapshot =
-            { Tick = 100L; Mode = TeamDeathmatch; LevelName = world.Level.Name; Phase = Playing
+            { Tick = 100L; Mode = TeamDeathmatch; LevelName = world.Level.Name; BrokenBreakables = Set.empty; Phase = Playing
               AlliesScore = 0; AxisScore = 0
               Players =
                 [| drawing 1 "Local" Allies world.Player.Position 0.8f
@@ -242,7 +244,7 @@ module ClientOnlineTests =
                 SwitchTo = switchTo
                 SwitchRemaining = switchRemaining }
         let snapshotOf player =
-            { Tick = 100L; Mode = TeamDeathmatch; LevelName = world.Level.Name; Phase = Playing
+            { Tick = 100L; Mode = TeamDeathmatch; LevelName = world.Level.Name; BrokenBreakables = Set.empty; Phase = Playing
               AlliesScore = 0; AxisScore = 0; Players = [| player |]; Grenades = [||]; Projectiles = [||]; Events = [||] }
         // Pistol in hand, rifle still remembering its three rounds.
         let reconciled, _ = OnlineWorld.reconcile world.Level [] 1 world (snapshotOf (withKit 1 -1 0.0f))
@@ -289,6 +291,7 @@ module ClientOnlineTests =
             { Tick = 500L
               Mode = TeamDeathmatch
               LevelName = world.Level.Name
+              BrokenBreakables = Set.empty
               Phase = Playing
               AlliesScore = 0
               AxisScore = 0

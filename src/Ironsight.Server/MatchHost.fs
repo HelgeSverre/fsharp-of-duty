@@ -47,6 +47,7 @@ type MatchHost(mode: GameMode, ?matchLevel: Level, ?disconnectGrace: TimeSpan, ?
         let baseline = Multiplayer.create mode
         { baseline with
             LevelName = level.Name
+            BrokenBreakables = level.BrokenBreakables
             ScoreLimit = defaultArg scoreLimit baseline.ScoreLimit
             TimeLimit = defaultArg timeLimit baseline.TimeLimit }
 
@@ -226,7 +227,8 @@ type MatchHost(mode: GameMode, ?matchLevel: Level, ?disconnectGrace: TimeSpan, ?
             Grenades = [||]
             AlliesScore = 0
             AxisScore = 0
-            LevelName = level.Name }
+            LevelName = level.Name
+            BrokenBreakables = level.BrokenBreakables }
 
     let asSoldier (player: NetworkPlayer) =
         { Id = player.Id
@@ -692,6 +694,15 @@ type MatchHost(mode: GameMode, ?matchLevel: Level, ?disconnectGrace: TimeSpan, ?
                             let hitSoldiers, hitEvents = Ballistics.applyShotFiltered canHit origin direction damage penetration headshotMultiplier kind level soldiers
                             for event in hitEvents do
                                 match event with
+                                | Impact(position, _, Glass) ->
+                                    match Ironsight.ProcGen.LevelCompile.tryBreakableAt position level with
+                                    | Some item ->
+                                        level <- Ironsight.ProcGen.LevelCompile.removeBreakables (Set.singleton item.Id) level
+                                        emit (GlassBroken(item.Id, position))
+                                    | None -> ()
+                                | _ -> ()
+                            for event in hitEvents do
+                                match event with
                                 | HitConfirmed _ -> emitOnly shooterId event
                                 | _ -> emit event
                             for index in 0..targets.Length - 1 do
@@ -811,6 +822,7 @@ type MatchHost(mode: GameMode, ?matchLevel: Level, ?disconnectGrace: TimeSpan, ?
                 { finalState with
                     Tick = nextTick
                     Rng = rng
+                    BrokenBreakables = level.BrokenBreakables
                     Events = retained @ newEvents
                     NextEventId = finalState.NextEventId + int64 newEvents.Length }
             let positions =
