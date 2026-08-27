@@ -463,8 +463,10 @@ module ClientTests =
         let rows = LoadoutMenu.rowsRect (LoadoutMenu.panelRect 1280 720)
         let scrolled = { LoadoutMenu.create () with Selected = LoadoutMenu.rows.Length - 1 }
         let first, visible = LoadoutMenu.visibleRows scrolled
-        // Hover the last drawn slot and confirm it selects the row drawn there.
-        let slot = visible.Length - 1
+        // Hover the last drawn weapon slot and confirm it selects the row drawn
+        // there. The last slot outright may be a category header, which is not
+        // a hover target — where it falls depends on the arsenal's grouping.
+        let slot = visible |> List.findIndexBack (fun (_, row) -> match row with LoadoutMenu.Weapon _ -> true | _ -> false)
         let struct (hovered, _) =
             LoadoutMenu.update 1280 720 { idle with Pointer = Some(TestKit.rowMiddle LoadoutMenu.RowHeight slot rows) } scrolled
         Assert.Equal(first + slot, hovered.Selected)

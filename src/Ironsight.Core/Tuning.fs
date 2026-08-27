@@ -291,6 +291,28 @@ module Tuning =
           HeadshotMultiplier = 1.6f
           MuzzleDistance = 1.02f }
 
+    // The modern carbine: STG-44 damage class traded for rate and accuracy.
+    // Three-shot damage would put its TTK ahead of everything in the class, so
+    // it kills in four fast ones — quicker than the Thompson, slower than the
+    // STG-44's three, and the flattest full-auto spread as its edge.
+    let m4 =
+        { Name = "M4A1"
+          Mode = FullAuto
+          Kind = Rifle
+          Mechanism = Hitscan
+          Damage = Units.health 32.0f
+          RoundsPerMin = 800.0f
+          MagSize = 30
+          ReloadTime = Units.seconds 2.1f
+          Pellets = 1
+          AdsTime = Units.seconds 0.12f
+          HipSpread = 0.050f
+          AdsSpread = 0.0075f
+          Recoil = [| Vector2(0.002f, 0.011f); Vector2(-0.004f, 0.013f); Vector2(0.005f, 0.015f) |]
+          Penetration = 11.0f
+          HeadshotMultiplier = 1.6f
+          MuzzleDistance = 0.98f }
+
     let mp40 =
         { Name = "MP40"
           Mode = FullAuto
@@ -587,7 +609,8 @@ module Tuning =
            minigun; bow; katana
            // The projectile weapons are server-simulated now, so there is no
            // longer a reason to keep them out of a match.
-           paintballMarker; nerfBlaster; bazooka; flamethrower; superSoaker; nailgun; harpoonGun; laserPointer |]
+           paintballMarker; nerfBlaster; bazooka; flamethrower; superSoaker; nailgun; harpoonGun; laserPointer
+           m4 |]
 
     let specialWeapons = [| paintballMarker; nerfBlaster; bazooka; flamethrower; superSoaker; nailgun; harpoonGun; bow; laserPointer; katana |]
 

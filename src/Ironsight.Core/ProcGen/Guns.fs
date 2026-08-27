@@ -263,6 +263,37 @@ module Guns =
                MeshGen.box (Vector3(0.05f, 0.09f, 0.03f)) Metal |> placed (Vector3(0.0f, 0.17f, -1.00f))
                MeshGen.box (Vector3(0.06f, 0.05f, 0.03f)) Metal |> placed (Vector3(0.0f, 0.145f, -0.30f)) |]
 
+    let private m4 =
+        MeshGen.union
+            [| // Upper and lower receiver in one polymer-black slab.
+               MeshGen.box (Vector3(0.13f, 0.15f, 0.40f)) ToolBlack |> placed (Vector3(0.0f, 0.03f, -0.26f))
+               // Flat-top rail running the receiver and out over the handguard.
+               MeshGen.box (Vector3(0.06f, 0.03f, 0.78f)) ToolBlack |> placed (Vector3(0.0f, 0.11f, -0.45f))
+               // Quad-rail handguard boxing the barrel.
+               MeshGen.box (Vector3(0.11f, 0.11f, 0.34f)) ToolBlack |> placed (Vector3(0.0f, 0.045f, -0.66f))
+               // Vertical foregrip hanging off the bottom rail.
+               MeshGen.cylinder 8 0.030f 0.16f ToolBlack
+               |> MeshGen.rotateX (MathF.PI * 0.5f)
+               |> placed (Vector3(0.0f, -0.07f, -0.62f))
+               // Slim barrel out of the handguard, A2 flash hider at the muzzle.
+               MeshGen.cylinder 10 0.022f 0.34f Metal |> placed (Vector3(0.0f, 0.045f, -0.99f))
+               MeshGen.lathe 10 [| Vector2(0.026f, -0.05f); Vector2(0.034f, 0.0f); Vector2(0.028f, 0.05f) |] Metal
+               |> placed (Vector3(0.0f, 0.045f, -1.18f))
+               // Front sight tower: base on the barrel, post above it.
+               MeshGen.box (Vector3(0.04f, 0.05f, 0.04f)) Metal |> placed (Vector3(0.0f, 0.08f, -0.85f))
+               MeshGen.box (Vector3(0.02f, 0.07f, 0.02f)) Metal |> placed (Vector3(0.0f, 0.13f, -0.85f))
+               // Detachable carry-handle rear sight on the receiver rail. The
+               // topmost part on purpose: sightHeight measures it.
+               MeshGen.box (Vector3(0.05f, 0.06f, 0.10f)) Metal |> placed (Vector3(0.0f, 0.15f, -0.14f))
+               // Raked pistol grip.
+               MeshGen.box (Vector3(0.09f, 0.20f, 0.10f)) ToolBlack |> MeshGen.rotateX -0.45f |> placed (Vector3(0.0f, -0.13f, -0.06f))
+               // Curved 30-round magazine, two angled segments like the STG's.
+               MeshGen.box (Vector3(0.075f, 0.20f, 0.10f)) Metal |> MeshGen.rotateX -0.12f |> placed (Vector3(0.0f, -0.13f, -0.32f))
+               MeshGen.box (Vector3(0.07f, 0.14f, 0.09f)) Metal |> MeshGen.rotateX -0.35f |> placed (Vector3(0.0f, -0.26f, -0.34f))
+               // Buffer tube and collapsible stock.
+               MeshGen.cylinder 10 0.035f 0.30f ToolBlack |> placed (Vector3(0.0f, 0.05f, 0.07f))
+               MeshGen.box (Vector3(0.10f, 0.14f, 0.20f)) ToolBlack |> placed (Vector3(0.0f, 0.01f, 0.26f)) |]
+
     let private mp40 =
         MeshGen.union
             [| // Bare tube receiver with a short ribbed barrel and resting bar.
@@ -739,7 +770,8 @@ module Guns =
     let names =
         [| "Thompson"; "M1911"; "Luger P08"; "M1897 Trench Gun"; "Kar98k"; "Kar98k Sniper"
            "M1 Garand"; "STG-44"; "MP40"; "Lee-Enfield"; "FG42"; "BAR"; "M134 Minigun"
-           "Paintball Marker"; "Nerf Blaster"; "Bazooka"; "Flamethrower"; "Super Soaker"; "Nailgun"; "Harpoon Gun"; "Bow"; "Laser Pointer"; "Katana" |]
+           "Paintball Marker"; "Nerf Blaster"; "Bazooka"; "Flamethrower"; "Super Soaker"; "Nailgun"; "Harpoon Gun"; "Bow"; "Laser Pointer"; "Katana"
+           "M4A1" |]
 
     /// The gun alone, without the arms holding it — what the geometry preview
     /// in tools/GunPreview.fsx inspects.
@@ -753,6 +785,7 @@ module Guns =
         | "M1 Garand" -> m1Garand
         | "STG-44" -> stg44
         | "MP40" -> mp40
+        | "M4A1" -> m4
         | "Lee-Enfield" -> leeEnfield
         | "FG42" -> fg42
         | "BAR" -> bar

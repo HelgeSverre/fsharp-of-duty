@@ -69,7 +69,7 @@ type AudioSystem() =
         | "Bow" -> bow
         | "Laser Pointer" -> laser
         | "Katana" -> katana
-        | "Thompson" | "MG42" | "MP40" | "STG-44" | "FG42" | "BAR" -> smg
+        | "Thompson" | "MG42" | "MP40" | "STG-44" | "FG42" | "BAR" | "M4A1" -> smg
         | _ -> rifle
 
     let shotPitch weapon =
@@ -89,6 +89,8 @@ type AudioSystem() =
         | "MP40" -> 1.10f
         | "Thompson" -> 1.0f
         | "STG-44" -> 0.92f
+        // Sharper crack than the 7.92mm guns: a small 5.56 round.
+        | "M4A1" -> 1.06f
         | "FG42" -> 0.86f
         | "BAR" -> 0.80f
         | "MG42" -> 0.78f
