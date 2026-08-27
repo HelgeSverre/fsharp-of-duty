@@ -20,6 +20,9 @@ primary_region = "arn"
     path = "/health/ready"
 
 [[vm]]
-  memory = "256mb"
+  # The server holds every built-in map compiled in memory — ~195 MB RSS since
+  # the classic BSP maps landed. 256 MB left the runtime thrashing: minutes-long
+  # startup, seconds-long readiness probes, a critical health check.
+  memory = "512mb"
   cpu_kind = "shared"
   cpus = 1
