@@ -264,35 +264,67 @@ module Guns =
                MeshGen.box (Vector3(0.06f, 0.05f, 0.03f)) Metal |> placed (Vector3(0.0f, 0.145f, -0.30f)) |]
 
     let private m4 =
+        let railTeeth startZ count spacing =
+            Array.init count (fun index ->
+                MeshGen.box (Vector3(0.075f, 0.018f, 0.018f)) ToolBlack
+                |> placed (Vector3(0.0f, 0.142f, startZ - float32 index * spacing)))
         MeshGen.union
-            [| // Upper and lower receiver in one polymer-black slab.
-               MeshGen.box (Vector3(0.13f, 0.15f, 0.40f)) ToolBlack |> placed (Vector3(0.0f, 0.03f, -0.26f))
-               // Flat-top rail running the receiver and out over the handguard.
-               MeshGen.box (Vector3(0.06f, 0.03f, 0.78f)) ToolBlack |> placed (Vector3(0.0f, 0.11f, -0.45f))
-               // Quad-rail handguard boxing the barrel.
-               MeshGen.box (Vector3(0.11f, 0.11f, 0.34f)) ToolBlack |> placed (Vector3(0.0f, 0.045f, -0.66f))
+            [| // Stepped upper and lower receiver. The narrower lower and short
+               // magazine well keep the body from reading as one featureless box.
+               MeshGen.box (Vector3(0.13f, 0.105f, 0.40f)) ToolBlack |> placed (Vector3(0.0f, 0.070f, -0.26f))
+               MeshGen.box (Vector3(0.115f, 0.080f, 0.30f)) ToolBlack |> placed (Vector3(0.0f, -0.020f, -0.20f))
+               MeshGen.wedge (Vector3(0.105f, 0.12f, 0.16f)) ToolBlack
+               |> MeshGen.rotateX MathF.PI
+               |> placed (Vector3(0.0f, -0.055f, -0.39f))
+               // Ejection port, forward assist and selector break up the visible
+               // right side without making the first-person silhouette noisy.
+               MeshGen.box (Vector3(0.006f, 0.048f, 0.135f)) Metal |> placed (Vector3(0.068f, 0.078f, -0.30f))
+               MeshGen.cylinder 8 0.020f 0.025f Metal
+               |> MeshGen.rotateY (MathF.PI * 0.5f)
+               |> placed (Vector3(0.074f, 0.035f, -0.095f))
+               MeshGen.cylinder 8 0.016f 0.020f Metal
+               |> MeshGen.rotateY (MathF.PI * 0.5f)
+               |> placed (Vector3(0.068f, -0.015f, -0.16f))
+               // Picatinny spine with individual teeth visible in side view.
+               MeshGen.box (Vector3(0.058f, 0.018f, 0.78f)) ToolBlack |> placed (Vector3(0.0f, 0.125f, -0.45f))
+               yield! railTeeth -0.08f 17 0.043f
+               // Ribbed KAC-style handguard and its delta ring.
+               MeshGen.box (Vector3(0.115f, 0.105f, 0.36f)) ToolBlack |> placed (Vector3(0.0f, 0.045f, -0.66f))
+               MeshGen.cylinder 10 0.073f 0.055f Metal |> placed (Vector3(0.0f, 0.045f, -0.465f))
+               for z in [| -0.51f; -0.57f; -0.63f; -0.69f; -0.75f; -0.81f |] do
+                   MeshGen.box (Vector3(0.132f, 0.018f, 0.018f)) ToolBlack |> placed (Vector3(0.0f, 0.103f, z))
                // Vertical foregrip hanging off the bottom rail.
-               MeshGen.cylinder 8 0.030f 0.16f ToolBlack
+               MeshGen.lathe 10
+                   [| Vector2(0.025f, -0.08f); Vector2(0.033f, -0.06f); Vector2(0.030f, 0.055f); Vector2(0.038f, 0.08f) |]
+                   ToolBlack
                |> MeshGen.rotateX (MathF.PI * 0.5f)
                |> placed (Vector3(0.0f, -0.07f, -0.62f))
                // Slim barrel out of the handguard, A2 flash hider at the muzzle.
                MeshGen.cylinder 10 0.022f 0.34f Metal |> placed (Vector3(0.0f, 0.045f, -0.99f))
                MeshGen.lathe 10 [| Vector2(0.026f, -0.05f); Vector2(0.034f, 0.0f); Vector2(0.028f, 0.05f) |] Metal
                |> placed (Vector3(0.0f, 0.045f, -1.18f))
-               // Front sight tower: base on the barrel, post above it.
-               MeshGen.box (Vector3(0.04f, 0.05f, 0.04f)) Metal |> placed (Vector3(0.0f, 0.08f, -0.85f))
-               MeshGen.box (Vector3(0.02f, 0.07f, 0.02f)) Metal |> placed (Vector3(0.0f, 0.13f, -0.85f))
-               // Detachable carry-handle rear sight on the receiver rail. The
-               // topmost part on purpose: sightHeight measures it.
-               MeshGen.box (Vector3(0.05f, 0.06f, 0.10f)) Metal |> placed (Vector3(0.0f, 0.15f, -0.14f))
+               // A-frame front sight: two canted legs, protective ears and post.
+               MeshGen.cylinder 10 0.040f 0.045f Metal |> placed (Vector3(0.0f, 0.045f, -0.85f))
+               limb 0.012f Metal (Vector3(-0.035f, 0.065f, -0.85f)) (Vector3(-0.022f, 0.145f, -0.85f))
+               limb 0.012f Metal (Vector3(0.035f, 0.065f, -0.85f)) (Vector3(0.022f, 0.145f, -0.85f))
+               MeshGen.box (Vector3(0.012f, 0.045f, 0.018f)) Metal |> placed (Vector3(0.0f, 0.142f, -0.85f))
+               // Compact rear aperture with protective ears. Its top remains the
+               // sight-height reference while leaving a useful notch down-centre.
+               MeshGen.box (Vector3(0.014f, 0.050f, 0.055f)) Metal |> placed (Vector3(-0.030f, 0.157f, -0.14f))
+               MeshGen.box (Vector3(0.014f, 0.050f, 0.055f)) Metal |> placed (Vector3(0.030f, 0.157f, -0.14f))
+               MeshGen.box (Vector3(0.070f, 0.018f, 0.070f)) Metal |> placed (Vector3(0.0f, 0.137f, -0.14f))
                // Raked pistol grip.
                MeshGen.box (Vector3(0.09f, 0.20f, 0.10f)) ToolBlack |> MeshGen.rotateX -0.45f |> placed (Vector3(0.0f, -0.13f, -0.06f))
                // Curved 30-round magazine, two angled segments like the STG's.
                MeshGen.box (Vector3(0.075f, 0.20f, 0.10f)) Metal |> MeshGen.rotateX -0.12f |> placed (Vector3(0.0f, -0.13f, -0.32f))
                MeshGen.box (Vector3(0.07f, 0.14f, 0.09f)) Metal |> MeshGen.rotateX -0.35f |> placed (Vector3(0.0f, -0.26f, -0.34f))
-               // Buffer tube and collapsible stock.
+               // Buffer tube and skeletal collapsible stock: cheek piece, two
+               // struts and butt pad instead of the former solid cuboid.
                MeshGen.cylinder 10 0.035f 0.30f ToolBlack |> placed (Vector3(0.0f, 0.05f, 0.07f))
-               MeshGen.box (Vector3(0.10f, 0.14f, 0.20f)) ToolBlack |> placed (Vector3(0.0f, 0.01f, 0.26f)) |]
+               MeshGen.box (Vector3(0.095f, 0.050f, 0.24f)) ToolBlack |> placed (Vector3(0.0f, 0.075f, 0.22f))
+               limb 0.018f ToolBlack (Vector3(-0.035f, 0.050f, 0.13f)) (Vector3(-0.040f, -0.035f, 0.34f))
+               limb 0.018f ToolBlack (Vector3(0.035f, 0.050f, 0.13f)) (Vector3(0.040f, -0.035f, 0.34f))
+               MeshGen.box (Vector3(0.105f, 0.175f, 0.035f)) ToolBlack |> placed (Vector3(0.0f, 0.005f, 0.35f)) |]
 
     let private mp40 =
         MeshGen.union

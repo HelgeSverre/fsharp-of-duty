@@ -148,7 +148,7 @@ module Commands =
     let private map =
         command "map" Op $"""/map <alias> - queue a builtin map for the next round ({String.concat ", " Levels.offlineAliases})""" (fun context arguments ->
             // Builtin aliases only: the client hot-swaps a level by name.
-            let requested = Levels.specByAlias (String.concat " " arguments) |> Option.bind (fun spec -> Levels.byName spec.Name)
+            let requested = Levels.byAlias (String.concat " " arguments)
             match requested with
             | Some level ->
                 context.Host.RequestLevel level

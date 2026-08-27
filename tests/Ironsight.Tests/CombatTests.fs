@@ -87,6 +87,17 @@ module CombatTests =
         Assert.All(bankSpawns, fun struct (_, position) -> Assert.True(position.Y > 1.0f))
 
     [<Fact>]
+    let ``the map registry's titles and aliases hold together`` () =
+        // Menus and byName lookups trust entry.Title without loading the map,
+        // so a title that drifts from the spec's real name makes that map
+        // unreachable by name — silently, because byName just returns None.
+        for entry in Levels.builtins do
+            Assert.Equal(entry.Title, (entry.LoadSpec()).Name)
+        // And an alias must reach exactly one map.
+        let aliases = Levels.builtins |> Array.collect (fun entry -> entry.Aliases)
+        Assert.Equal<string array>(aliases, Array.distinct aliases)
+
+    [<Fact>]
     let ``every map on the offline menu actually loads that map`` () =
         // createOfflineWorld used to keep its own alias table beside the level
         // registry's, so a map added to the menu loaded the paintball arena

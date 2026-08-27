@@ -259,10 +259,11 @@ module StartMenu =
         | QuitRow -> "QUIT"
 
     /// Offline map rows straight from the level registry: (alias, label).
+    /// Titles come from the registry table, so building the menu loads no map.
     let private offlineMaps =
-        Ironsight.ProcGen.Levels.offlineAliases
-        |> Array.map (fun alias ->
-            alias, (Ironsight.ProcGen.Levels.specByAlias alias).Value.Name.ToUpperInvariant())
+        Ironsight.ProcGen.Levels.builtins
+        |> Array.filter (fun entry -> entry.OnMenu)
+        |> Array.map (fun entry -> entry.Aliases[0], entry.Title.ToUpperInvariant())
 
     /// What a browser row is called. The room name when the server reports one
     /// — otherwise ten rooms on one server would render as ten identical

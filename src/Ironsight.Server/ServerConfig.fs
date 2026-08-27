@@ -53,12 +53,11 @@ module ServerConfig =
         | value when String.Equals(value, "TeamDeathmatch", StringComparison.OrdinalIgnoreCase) -> TeamDeathmatch
         | other -> failwith $"server config: room mode '{other}' is not TeamDeathmatch or FreeForAll."
 
-    /// Builtin aliases only. They are already compiled at Levels' static init,
-    /// so resolving by name reuses the instance rather than compiling again —
-    /// and the client hot-swaps a builtin by name, with no map download.
+    /// Builtin aliases only. byAlias compiles just this room's map and caches
+    /// it, so two rooms on one map share the instance — and the client
+    /// hot-swaps a builtin by name, with no map download.
     let private parseLevel (alias: string) =
-        Levels.specByAlias alias
-        |> Option.bind (fun spec -> Levels.byName spec.Name)
+        Levels.byAlias alias
         |> Option.defaultWith (fun () ->
             let known = String.concat ", " Levels.offlineAliases
             failwith $"server config: level '{alias}' is not a builtin ({known}).")

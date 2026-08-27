@@ -30,16 +30,16 @@ module MapStore =
         let scheme = if serverUri.Scheme = "wss" then "https" else "http"
         UriBuilder(serverUri, Scheme = scheme, Path = path).Uri
 
-    /// Built-in maps by the hash of their encoded spec.
+    /// Built-in specs by the hash of their encoding. Hashing needs the bytes,
+    /// so this loads every map file — but only the one that matches the
+    /// server's announcement is ever compiled, through the registry's cache.
     let private builtins =
         lazy
             (Levels.specs
              // A prop-bearing builtin has no encoding, so it can never be
              // hash-addressed; it is found by name instead.
              |> Array.filter MapFile.encodable
-             |> Array.map (fun spec ->
-                 let bytes = MapFile.encode spec
-                 MapFile.hash bytes, LevelCompile.compile spec)
+             |> Array.map (fun spec -> MapFile.hash (MapFile.encode spec), spec)
              |> Map.ofArray)
 
     let cacheDir () = Path.Combine(Settings.appDataDir (), "maps")
@@ -92,7 +92,7 @@ module MapStore =
             Error "server sent a malformed map hash"
         else
             match Map.tryFind hash builtins.Value with
-            | Some level -> Ok level
+            | Some spec -> Ok(Levels.ofSpec spec)
             | None ->
                 match fromCache hash with
                 | Some level -> Ok level
