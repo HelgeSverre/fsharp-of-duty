@@ -90,6 +90,11 @@ type Renderer(gl: GL) =
     let mutable lastSpinStamp = 0L
     let mutable loadedLevel = ""
     let mutable loadedLevelRevision = -1
+    // Pane bounds by breakable id, accumulated across uploads: by the time a
+    // GlassBroken event reaches HandleEvents the pane is already gone from the
+    // level, so the shatter effect reads the bounds remembered from the upload
+    // that still had it.
+    let mutable paneBounds: Map<int, Aabb> = Map.empty
     let mutable settings = Settings.defaults
     let mutable decals: Vector4 list = []
     let mutable recoil = 0.0f
@@ -183,6 +188,9 @@ type Renderer(gl: GL) =
         indexBuffer <- 0u
 
     let uploadLevel (level: Level) =
+        if level.Name <> loadedLevel then paneBounds <- Map.empty
+        for item in level.Breakables do
+            paneBounds <- Map.add item.Id item.Bounds paneBounds
         deleteMesh ()
         createMaterialAtlas level.TextureAtlas
         let vertices = GlUtil.flattenVertices level.Vertices
@@ -808,7 +816,7 @@ type Renderer(gl: GL) =
     member _.SetSettings(value: GameSettings) = settings <- value
 
     member _.HandleEvents(events: GameEvent list) =
-        particles.Handle events (Settings.bloodRgb settings.BloodColor)
+        particles.Handle events (Settings.bloodRgb settings.BloodColor) (fun id -> Map.tryFind id paneBounds)
         // Remember anything that could have killed someone for a moment, so a
         // death observed on a later frame still ragdolls away from its cause.
         let expires = Stopwatch.GetTimestamp() + int64 (0.7 * float Stopwatch.Frequency)

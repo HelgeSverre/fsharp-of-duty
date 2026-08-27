@@ -100,7 +100,7 @@ void main() {
         gl.VertexAttribPointer(2u, 1, VertexAttribPointerType.Float, false, stride, nativeint (7 * sizeof<float32>))
         gl.BindVertexArray 0u
 
-    member _.Handle(events: GameEvent list) (blood: Vector3) =
+    member _.Handle(events: GameEvent list) (blood: Vector3) (paneBounds: int -> Aabb option) =
         for event in events do
             match event with
             | ShotFired(_, origin, direction, "Paintball Marker") ->
@@ -142,13 +142,43 @@ void main() {
                     let angle = float32 index * MathF.Tau / 4.0f
                     let velocity = normal * (0.35f + float32 index * 0.08f) + tangent * MathF.Cos(angle) * 0.3f + bitangent * MathF.Sin(angle) * 0.3f
                     addPuff position velocity (Vector4(0.55f, 0.42f, 0.25f, 0.56f)) (10.0f + float32 index * 2.0f) 0.42f -1.8f
-            | GlassBroken(_, position) ->
+            | GlassBroken(id, position) ->
+                // Bright burst where the bullet went through.
                 for index in 0..11 do
                     let angle = float32 index * 2.3999632f
                     let direction = Vector3(MathF.Cos angle, 0.35f + float32 (index % 3) * 0.18f, MathF.Sin angle)
                     let endpoint = position + direction * (0.18f + float32 (index % 4) * 0.055f)
                     addLine position endpoint (Vector4(0.66f, 0.88f, 0.94f, 0.82f)) 0.34f
                     addPuff position (direction * (0.8f + float32 (index % 4) * 0.28f)) (Vector4(0.72f, 0.90f, 0.96f, 0.68f)) 7.0f 0.52f -8.5f
+                // The whole pane lets go: shards seeded across its face kick
+                // out of both sides and fall under gravity. Golden-ratio
+                // striding stands in for a RNG so the burst is deterministic.
+                match paneBounds id with
+                | None -> ()
+                | Some bounds ->
+                    let fract (value: float32) = value - MathF.Floor value
+                    let size = bounds.Max - bounds.Min
+                    // The pane's thin axis is its normal.
+                    let normal =
+                        if size.X <= size.Y && size.X <= size.Z then Vector3.UnitX
+                        elif size.Y <= size.X && size.Y <= size.Z then Vector3.UnitY
+                        else Vector3.UnitZ
+                    let area = size.X * size.Y * size.Z / max 0.01f (min size.X (min size.Y size.Z))
+                    let count = int (Math.Clamp(area * 26.0f, 14.0f, 56.0f))
+                    for index in 0 .. count - 1 do
+                        let f = float32 index
+                        let t = Vector3(fract (f * 0.6180340f), fract (f * 0.7548777f + 0.31f), fract (f * 0.5698403f + 0.71f))
+                        let point = bounds.Min + size * t
+                        let side = if index % 2 = 0 then 1.0f else -1.0f
+                        let velocity =
+                            normal * side * (0.25f + fract (f * 0.911f) * 0.6f)
+                            + Vector3(0.0f, 0.3f * fract (f * 0.37f), 0.0f)
+                        let tint = 0.85f + fract (f * 0.53f) * 0.15f
+                        addGrowingPuff point velocity
+                            (Vector4(0.72f * tint, 0.90f * tint, 0.96f, 0.92f))
+                            (4.0f + fract (f * 0.83f) * 5.0f)
+                            (0.7f + fract (f * 0.29f) * 0.5f)
+                            -12.0f 0.0f
             | ArrowImpact(position, normal, stuck) ->
                 let color = if stuck then Vector4(0.64f, 0.43f, 0.20f, 0.88f) else Vector4(0.78f, 0.72f, 0.60f, 0.72f)
                 addLine position (position + normal * 0.32f) color 0.20f

@@ -999,7 +999,10 @@ module LevelCompile =
             Indices = indices }
 
     /// Remove one or more authored breakable brush models from rendering,
-    /// collision, sight traces, and navigation in one revision bump.
+    /// collision, and sight traces in one revision bump. The navmesh is left
+    /// alone on purpose: a window pane never carries a walkable surface, and
+    /// recompiling nav here cost ~150 ms — a visible hitch on the tick the
+    /// glass broke.
     let removeBreakables ids (level: Level) =
         let removed = level.Breakables |> Array.filter (fun item -> Set.contains item.Id ids)
         if Array.isEmpty removed then level
@@ -1008,6 +1011,9 @@ module LevelCompile =
                 removed |> Array.exists (fun item -> Array.contains triangle item.Triangles)
             let sloped = level.Sloped |> Array.filter (isRemoved >> not)
             let active = level.Breakables |> Array.filter (fun item -> not (Set.contains item.Id ids))
+            // ponytail: full mesh+collision rebuild, ~9 ms on a BSP map; filter
+            // the pane's triangles out of Vertices/Collision in place if that
+            // ever shows up as a hitch.
             let vertices, indices, collision = buildGeometry level.Brushes sloped level.Ladders level.WaterLevel level.Bounds
             { level with
                 Revision = level.Revision + 1
@@ -1015,7 +1021,6 @@ module LevelCompile =
                 Breakables = active
                 BrokenBreakables = Set.union level.BrokenBreakables ids
                 Collision = collision
-                Nav = compileNav level.Bounds level.HasGeneratedGround level.Brushes level.BrushGrid level.Ladders collision |> pruneUnreachable level.Spawns
                 Vertices = vertices
                 Indices = indices }
 
