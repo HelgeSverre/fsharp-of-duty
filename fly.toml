@@ -20,10 +20,8 @@ primary_region = "arn"
     path = "/health/ready"
 
 [[vm]]
-  # Maps compile on demand through the registry cache, so the server carries
-  # only the rooms it hosts: ~59 MB RSS at boot. If an op /map-cycles through
-  # many BSP maps in one process the cache grows per map visited — bump this
-  # before blaming the sim.
+  # The map cache grows per map visited (/map), never shrinks. If memory gets
+  # tight after cycling many maps, bump this before blaming the sim.
   memory = "256mb"
   cpu_kind = "shared"
   cpus = 1

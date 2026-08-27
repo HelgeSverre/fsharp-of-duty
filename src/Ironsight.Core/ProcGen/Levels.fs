@@ -6,9 +6,8 @@ open Ironsight
 /// One row of the built-in map registry: what the map is called, the aliases
 /// that reach it, whether the offline menu lists it, and how to load its spec.
 type BuiltinMap =
-    { /// Equal to the loaded spec's Name by construction — the registry guard
-      /// test asserts it — so lookups and menu labels never have to load a
-      /// map (for the classics, parse its BSP) just to learn its name.
+    { /// Equal to the loaded spec's Name (the registry guard test asserts it),
+      /// so lookups and menu labels never load a map to learn its name.
       Title: string
       /// Every alias that resolves to this map; the first one is what the
       /// offline menu and /map help print.
@@ -22,10 +21,9 @@ type BuiltinMap =
 /// under Maps/; this registry loads and compiles a map on first use and
 /// caches it.
 ///
-/// A static class rather than a module so every accessor stays lazy: a module
-/// binding compiles at type initialization, which meant touching any one map
-/// compiled all fifteen — ~195 MB RSS and minutes of boot on the small server
-/// Machine, which only ever hosts the two or three maps its rooms run.
+/// A static class rather than a module on purpose: module bindings evaluate
+/// at type initialization, which would compile every map the moment any one
+/// is touched. Static members keep each accessor lazy.
 [<Sealed; AbstractClass>]
 type Levels private () =
     static let cache = Dictionary<string, Level>()
