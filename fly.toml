@@ -20,9 +20,10 @@ primary_region = "arn"
     path = "/health/ready"
 
 [[vm]]
-  # The server holds every built-in map compiled in memory — ~195 MB RSS since
-  # the classic BSP maps landed. 256 MB left the runtime thrashing: minutes-long
-  # startup, seconds-long readiness probes, a critical health check.
-  memory = "512mb"
+  # Maps compile on demand through the registry cache, so the server carries
+  # only the rooms it hosts: ~59 MB RSS at boot. If an op /map-cycles through
+  # many BSP maps in one process the cache grows per map visited — bump this
+  # before blaming the sim.
+  memory = "256mb"
   cpu_kind = "shared"
   cpus = 1
