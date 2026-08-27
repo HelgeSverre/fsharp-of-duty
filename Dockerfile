@@ -12,6 +12,8 @@ RUN dotnet publish src/Ironsight.Server/Ironsight.Server.fsproj -c Release -o /a
 FROM mcr.microsoft.com/dotnet/aspnet:10.0-alpine
 WORKDIR /app
 COPY --from=build /app ./
+# GoldSrcBsp resolves maps/*.bsp against AppContext.BaseDirectory (/app).
+COPY maps/ maps/
 ENV ASPNETCORE_URLS=http://0.0.0.0:8080
 EXPOSE 8080
 USER $APP_UID
